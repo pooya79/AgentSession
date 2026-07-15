@@ -7,34 +7,60 @@ import (
 	"time"
 )
 
-type (
-	SessionID   string
-	EventID     string
-	RawRecordID string
-	FindingID   string
-	SourceID    string
-	Version     string
-)
+// SessionID identifies one canonical imported session.
+type SessionID string
+
+// EventID identifies one canonical event. Imported event IDs are generated
+// deterministically by NewEventID.
+type EventID string
+
+// RawRecordID identifies an authoritative retained source record. It is an
+// opaque domain identifier rather than a database key or file path.
+type RawRecordID string
+
+// FindingID identifies one versioned analysis finding.
+type FindingID string
+
+// SourceID identifies a discovered read-only session source independently of
+// any particular record parsed from it.
+type SourceID string
+
+// Version is an opaque, producer-defined version label. It is deliberately
+// not interpreted or ordered by the model package.
+type Version string
 
 // ImportMetadata identifies how a canonical session was produced.
 type ImportMetadata struct {
-	SourceID             SourceID
-	AdapterName          string
-	AdapterVersion       Version
-	FormatVersion        Version
-	ModelVersion         Version
+	SourceID       SourceID
+	AdapterName    string
+	AdapterVersion Version
+
+	// FormatVersion is the source format detected by the adapter. ModelVersion
+	// identifies the canonical schema populated by normalization.
+	FormatVersion Version
+	ModelVersion  Version
+
+	// NormalizationVersion changes when an adapter's mapping into the same
+	// canonical model changes and existing records may need re-normalization.
 	NormalizationVersion Version
 }
 
 // Session is the source-neutral representation of an imported agent session.
 // Timestamps describe available evidence; they do not determine event order.
 type Session struct {
-	ID          SessionID
-	Title       string
-	Summary     string
-	StartedAt   *time.Time
-	EndedAt     *time.Time
-	Import      ImportMetadata
+	ID      SessionID
+	Title   string
+	Summary string
+
+	// StartedAt and EndedAt are optional recorded evidence. They may be
+	// inconsistent and must not be used to establish event order.
+	StartedAt *time.Time
+	EndedAt   *time.Time
+
+	Import ImportMetadata
+
+	// Diagnostics describe partial or unavailable evidence without making the
+	// otherwise usable session invalid.
 	Diagnostics []Diagnostic
 }
 
@@ -76,6 +102,7 @@ func (m ImportMetadata) validate() error {
 
 // ByteRange identifies a raw record's byte extent within a source.
 type ByteRange struct {
+	// Offset is zero-based; Length must be positive.
 	Offset int64
 	Length int64
 }
@@ -93,11 +120,17 @@ func (r ByteRange) validate() error {
 // RawRecordRef points to an authoritative raw record without embedding its
 // potentially large or sensitive contents in a canonical event.
 type RawRecordRef struct {
-	ID             RawRecordID
-	SourceID       SourceID
+	ID       RawRecordID
+	SourceID SourceID
+
+	// RecordSequence and ByteRange describe the source location when known.
+	// Either or both may be absent because not every format exposes both forms.
 	RecordSequence *int64
 	ByteRange      *ByteRange
-	ContentHash    string
+
+	// ContentHash is the adapter-provided digest label for the original record.
+	// The raw content itself is retained separately from this reference.
+	ContentHash string
 }
 
 // Validate checks the structural invariants of a raw-record reference.

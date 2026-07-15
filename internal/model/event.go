@@ -51,15 +51,27 @@ func (k EventKind) valid() bool {
 
 // Event is one ordered unit of canonical session evidence.
 type Event struct {
-	ID             EventID
-	SessionID      SessionID
-	Sequence       int64
-	Timestamp      *time.Time
-	Kind           EventKind
+	ID        EventID
+	SessionID SessionID
+
+	// Sequence is the authoritative source order within the session. Timestamp
+	// is optional evidence and never participates in ordering.
+	Sequence  int64
+	Timestamp *time.Time
+
+	Kind EventKind
+
+	// Summary is concise display text. SearchableText contains the normalized
+	// text selected for indexing and must not include retained raw records.
 	Summary        string
 	SearchableText string
-	Data           NormalizedData
-	RawRecord      RawRecordRef
+
+	// Data is a source-neutral payload whose concrete type must match Kind.
+	Data NormalizedData
+
+	// RawRecord points to the authoritative original record used to produce
+	// this event; it does not embed the record contents.
+	RawRecord RawRecordRef
 }
 
 // EventSummary is the lightweight form used by timeline listings.

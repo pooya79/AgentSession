@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+// NativeEventIDScope states whether a native event identifier is globally
+// stable or requires its native session identifier to form a stable identity.
 type NativeEventIDScope string
 
 const (
@@ -20,7 +22,9 @@ const (
 // NativeEventIdentity describes an adapter-supplied native identity without
 // exposing any source-specific record structure to the model.
 type NativeEventIdentity struct {
-	Scope     NativeEventIDScope
+	Scope NativeEventIDScope
+
+	// SessionID is required only for NativeEventIDSession.
 	SessionID string
 	EventID   string
 }
@@ -28,14 +32,22 @@ type NativeEventIdentity struct {
 // EventIDInput contains the strongest identity atoms an adapter can provide.
 // NewEventID prefers native identity, then record sequence, then byte range.
 type EventIDInput struct {
-	Native         *NativeEventIdentity
+	// Native takes precedence when present. An invalid asserted native identity
+	// is rejected instead of silently falling back to weaker source location.
+	Native *NativeEventIdentity
+
+	// Fallback identities combine SourceID and RecordHash with RecordSequence
+	// when available, otherwise ByteRange.
 	SourceID       SourceID
 	RecordSequence *int64
 	ByteRange      *ByteRange
 	RecordHash     string
 }
 
-// NewEventID returns a deterministic ID for canonical imported evidence.
+// NewEventID returns a deterministic ID for canonical imported evidence. It
+// hashes a versioned domain tag, identity tier, and length-prefixed fields with
+// SHA-256 so field boundaries cannot collide. The resulting evt_ value is a
+// persisted compatibility contract and must not change without a new version.
 func NewEventID(input EventIDInput) (EventID, error) {
 	if input.Native != nil {
 		return eventIDFromNative(*input.Native)

@@ -9,6 +9,8 @@ type NormalizedData interface {
 	eventKind() EventKind
 }
 
+// MessageRole identifies a normalized participant role. Unknown represents
+// missing or unrecognized evidence rather than a new source-specific role.
 type MessageRole string
 
 const (
@@ -19,6 +21,7 @@ const (
 	MessageRoleOther     MessageRole = "other"
 )
 
+// MessageData contains normalized message content.
 type MessageData struct {
 	Role MessageRole
 	Text string
@@ -26,6 +29,8 @@ type MessageData struct {
 
 func (MessageData) eventKind() EventKind { return EventKindMessage }
 
+// ToolCallData describes a requested tool invocation. Input is a normalized
+// textual representation and is not required to contain valid JSON.
 type ToolCallData struct {
 	CallID   string
 	ToolName string
@@ -34,6 +39,8 @@ type ToolCallData struct {
 
 func (ToolCallData) eventKind() EventKind { return EventKindToolCall }
 
+// ToolResultData describes recorded output for a tool invocation. IsError is
+// nil when the source does not establish whether the result is an error.
 type ToolResultData struct {
 	CallID   string
 	ToolName string
@@ -43,6 +50,9 @@ type ToolResultData struct {
 
 func (ToolResultData) eventKind() EventKind { return EventKindToolResult }
 
+// CommandData describes a command execution. ExitCode is nil when no exit
+// status was recorded. Output preserves recorded textual output order and
+// makes no claim that stdout and stderr were separately available.
 type CommandData struct {
 	Command          string
 	WorkingDirectory string
@@ -52,6 +62,8 @@ type CommandData struct {
 
 func (CommandData) eventKind() EventKind { return EventKindCommand }
 
+// FileReadData describes observed file access. Line numbers are optional,
+// one-based, and inclusive when present.
 type FileReadData struct {
 	Path      string
 	StartLine *int64
@@ -60,6 +72,7 @@ type FileReadData struct {
 
 func (FileReadData) eventKind() EventKind { return EventKindFileRead }
 
+// FileMutationOperation is the normalized effect of a file mutation.
 type FileMutationOperation string
 
 const (
@@ -70,6 +83,8 @@ const (
 	FileMutationRename  FileMutationOperation = "rename"
 )
 
+// FileMutationData describes a file creation, update, deletion, or rename.
+// PreviousPath is meaningful for a rename and empty when unavailable.
 type FileMutationData struct {
 	Path         string
 	Operation    FileMutationOperation
@@ -78,6 +93,9 @@ type FileMutationData struct {
 
 func (FileMutationData) eventKind() EventKind { return EventKindFileMutation }
 
+// PatchData contains recorded textual patch evidence and the affected paths
+// known from normalization. Text is not required to use a particular diff
+// syntax because some sources expose only partial patch representations.
 type PatchData struct {
 	Text  string
 	Paths []string
@@ -85,6 +103,8 @@ type PatchData struct {
 
 func (PatchData) eventKind() EventKind { return EventKindPatch }
 
+// UsageData contains optional counters reported by the source. A nil counter
+// means unreported; a non-nil zero is a known zero value.
 type UsageData struct {
 	InputTokens      *int64
 	OutputTokens     *int64
@@ -94,6 +114,7 @@ type UsageData struct {
 
 func (UsageData) eventKind() EventKind { return EventKindUsage }
 
+// ErrorData contains a normalized error message and an optional stable code.
 type ErrorData struct {
 	Code    string
 	Message string
@@ -101,6 +122,8 @@ type ErrorData struct {
 
 func (ErrorData) eventKind() EventKind { return EventKindError }
 
+// SummaryData contains a source-recorded summary rather than a derived
+// analysis finding or outcome.
 type SummaryData struct {
 	Text string
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// Severity expresses the user-facing importance of a diagnostic or finding.
 type Severity string
 
 const (
@@ -25,13 +26,19 @@ func (s Severity) valid() bool {
 // Diagnostic records a problem or limitation encountered while processing
 // evidence without discarding the otherwise usable result.
 type Diagnostic struct {
-	Code         string
-	Severity     Severity
-	Message      string
+	// Code is a stable machine-readable identifier; Message is the
+	// human-readable explanation.
+	Code     string
+	Severity Severity
+	Message  string
+
+	// Evidence references are optional because a source-level diagnostic may
+	// be known before a canonical event can be produced.
 	EventIDs     []EventID
 	RawRecordIDs []RawRecordID
 }
 
+// Validate checks the structural invariants of a diagnostic.
 func (d Diagnostic) Validate() error {
 	if strings.TrimSpace(d.Code) == "" {
 		return fmt.Errorf("diagnostic code is required")
@@ -48,6 +55,8 @@ func (d Diagnostic) Validate() error {
 	return validateRawRecordIDs(d.RawRecordIDs)
 }
 
+// FindingState distinguishes rule evaluation from applicability and missing
+// evidence. NotTriggered is not equivalent to NotApplicable.
 type FindingState string
 
 const (
@@ -73,12 +82,21 @@ type Finding struct {
 	RuleID      string
 	RuleVersion Version
 	State       FindingState
-	Severity    Severity
+	// Severity is optional because not-applicable and informational rule
+	// results may not have a severity.
+	Severity Severity
+
+	// Explanation states why the rule reached State. EventIDs identify the
+	// canonical evidence supporting that explanation.
 	Explanation string
 	EventIDs    []EventID
-	Metadata    map[string]string
+
+	// Metadata contains small source-neutral values emitted by the rule. It
+	// must not be used to hide source-specific parsing in the analysis layer.
+	Metadata map[string]string
 }
 
+// Validate checks the structural invariants of a finding.
 func (f Finding) Validate() error {
 	if strings.TrimSpace(string(f.ID)) == "" {
 		return fmt.Errorf("finding ID is required")
@@ -142,10 +160,14 @@ type OutcomeAssessment struct {
 	Outcome           Outcome
 	ClassifierID      string
 	ClassifierVersion Version
-	Explanation       string
-	EventIDs          []EventID
+
+	// Explanation and EventIDs make the classification inspectable. EventIDs
+	// may be empty for Unknown when no reliable canonical evidence is present.
+	Explanation string
+	EventIDs    []EventID
 }
 
+// Validate checks the structural invariants of an outcome assessment.
 func (a OutcomeAssessment) Validate() error {
 	if strings.TrimSpace(string(a.SessionID)) == "" {
 		return fmt.Errorf("outcome session ID is required")
