@@ -31,27 +31,28 @@ Read-only inputs
                                   |
                                   v
                       +------------------------+
-                      | Discovery and adapters |
+                      | Source discovery       |
                       +-----------+------------+
                                   |
-                         canonical event stream
+                           discovered sources
                                   |
                                   v
                       +------------------------+
-                      | Incremental importer   |
-                      +-----+-------------+----+
-                            |             |
-                            v             v
-                 +-------------+   +------------------+
-                 | Repository  |   | Deterministic    |
-                 | correlation |   | analysis         |
-                 +------+------+   +---------+--------+
-                        |                    |
-                        +---------+----------+
+                      | Adapters + importer    |
+                      | parse and normalize    |
+                      +-----------+------------+
+                                  |
+                    atomic canonical batch + checkpoint
+                                  v
+                      +------------------------+
+                      | Authoritative SQLite   |
+                      | data                   |
+                      +-----------+------------+
                                   |
                                   v
                       +------------------------+
-                      | SQLite storage + FTS5  |
+                      | Rebuildable projections |
+                      | FTS, Git, analysis     |
                       +-----------+------------+
                                   |
                                   v
@@ -90,18 +91,43 @@ normalize to canonical events
       +---- unknown record ----> canonical Unknown event + preserved raw data
       |
       v
+atomically persist event batch, session updates, and checkpoint
+      |
+      v
+update search projection
+      |
+      v
 correlate repository and Git evidence
       |
       v
-write events and import checkpoint in one batch transaction
-      |
-      v
-update full-text index and deterministic findings
+run deterministic analysis and update aggregates
 ```
 
-An import is incremental and idempotent. The importer records enough source identity and progress to avoid duplicating completed work. It detects when a source has been truncated or replaced and chooses a safe re-import path rather than trusting a stale byte offset.
+An import is incremental and idempotent. Only canonical event batches, their session updates, and the corresponding checkpoint share the import transaction. FTS indexing, repository and Git correlation, findings, outcomes, and aggregates run after commit. Failure in any of those projections is recorded and retried without invalidating otherwise durable imported evidence.
 
-Stable identifiers are derived from stable source identity and record identity or position. Source ordering is retained separately as a sequence number. Timestamps enrich the timeline but do not define identity or ordering because they may be absent, duplicated, or unreliable.
+The importer records enough source identity and progress to distinguish an append from truncation, replacement, or mutation before the checkpoint. A conceptual checkpoint is:
+
+```go
+type ImportCheckpoint struct {
+	SourceID       string
+	ByteOffset     int64
+	RecordSequence int64
+	PrefixHash     string
+	LastRecordHash string
+	SourceSize     int64
+}
+```
+
+The exact fingerprinting algorithm is adapter-aware and must remain streaming. A byte offset or record sequence alone is not a valid checkpoint. On an append, import resumes from verified prior state. On truncation, replacement, or mutation before the checkpoint, the importer safely reconciles or re-imports the authoritative records without leaving stale canonical events or producing duplicates.
+
+Event identifiers are deterministic. Adapters choose the strongest available identity in this order:
+
+1. A globally stable native event ID.
+2. A native session ID combined with a native event ID.
+3. Source identity, record sequence, and record hash.
+4. Source identity, byte range, and record hash.
+
+Source ordering is retained separately as a sequence number. Timestamps enrich the timeline but do not define identity or ordering because they may be absent, duplicated, or unreliable. Random identifiers are not used for imported events.
 
 The importer batches writes to bound memory use and database overhead. A committed batch contains its events and corresponding checkpoint together, so interruption cannot advance progress beyond durable data.
 
@@ -121,19 +147,40 @@ SQLite queries                  FTS5 queries
         +-------------+--------------+
                       |
                       v
-       canonical view data and evidence
+       summaries, details, and evidence
                       |
                       v
              presentation rendering
 ```
 
-Presentation packages request repositories, sessions, timelines, file impact, commands, findings, and search results through application services. They do not interpret raw source records, calculate outcomes, or issue Git commands.
+Presentation packages request repositories, sessions, timeline summaries, event details, file impact, commands, findings, and search results through application services. Timeline lists return lightweight records such as:
+
+```go
+type EventSummary struct {
+	ID       string
+	Sequence int64
+	Kind     EventKind
+	Summary  string
+}
+```
+
+Large command output, tool output, patches, normalized payloads, and retained raw data are fetched only when an event detail view requires them. Presentation code does not interpret raw source records, calculate outcomes, or issue Git commands.
 
 ## Components and ownership
 
 ### Discovery
 
 Discovery locates supported session sources at platform-specific default locations and user-configured paths. It reports inaccessible or malformed sources without preventing other sources from being indexed. Discovery determines where a source is; it does not interpret the source's records.
+
+The conceptual discovery contract is:
+
+```go
+type SourceDiscoverer interface {
+	Discover(ctx context.Context) ([]Source, error)
+}
+```
+
+Platform-specific discoverers may identify candidate type hints, but adapters remain responsible for confirming formats. Discovery implementations do not parse records or normalize events.
 
 ### Source adapters
 
@@ -144,7 +191,6 @@ The conceptual contract is:
 ```go
 type Adapter interface {
 	Name() string
-	Discover(ctx context.Context) ([]Source, error)
 	Probe(ctx context.Context, source Source) (ProbeResult, error)
 	Import(ctx context.Context, source Source, sink EventSink) error
 }
@@ -154,9 +200,11 @@ This contract documents the intended boundary, not a promise that these exact ex
 
 No package outside an adapter may branch on a source name to interpret source-specific structure. Adding a source begins with a new adapter and sanitized fixtures, not conditionals in shared packages.
 
-### Canonical event model
+### Authoritative data and the canonical event model
 
-The canonical model is the lossless boundary between source-specific input and shared behavior. The event envelope contains:
+Authoritative imported data consists of canonical sessions and events, retained raw records, and import checkpoints. This data reflects the source records that have been durably imported and is not discarded merely to refresh a query or analysis implementation.
+
+The canonical model provides stable shared semantics, while preserved raw records prevent unsupported source information from being discarded. The combination is loss-preserving; the normalized model alone is not necessarily lossless. The event envelope contains:
 
 ```text
 ID                 stable event identifier
@@ -172,31 +220,76 @@ Raw data           original source record
 
 Initial event categories are user and assistant messages, tool calls and results, command executions, file reads and mutations, patches, usage records, errors, summaries, and unknown source events.
 
-Raw records are retained so an adapter improvement can recover previously unrecognized information. Raw content is untrusted and must not be rendered as HTML or terminal control sequences without appropriate escaping or sanitization.
+Each imported session also records the adapter name and version, detected source-format version, canonical schema version, and normalization version. This metadata identifies data that may require re-normalization after an adapter or model change.
+
+Raw records are retained so an adapter improvement can recover previously unrecognized information. Raw retention is a deliberate privacy and storage policy, not an incidental copy of every payload. In v0.1 the retention mode is `full`: records up to 256 KiB may be stored inline with the event, while larger records are compressed and stored as separately fetched payloads in SQLite so timeline reads remain bounded. Large command and tool output follows the same payload path and is never silently truncated in authoritative storage. These thresholds are centralized and versioned rather than adapter-specific.
+
+Raw records are never added to the search index. A future configurable retention policy may support `unknown-only` and `none`; changing the default or allowing retention to be disabled requires an explicit privacy and recoverability decision because those modes prevent loss-preserving re-normalization. Deleting an imported session deletes its retained raw copies and associated projections, but never its read-only source files.
+
+Raw content is untrusted and must not be rendered as HTML or written to a terminal without the sanitization appropriate to that output.
 
 ### Importer
 
-The importer coordinates adapters, transactions, checkpoints, search indexing, and post-import analysis. It owns import lifecycle and progress reporting but delegates source parsing to adapters and persistence details to storage.
+The importer coordinates adapters, transactions, checkpoints, search indexing, and post-import projection work. It owns import lifecycle and progress reporting but delegates source parsing to adapters and persistence details to storage.
 
-Both interfaces observe the same progress model. Neither presentation layer implements a separate import path.
+A central application-level import coordinator owns active work. It permits one active import per source, coalesces duplicate requests, and publishes one shared progress stream to both interfaces. An import is application work rather than request-scoped work: closing a TUI view or HTTP connection stops that observer but does not cancel the shared import. Process shutdown stops new requests, cancels active work, and lets the current transaction commit or roll back safely. Neither presentation layer implements a separate import path.
 
 ### Repository and Git correlation
 
 Repository correlation connects a session's working directory and file evidence to a repository root, branch, nearby HEAD, and relevant commits when those facts are available.
 
-Git integration invokes only a small allowlist of non-interactive, read-only commands with explicit arguments and working directories. User-controlled text is never interpolated into a shell command, and the web interface cannot request arbitrary Git execution. Missing Git metadata reduces available evidence; it does not invalidate the imported session.
+Git integration invokes only a small allowlist of non-interactive, read-only commands with explicit arguments and working directories. User-controlled text is never interpolated into a shell command, and the web interface cannot request arbitrary Git execution. Correlation consumes durably stored canonical data and may use session-level context. Missing Git metadata or a correlation failure reduces available evidence and produces a projection diagnostic; it does not roll back or invalidate the imported session.
 
-### Storage and search
+### Storage, projections, and search
 
-SQLite is the durable store for canonical sessions, events, import checkpoints, repository associations, findings, settings, and diagnostics. FTS5 indexes searchable event text and related repository and session metadata.
+SQLite stores two classes of data:
 
-Storage details remain behind repository-style interfaces consumed by application services and import workflows. Schema changes use ordered embedded migrations. Import batches use transactions, foreign keys are enabled, and tests use isolated temporary databases.
+```text
+Authoritative data
+- sessions
+- canonical events
+- retained raw records
+- import checkpoints
+
+Rebuildable projections
+- FTS indexes
+- repository and Git correlations
+- findings
+- outcomes
+- statistics and aggregates
+```
+
+Projection data can be deleted and reconstructed from authoritative database data without re-reading the original session source. Git projections may additionally consult the still read-only repository. Projection schemas record the version that produced them and whether rebuilding is pending or failed.
+
+Storage details remain behind small, consumer-owned use-case interfaces rather than one interface per table. Examples include an `ImportStore` that atomically commits a batch, a `SessionReader` that lists sessions and timelines and fetches event details, and an `AnalysisStore` that replaces versioned findings and outcomes. Application code depends on these interfaces, not concrete SQLite types. Schema changes use ordered embedded migrations. Import batches use transactions, foreign keys are enabled, and tests use isolated temporary databases.
+
+The `search` capability parses user input, validates filters, and produces a storage-neutral `SearchQuery`. The SQLite storage implementation translates that query into SQL and FTS5 expressions and owns ranking, snippets, and pagination.
+
+Indexing favors useful evidence over payload volume:
+
+```text
+Always index
+- messages, commands, and errors
+- file paths and tool names
+- event summaries
+
+Conditionally index within configured size and type limits
+- command and tool output
+- patches
+
+Never index
+- retained raw source records
+- binary content
+- excessively large output
+```
 
 The pure-Go SQLite driver preserves CGO-free cross-compilation at the cost of a larger executable.
 
 ### Analysis
 
-Analysis runs deterministic rules over canonical events. A finding contains a rule identifier, severity, explanation, related event IDs, and supporting metadata. Rules may identify evidence such as unresolved failures, repeated failed commands, missing verification, excessive loops, or a success claim following an unresolved error.
+Analysis runs deterministic rules over canonical events. A finding is an evidence-level result, such as a repeated failing command. It contains a rule identifier and version, applicability state, severity where applicable, explanation, related event IDs, and supporting metadata. Rule evaluation supports `triggered`, `not triggered`, `not applicable`, and `insufficient evidence`; absence of a detected action is not automatically a defect. For example, a rule should report “No verification command was detected after source-code changes” only when the evidence makes source-code verification applicable.
+
+An outcome is a separate session-level classification produced by a versioned outcome classifier. Findings and outcomes are stored independently so either rule set can be rebuilt after an upgrade without re-importing the source.
 
 Session outcomes are:
 
@@ -208,7 +301,7 @@ Abandoned
 Unknown
 ```
 
-Classification is conservative. A final assistant claim is evidence but never proof by itself. A failed verification remains unresolved until a later relevant run succeeds. When evidence is incomplete or contradictory and no reliable rule applies, the outcome is `Unknown`.
+Classification is conservative. `Successful` means the recorded session contains positive completion and verification evidence with no known unresolved contradiction. It describes the observed execution outcome; it is not a guarantee that the implementation is semantically correct. A final assistant claim is evidence but never proof by itself. A failed verification remains unresolved until a later relevant run succeeds. When evidence is incomplete or contradictory and no reliable rule applies, the outcome is `Unknown`.
 
 ### Application services
 
@@ -227,11 +320,11 @@ Services return canonical view data rather than UI-specific components. Presenta
 
 The Bubble Tea TUI is the default interface. The web interface uses `net/http`, templ, htmx partial updates where useful, and minimal JavaScript. Both expose the same underlying evidence even when their navigation and rendering differ.
 
-The HTTP server listens on localhost by default. Session IDs, file paths, queries, and all rendered source content are untrusted inputs. Handlers validate identifiers and paths, templ escapes dynamic HTML content, and exported reports pass through redaction.
+The HTTP server listens on localhost by default. Session IDs, file paths, queries, and all rendered source content are untrusted inputs. Handlers validate identifiers and paths, templ escapes dynamic HTML content, and exported reports pass through redaction before output-specific rendering.
 
 ## Dependency direction
 
-Dependencies point inward toward shared models and use cases:
+Dependencies point inward toward the domain and consumer-owned application interfaces:
 
 ```text
 cmd/agentsession
@@ -245,21 +338,23 @@ cmd/agentsession
        +--------+--------+
                 |
                 v
-          app services
-                |
-       +--------+-------------------+
-       |        |          |        |
-       v        v          v        v
-   importer   search    analysis   export
-       |        |          |        |
-       +--------+----------+--------+
-                |
-                v
-        canonical model
-                ^
-                |
-  adapters   storage   Git integration
+          app services <---------------------------+
+                |                                  |
+       +--------+-------------------+              |
+       |        |          |        |              |
+       v        v          v        v              |
+   importer   search    analysis   export          |
+       |                   |                       |
+       +-------------------+                       |
+                |                                  |
+                v                                  |
+              domain                               |
+                                                   |
+ implementations of consumer-owned interfaces -----+
+   adapters      SQLite storage      Git CLI
 ```
+
+Presentation calls application services; importer and analysis operate on domain types. Adapters implement source-format interfaces, SQLite implements storage and query interfaces, and the controlled Git CLI wrapper implements Git evidence interfaces. Application and domain code do not depend directly on SQLite, FTS5, or process execution.
 
 The diagram expresses architectural ownership, not a requirement for every package to import `model` directly. In particular:
 
@@ -268,6 +363,8 @@ The diagram expresses architectural ownership, not a requirement for every packa
 - storage does not interpret source formats or depend on presentation.
 - analysis consumes canonical evidence and does not parse raw source formats.
 - `tui` and `web` depend on application-facing interfaces, not concrete storage or adapters.
+- application services, importer, and analysis define the narrow interfaces they consume.
+- SQLite, Git, and adapter implementations are wired to those interfaces at the process boundary.
 - `cli` performs process wiring; business rules do not live there.
 
 Cycles between capability packages are architectural defects and should be resolved by moving shared types inward or defining a consumer-owned interface.
@@ -288,8 +385,9 @@ internal/
   analysis/              deterministic findings and outcomes
   git/                   allowlisted read-only Git operations
   storage/sqlite/         SQLite repositories and migrations
-  search/                query parsing and FTS coordination
-  redaction/             secret detection and safe rendering data
+  search/                query parsing and filter validation
+  redaction/             secret detection and removal
+  sanitization/          output-context safety transformations
   export/                redacted report generation
   tui/                   Bubble Tea presentation
   web/                   HTTP, templ components, and static assets
@@ -307,6 +405,15 @@ Directories should be introduced with working code rather than created as empty 
 Agent session files and repositories belong to the user and are immutable inputs. AgentSession owns only its configuration, indexes, database, caches, and exports. These are stored outside source session directories and inspected repositories.
 
 Session content can contain secrets in prompts, environment output, commands, patches, and paths. Logs avoid raw records by default. User-facing exports are redacted, explicitly initiated, and written only to the requested local destination.
+
+Redaction and sanitization are separate operations:
+
+- Redaction detects and removes secrets such as API keys, passwords, tokens, authorization headers, and private keys.
+- Sanitization prevents an output channel from interpreting untrusted content. It addresses HTML injection and terminal controls including ANSI escapes, OSC clipboard commands, terminal-title changes, deceptive hyperlinks, and bidirectional control characters.
+
+Exports operate on structured data, redact it before rendering, and then use an output-specific renderer for HTML, JSON, or Markdown. Renderers must escape or sanitize for their destination even after redaction; redaction is not an interface-security boundary.
+
+No raw or normalized session content is ever written directly to a terminal. All TUI text, diagnostics containing source content, previews, and terminal-bound exports pass through the terminal sanitizer immediately before rendering. This is a system invariant enforced at terminal output boundaries, not an optional presentation detail.
 
 ### Errors and partial evidence
 
@@ -335,8 +442,8 @@ To add a source adapter:
 To add an analysis rule:
 
 1. Define the precise canonical evidence the rule consumes.
-2. Produce a stable rule identifier, severity, explanation, and related event IDs.
-3. Cover success, failure, contradictory evidence, and insufficient evidence with table-driven tests.
+2. Produce a stable rule identifier and version, applicability state, severity where applicable, explanation, and related event IDs.
+3. Cover triggered, not-triggered, not-applicable, contradictory, and insufficient-evidence cases with table-driven tests.
 4. Expose the result through shared application services so both interfaces remain consistent.
 
 Changes to module boundaries, the canonical model, database ownership, privacy guarantees, or outcome semantics require an architecture decision record in `docs/decisions/`.
