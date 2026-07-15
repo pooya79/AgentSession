@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -23,7 +22,7 @@ func main() {
 
 	info := buildinfo.Info{Version: version, Commit: commit, Date: date}
 	if err := cli.Execute(ctx, os.Args[1:], os.Stdout, os.Stderr, info); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		cli.WriteError(os.Stderr, err)
 		os.Exit(1)
 	}
 }

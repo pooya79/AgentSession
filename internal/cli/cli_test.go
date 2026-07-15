@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -52,5 +53,13 @@ func TestUnknownCommandReturnsError(t *testing.T) {
 	err := Execute(context.Background(), []string{"missing"}, &stdout, &stderr, buildinfo.Info{})
 	if err == nil {
 		t.Fatal("Execute() error = nil, want an unknown-command error")
+	}
+}
+
+func TestWriteErrorSanitizesDiagnostic(t *testing.T) {
+	var output bytes.Buffer
+	WriteError(&output, errors.New("source \x1b]52;c;c2VjcmV0\x07failed\u202e"))
+	if got, want := output.String(), "error: source failed<U+202E>\n"; got != want {
+		t.Fatalf("diagnostic = %q, want %q", got, want)
 	}
 }
