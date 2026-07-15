@@ -1,5 +1,10 @@
 package web
 
+// sourceText is the mandatory escaped-text boundary for untrusted web content.
+templ sourceText(content string) {
+	{ content }
+}
+
 templ indexPage() {
 	<!DOCTYPE html>
 	<html lang="en">

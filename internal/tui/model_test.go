@@ -42,3 +42,10 @@ func TestResize(t *testing.T) {
 		t.Fatalf("dimensions = %dx%d, want 120x40", model.width, model.height)
 	}
 }
+
+func TestTerminalViewSanitizesContent(t *testing.T) {
+	view := terminalView("safe\x1b]8;;https://attacker.invalid\x07label\x1b]8;;\x07\u202e")
+	if got, want := view.Content, "safelabel<U+202E>"; got != want {
+		t.Fatalf("terminalView() content = %q, want %q", got, want)
+	}
+}

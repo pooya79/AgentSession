@@ -1,12 +1,32 @@
 package web
 
 import (
+	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestSourceTextEscapesHTML(t *testing.T) {
+	const source = `<script data-value="'&">alert(1)</script>`
+	var rendered bytes.Buffer
+	if err := sourceText(source).Render(context.Background(), &rendered); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+
+	body := rendered.String()
+	if strings.Contains(body, "<script") || strings.Contains(body, "</script>") {
+		t.Fatalf("sourceText() rendered trusted HTML: %q", body)
+	}
+	for _, escaped := range []string{"&lt;script", "&#34;", "&#39;", "&amp;", "&lt;/script&gt;"} {
+		if !strings.Contains(body, escaped) {
+			t.Errorf("sourceText() = %q, want escaped fragment %q", body, escaped)
+		}
+	}
+}
 
 func TestHandler(t *testing.T) {
 	tests := []struct {

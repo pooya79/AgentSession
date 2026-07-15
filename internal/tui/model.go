@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/pooya79/AgentSession/internal/sanitization"
 )
 
 // Model is the initial AgentSession terminal interface.
@@ -53,9 +55,14 @@ func (m Model) View() tea.View {
 		content = fmt.Sprintf("%s\n\nTerminal: %dx%d", content, m.width, m.height)
 	}
 
-	view := tea.NewView(content)
+	view := terminalView(content)
 	view.AltScreen = true
 	return view
+}
+
+// terminalView is the mandatory sanitization boundary for TUI content.
+func terminalView(content string) tea.View {
+	return tea.NewView(sanitization.Terminal(content))
 }
 
 // Run opens the interactive terminal interface.

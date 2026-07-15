@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/pooya79/AgentSession/internal/buildinfo"
+	"github.com/pooya79/AgentSession/internal/sanitization"
 	"github.com/pooya79/AgentSession/internal/tui"
 	webui "github.com/pooya79/AgentSession/internal/web"
 )
@@ -46,12 +47,22 @@ func newWebCommand() *cobra.Command {
 		Short: "Start the local web interface",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cmd.Printf("AgentSession web listening on http://%s\n", addr)
+			writeTerminalText(cmd.OutOrStdout(), fmt.Sprintf("AgentSession web listening on http://%s\n", addr))
 			return webui.Serve(cmd.Context(), addr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", addr, "listen address")
 	return cmd
+}
+
+// WriteError writes a process-level terminal diagnostic through the mandatory
+// sanitization boundary.
+func WriteError(w io.Writer, err error) {
+	writeTerminalText(w, fmt.Sprintf("error: %v\n", err))
+}
+
+func writeTerminalText(w io.Writer, text string) {
+	_, _ = io.WriteString(w, sanitization.Terminal(text))
 }
 
 func newVersionCommand(info buildinfo.Info) *cobra.Command {
