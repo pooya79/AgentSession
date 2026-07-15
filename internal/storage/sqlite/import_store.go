@@ -1,0 +1,555 @@
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"reflect"
+	"strings"
+	"time"
+
+	"github.com/pooya79/AgentSession/internal/importer"
+	"github.com/pooya79/AgentSession/internal/model"
+)
+
+// ImportStore persists authoritative import data in SQLite.
+type ImportStore struct {
+	db *sql.DB
+
+	// beforeCommit is an internal lifecycle seam used to verify interruption
+	// behavior deterministically. Production stores leave it nil.
+	beforeCommit func()
+}
+
+var _ importer.ImportStore = (*ImportStore)(nil)
+
+// NewImportStore creates an import store backed by a migrated database.
+func NewImportStore(db *sql.DB) (*ImportStore, error) {
+	if db == nil {
+		return nil, errors.New("sqlite import store: database is nil")
+	}
+	return &ImportStore{db: db}, nil
+}
+
+// CommitBatch atomically persists a canonical batch and its checkpoint.
+func (s *ImportStore) CommitBatch(ctx context.Context, batch importer.ImportBatch) (err error) {
+	sourceID := batch.Checkpoint.SourceID
+	wrap := func(operation string, cause error) error {
+		return fmt.Errorf("sqlite import store: commit batch for source %q: %s: %w", sourceID, operation, cause)
+	}
+	if err := batch.Validate(); err != nil {
+		return wrap("validate batch", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return wrap("check cancellation", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return wrap("begin transaction", err)
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			err = errors.Join(err, wrap("roll back transaction", rollbackErr))
+		}
+	}()
+
+	if err := upsertSession(ctx, tx, batch.Session); err != nil {
+		return wrap("persist session", err)
+	}
+	for i, event := range batch.Events {
+		if err := persistEvent(ctx, tx, event); err != nil {
+			return wrap(fmt.Sprintf("persist event %d (%q)", i, event.ID), err)
+		}
+	}
+	if err := replaceDiagnostics(ctx, tx, batch.Session); err != nil {
+		return wrap("replace diagnostics", err)
+	}
+	if err := persistCheckpoint(ctx, tx, batch.Checkpoint); err != nil {
+		return wrap("persist checkpoint", err)
+	}
+
+	if s.beforeCommit != nil {
+		s.beforeCommit()
+	}
+	if err := ctx.Err(); err != nil {
+		return wrap("check cancellation before commit", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return wrap("commit transaction", err)
+	}
+	committed = true
+	return nil
+}
+
+func upsertSession(ctx context.Context, tx *sql.Tx, session model.Session) error {
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO sessions (
+			id, title, summary, started_at, ended_at, source_id,
+			adapter_name, adapter_version, format_version, model_version, normalization_version
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			title = excluded.title,
+			summary = excluded.summary,
+			started_at = excluded.started_at,
+			ended_at = excluded.ended_at,
+			adapter_name = excluded.adapter_name,
+			adapter_version = excluded.adapter_version,
+			format_version = excluded.format_version,
+			model_version = excluded.model_version,
+			normalization_version = excluded.normalization_version
+		WHERE sessions.source_id = excluded.source_id
+	`,
+		session.ID,
+		session.Title,
+		session.Summary,
+		encodeTime(session.StartedAt),
+		encodeTime(session.EndedAt),
+		session.Import.SourceID,
+		session.Import.AdapterName,
+		session.Import.AdapterVersion,
+		session.Import.FormatVersion,
+		session.Import.ModelVersion,
+		session.Import.NormalizationVersion,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert session %q: %w", session.ID, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect session %q upsert: %w", session.ID, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("session %q is already associated with another source", session.ID)
+	}
+	return nil
+}
+
+type storedEvent struct {
+	ID                string
+	SessionID         string
+	Sequence          int64
+	Timestamp         string
+	Kind              string
+	Summary           string
+	SearchableText    string
+	DataJSON          string
+	RawRecordID       string
+	RawSourceID       string
+	RawRecordSequence sql.NullInt64
+	RawByteOffset     sql.NullInt64
+	RawByteLength     sql.NullInt64
+	RawContentHash    string
+}
+
+func eventForStorage(event model.Event) (storedEvent, error) {
+	dataJSON, err := json.Marshal(event.Data)
+	if err != nil {
+		return storedEvent{}, fmt.Errorf("encode normalized data: %w", err)
+	}
+	stored := storedEvent{
+		ID:             string(event.ID),
+		SessionID:      string(event.SessionID),
+		Sequence:       event.Sequence,
+		Timestamp:      timeString(event.Timestamp),
+		Kind:           string(event.Kind),
+		Summary:        event.Summary,
+		SearchableText: event.SearchableText,
+		DataJSON:       string(dataJSON),
+		RawRecordID:    string(event.RawRecord.ID),
+		RawSourceID:    string(event.RawRecord.SourceID),
+		RawContentHash: event.RawRecord.ContentHash,
+	}
+	if event.RawRecord.RecordSequence != nil {
+		stored.RawRecordSequence = sql.NullInt64{Int64: *event.RawRecord.RecordSequence, Valid: true}
+	}
+	if event.RawRecord.ByteRange != nil {
+		stored.RawByteOffset = sql.NullInt64{Int64: event.RawRecord.ByteRange.Offset, Valid: true}
+		stored.RawByteLength = sql.NullInt64{Int64: event.RawRecord.ByteRange.Length, Valid: true}
+	}
+	return stored, nil
+}
+
+func persistEvent(ctx context.Context, tx *sql.Tx, event model.Event) error {
+	stored, err := eventForStorage(event)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO events (
+			id, session_id, sequence, timestamp, kind, summary, searchable_text, data_json,
+			raw_record_id, raw_source_id, raw_record_sequence, raw_byte_offset, raw_byte_length, raw_content_hash
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO NOTHING
+	`, stored.values()...)
+	if err != nil {
+		return fmt.Errorf("insert event: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect event insert: %w", err)
+	}
+	if rows == 1 {
+		return nil
+	}
+
+	existing, found, err := selectStoredEvent(ctx, tx, event.ID)
+	if err != nil {
+		return fmt.Errorf("load duplicate event: %w", err)
+	}
+	if !found || !reflect.DeepEqual(existing, stored) {
+		return fmt.Errorf("%w: event ID %q has different canonical content", importer.ErrEventConflict, event.ID)
+	}
+	return nil
+}
+
+func (e storedEvent) values() []any {
+	return []any{
+		e.ID, e.SessionID, e.Sequence, nullIfEmpty(e.Timestamp), e.Kind, e.Summary, e.SearchableText, e.DataJSON,
+		e.RawRecordID, e.RawSourceID, nullableInt(e.RawRecordSequence), nullableInt(e.RawByteOffset),
+		nullableInt(e.RawByteLength), e.RawContentHash,
+	}
+}
+
+type rowQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func selectStoredEvent(ctx context.Context, queryer rowQueryer, eventID model.EventID) (storedEvent, bool, error) {
+	var event storedEvent
+	var timestamp sql.NullString
+	err := queryer.QueryRowContext(ctx, `
+		SELECT id, session_id, sequence, timestamp, kind, summary, searchable_text, data_json,
+		       raw_record_id, raw_source_id, raw_record_sequence, raw_byte_offset, raw_byte_length, raw_content_hash
+		FROM events WHERE id = ?
+	`, eventID).Scan(
+		&event.ID, &event.SessionID, &event.Sequence, &timestamp, &event.Kind, &event.Summary,
+		&event.SearchableText, &event.DataJSON, &event.RawRecordID, &event.RawSourceID,
+		&event.RawRecordSequence, &event.RawByteOffset, &event.RawByteLength, &event.RawContentHash,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return storedEvent{}, false, nil
+	}
+	if err != nil {
+		return storedEvent{}, false, err
+	}
+	if timestamp.Valid {
+		event.Timestamp = timestamp.String
+	}
+	return event, true, nil
+}
+
+func replaceDiagnostics(ctx context.Context, tx *sql.Tx, session model.Session) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM session_diagnostics WHERE session_id = ?`, session.ID); err != nil {
+		return fmt.Errorf("delete diagnostics for session %q: %w", session.ID, err)
+	}
+	for i, diagnostic := range session.Diagnostics {
+		eventIDs, err := json.Marshal(diagnostic.EventIDs)
+		if err != nil {
+			return fmt.Errorf("encode diagnostic %d event IDs: %w", i, err)
+		}
+		rawRecordIDs, err := json.Marshal(diagnostic.RawRecordIDs)
+		if err != nil {
+			return fmt.Errorf("encode diagnostic %d raw record IDs: %w", i, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO session_diagnostics (
+				session_id, position, code, severity, message, event_ids_json, raw_record_ids_json
+			) VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, session.ID, i, diagnostic.Code, diagnostic.Severity, diagnostic.Message, string(eventIDs), string(rawRecordIDs)); err != nil {
+			return fmt.Errorf("insert diagnostic %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func persistCheckpoint(ctx context.Context, tx *sql.Tx, checkpoint importer.ImportCheckpoint) error {
+	existing, found, err := selectCheckpoint(ctx, tx, checkpoint.SourceID)
+	if err != nil {
+		return fmt.Errorf("load current checkpoint: %w", err)
+	}
+	if found && (checkpoint.ByteOffset < existing.ByteOffset ||
+		checkpoint.RecordSequence < existing.RecordSequence ||
+		checkpoint.SourceSize < existing.SourceSize) {
+		return fmt.Errorf(
+			"%w: source %q cursor (%d, %d, %d) is behind (%d, %d, %d)",
+			importer.ErrCheckpointRegression,
+			checkpoint.SourceID,
+			checkpoint.ByteOffset,
+			checkpoint.RecordSequence,
+			checkpoint.SourceSize,
+			existing.ByteOffset,
+			existing.RecordSequence,
+			existing.SourceSize,
+		)
+	}
+	if found && checkpoint.ByteOffset == existing.ByteOffset && checkpoint.RecordSequence == existing.RecordSequence &&
+		(checkpoint.PrefixHash != existing.PrefixHash || checkpoint.LastRecordHash != existing.LastRecordHash) {
+		return fmt.Errorf("%w: source %q fingerprints changed at the committed cursor", importer.ErrCheckpointRegression, checkpoint.SourceID)
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO import_checkpoints (
+			source_id, byte_offset, record_sequence, prefix_hash, last_record_hash, source_size
+		) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(source_id) DO UPDATE SET
+			byte_offset = excluded.byte_offset,
+			record_sequence = excluded.record_sequence,
+			prefix_hash = excluded.prefix_hash,
+			last_record_hash = excluded.last_record_hash,
+			source_size = excluded.source_size
+	`, checkpoint.SourceID, checkpoint.ByteOffset, checkpoint.RecordSequence, checkpoint.PrefixHash, checkpoint.LastRecordHash, checkpoint.SourceSize)
+	if err != nil {
+		return fmt.Errorf("upsert source checkpoint: %w", err)
+	}
+	return nil
+}
+
+func selectCheckpoint(ctx context.Context, queryer rowQueryer, sourceID model.SourceID) (importer.ImportCheckpoint, bool, error) {
+	var checkpoint importer.ImportCheckpoint
+	err := queryer.QueryRowContext(ctx, `
+		SELECT source_id, byte_offset, record_sequence, prefix_hash, last_record_hash, source_size
+		FROM import_checkpoints WHERE source_id = ?
+	`, sourceID).Scan(
+		&checkpoint.SourceID,
+		&checkpoint.ByteOffset,
+		&checkpoint.RecordSequence,
+		&checkpoint.PrefixHash,
+		&checkpoint.LastRecordHash,
+		&checkpoint.SourceSize,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return importer.ImportCheckpoint{}, false, nil
+	}
+	if err != nil {
+		return importer.ImportCheckpoint{}, false, err
+	}
+	return checkpoint, true, nil
+}
+
+// Checkpoint returns the committed checkpoint for sourceID.
+func (s *ImportStore) Checkpoint(ctx context.Context, sourceID model.SourceID) (importer.ImportCheckpoint, bool, error) {
+	if strings.TrimSpace(string(sourceID)) == "" {
+		return importer.ImportCheckpoint{}, false, errors.New("sqlite import store: read checkpoint: source ID is required")
+	}
+	checkpoint, found, err := selectCheckpoint(ctx, s.db, sourceID)
+	if err != nil {
+		return importer.ImportCheckpoint{}, false, fmt.Errorf("sqlite import store: read checkpoint for source %q: %w", sourceID, err)
+	}
+	return checkpoint, found, nil
+}
+
+// Session returns a canonical session and its ordered diagnostic snapshot.
+func (s *ImportStore) Session(ctx context.Context, sessionID model.SessionID) (model.Session, bool, error) {
+	var session model.Session
+	var startedAt, endedAt sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, title, summary, started_at, ended_at, source_id,
+		       adapter_name, adapter_version, format_version, model_version, normalization_version
+		FROM sessions WHERE id = ?
+	`, sessionID).Scan(
+		&session.ID, &session.Title, &session.Summary, &startedAt, &endedAt, &session.Import.SourceID,
+		&session.Import.AdapterName, &session.Import.AdapterVersion, &session.Import.FormatVersion,
+		&session.Import.ModelVersion, &session.Import.NormalizationVersion,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Session{}, false, nil
+	}
+	if err != nil {
+		return model.Session{}, false, fmt.Errorf("sqlite import store: read session %q: %w", sessionID, err)
+	}
+	if session.StartedAt, err = decodeTime(startedAt); err != nil {
+		return model.Session{}, false, fmt.Errorf("sqlite import store: decode session %q start time: %w", sessionID, err)
+	}
+	if session.EndedAt, err = decodeTime(endedAt); err != nil {
+		return model.Session{}, false, fmt.Errorf("sqlite import store: decode session %q end time: %w", sessionID, err)
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT code, severity, message, event_ids_json, raw_record_ids_json
+		FROM session_diagnostics WHERE session_id = ? ORDER BY position
+	`, sessionID)
+	if err != nil {
+		return model.Session{}, false, fmt.Errorf("sqlite import store: read diagnostics for session %q: %w", sessionID, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var diagnostic model.Diagnostic
+		var eventIDs, rawRecordIDs string
+		if err := rows.Scan(&diagnostic.Code, &diagnostic.Severity, &diagnostic.Message, &eventIDs, &rawRecordIDs); err != nil {
+			return model.Session{}, false, fmt.Errorf("sqlite import store: scan diagnostic for session %q: %w", sessionID, err)
+		}
+		if err := json.Unmarshal([]byte(eventIDs), &diagnostic.EventIDs); err != nil {
+			return model.Session{}, false, fmt.Errorf("sqlite import store: decode diagnostic event IDs for session %q: %w", sessionID, err)
+		}
+		if err := json.Unmarshal([]byte(rawRecordIDs), &diagnostic.RawRecordIDs); err != nil {
+			return model.Session{}, false, fmt.Errorf("sqlite import store: decode diagnostic raw record IDs for session %q: %w", sessionID, err)
+		}
+		session.Diagnostics = append(session.Diagnostics, diagnostic)
+	}
+	if err := rows.Err(); err != nil {
+		return model.Session{}, false, fmt.Errorf("sqlite import store: iterate diagnostics for session %q: %w", sessionID, err)
+	}
+	return session, true, nil
+}
+
+// Events returns full canonical events in stable source order.
+func (s *ImportStore) Events(ctx context.Context, sessionID model.SessionID) ([]model.Event, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, session_id, sequence, timestamp, kind, summary, searchable_text, data_json,
+		       raw_record_id, raw_source_id, raw_record_sequence, raw_byte_offset, raw_byte_length, raw_content_hash
+		FROM events WHERE session_id = ? ORDER BY sequence
+	`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite import store: read events for session %q: %w", sessionID, err)
+	}
+	defer rows.Close()
+
+	var events []model.Event
+	for rows.Next() {
+		var stored storedEvent
+		var timestamp sql.NullString
+		if err := rows.Scan(
+			&stored.ID, &stored.SessionID, &stored.Sequence, &timestamp, &stored.Kind, &stored.Summary,
+			&stored.SearchableText, &stored.DataJSON, &stored.RawRecordID, &stored.RawSourceID,
+			&stored.RawRecordSequence, &stored.RawByteOffset, &stored.RawByteLength, &stored.RawContentHash,
+		); err != nil {
+			return nil, fmt.Errorf("sqlite import store: scan event for session %q: %w", sessionID, err)
+		}
+		if timestamp.Valid {
+			stored.Timestamp = timestamp.String
+		}
+		event, err := stored.toModel()
+		if err != nil {
+			return nil, fmt.Errorf("sqlite import store: decode event %q for session %q: %w", stored.ID, sessionID, err)
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite import store: iterate events for session %q: %w", sessionID, err)
+	}
+	return events, nil
+}
+
+func (e storedEvent) toModel() (model.Event, error) {
+	timestamp, err := decodeTimeString(e.Timestamp)
+	if err != nil {
+		return model.Event{}, fmt.Errorf("decode timestamp: %w", err)
+	}
+	kind := model.EventKind(e.Kind)
+	data, err := decodeNormalizedData(kind, e.DataJSON)
+	if err != nil {
+		return model.Event{}, err
+	}
+	event := model.Event{
+		ID:             model.EventID(e.ID),
+		SessionID:      model.SessionID(e.SessionID),
+		Sequence:       e.Sequence,
+		Timestamp:      timestamp,
+		Kind:           kind,
+		Summary:        e.Summary,
+		SearchableText: e.SearchableText,
+		Data:           data,
+		RawRecord: model.RawRecordRef{
+			ID:          model.RawRecordID(e.RawRecordID),
+			SourceID:    model.SourceID(e.RawSourceID),
+			ContentHash: e.RawContentHash,
+		},
+	}
+	if e.RawRecordSequence.Valid {
+		value := e.RawRecordSequence.Int64
+		event.RawRecord.RecordSequence = &value
+	}
+	if e.RawByteOffset.Valid {
+		event.RawRecord.ByteRange = &model.ByteRange{Offset: e.RawByteOffset.Int64, Length: e.RawByteLength.Int64}
+	}
+	if err := event.Validate(); err != nil {
+		return model.Event{}, fmt.Errorf("validate stored event: %w", err)
+	}
+	return event, nil
+}
+
+func decodeNormalizedData(kind model.EventKind, encoded string) (model.NormalizedData, error) {
+	var target model.NormalizedData
+	switch kind {
+	case model.EventKindMessage:
+		target = &model.MessageData{}
+	case model.EventKindToolCall:
+		target = &model.ToolCallData{}
+	case model.EventKindToolResult:
+		target = &model.ToolResultData{}
+	case model.EventKindCommand:
+		target = &model.CommandData{}
+	case model.EventKindFileRead:
+		target = &model.FileReadData{}
+	case model.EventKindFileMutation:
+		target = &model.FileMutationData{}
+	case model.EventKindPatch:
+		target = &model.PatchData{}
+	case model.EventKindUsage:
+		target = &model.UsageData{}
+	case model.EventKindError:
+		target = &model.ErrorData{}
+	case model.EventKindSummary:
+		target = &model.SummaryData{}
+	case model.EventKindUnknown:
+		target = &model.UnknownData{}
+	default:
+		return nil, fmt.Errorf("unsupported stored event kind %q", kind)
+	}
+	if err := json.Unmarshal([]byte(encoded), target); err != nil {
+		return nil, fmt.Errorf("decode %q normalized data: %w", kind, err)
+	}
+	return reflect.ValueOf(target).Elem().Interface().(model.NormalizedData), nil
+}
+
+func encodeTime(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC().Format(time.RFC3339Nano)
+}
+
+func timeString(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
+}
+
+func decodeTime(value sql.NullString) (*time.Time, error) {
+	if !value.Valid {
+		return nil, nil
+	}
+	return decodeTimeString(value.String)
+}
+
+func decodeTimeString(value string) (*time.Time, error) {
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}
+
+func nullableInt(value sql.NullInt64) any {
+	if !value.Valid {
+		return nil
+	}
+	return value.Int64
+}
+
+func nullIfEmpty(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}

@@ -27,7 +27,11 @@ func TestOpenMigratesFreshDatabaseAndReopenIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() fresh database error = %v", err)
 	}
-	assertMigrationHistory(t, db, []migration{{version: 1, name: "0001_foundation.sql"}})
+	wantMigrations := []migration{
+		{version: 1, name: "0001_foundation.sql"},
+		{version: 2, name: "0002_import_store.sql"},
+	}
+	assertMigrationHistory(t, db, wantMigrations)
 	if err := db.Close(); err != nil {
 		t.Fatalf("Close() fresh database error = %v", err)
 	}
@@ -42,7 +46,7 @@ func TestOpenMigratesFreshDatabaseAndReopenIsIdempotent(t *testing.T) {
 		}
 	})
 
-	assertMigrationHistory(t, db, []migration{{version: 1, name: "0001_foundation.sql"}})
+	assertMigrationHistory(t, db, wantMigrations)
 	var tableCount int
 	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM sqlite_schema
