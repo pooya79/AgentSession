@@ -134,6 +134,64 @@ func TestNewEventIDByteRangeFallback(t *testing.T) {
 	}
 }
 
+func TestNewEventIDDisambiguatesEventsFromOneRecord(t *testing.T) {
+	sequence := int64(7)
+	sequenceInput := EventIDInput{
+		SourceID:       "source-1",
+		RecordSequence: &sequence,
+		RecordHash:     "record-hash",
+	}
+	assertDistinctEventOrdinals(t, sequenceInput)
+
+	byteRangeInput := EventIDInput{
+		SourceID:   "source-1",
+		ByteRange:  &ByteRange{Offset: 20, Length: 10},
+		RecordHash: "record-hash",
+	}
+	assertDistinctEventOrdinals(t, byteRangeInput)
+}
+
+func TestNewEventIDNativeIdentityIgnoresFallbackOrdinal(t *testing.T) {
+	input := EventIDInput{Native: &NativeEventIdentity{
+		Scope: NativeEventIDGlobal, EventID: "native-event",
+	}}
+	first, err := NewEventID(input)
+	if err != nil {
+		t.Fatalf("NewEventID() error = %v", err)
+	}
+	input.EventOrdinal = 4
+	second, err := NewEventID(input)
+	if err != nil {
+		t.Fatalf("NewEventID() with fallback ordinal error = %v", err)
+	}
+	if first != second {
+		t.Fatalf("native NewEventID() = %q then %q, want fallback ordinal ignored", first, second)
+	}
+}
+
+func assertDistinctEventOrdinals(t *testing.T, input EventIDInput) {
+	t.Helper()
+	first, err := NewEventID(input)
+	if err != nil {
+		t.Fatalf("ordinal zero NewEventID() error = %v", err)
+	}
+	input.EventOrdinal = 1
+	second, err := NewEventID(input)
+	if err != nil {
+		t.Fatalf("ordinal one NewEventID() error = %v", err)
+	}
+	repeated, err := NewEventID(input)
+	if err != nil {
+		t.Fatalf("repeated ordinal one NewEventID() error = %v", err)
+	}
+	if first == second {
+		t.Fatalf("ordinals zero and one produced the same event ID %q", first)
+	}
+	if second != repeated {
+		t.Fatalf("ordinal one NewEventID() = %q then %q, want stable result", second, repeated)
+	}
+}
+
 func TestNewEventIDRejectsIncompleteInputs(t *testing.T) {
 	sequence := int64(1)
 	tests := []EventIDInput{

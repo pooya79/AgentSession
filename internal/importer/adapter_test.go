@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/pooya79/AgentSession/internal/model"
 )
@@ -16,7 +17,7 @@ type fakeAdapter struct {
 	probeResult ProbeResult
 	probeErr    error
 	probeFn     func(context.Context, Source) (ProbeResult, error)
-	importFn    func(context.Context, Source, RecordSink) error
+	importFn    func(context.Context, Source, ImportSink) error
 	probeCalls  int
 	importCalls int
 }
@@ -32,7 +33,7 @@ func (a *fakeAdapter) Probe(ctx context.Context, source Source) (ProbeResult, er
 	return a.probeResult, a.probeErr
 }
 
-func (a *fakeAdapter) Import(ctx context.Context, source Source, sink RecordSink) error {
+func (a *fakeAdapter) Import(ctx context.Context, source Source, sink ImportSink) error {
 	a.importCalls++
 	if a.importFn == nil {
 		return nil
@@ -42,9 +43,13 @@ func (a *fakeAdapter) Import(ctx context.Context, source Source, sink RecordSink
 
 type sinkFunc func(context.Context, RecordEnvelope) error
 
+func (sinkFunc) Begin(context.Context, model.Session) error { return nil }
+
 func (f sinkFunc) Accept(ctx context.Context, envelope RecordEnvelope) error {
 	return f(ctx, envelope)
 }
+
+func (sinkFunc) Complete(context.Context, model.Session) error { return nil }
 
 func TestProbeIsIndependentFromCanonicalImport(t *testing.T) {
 	adapter := &fakeAdapter{probeResult: ProbeResult{Confidence: ProbeCertain, FormatVersion: "1"}}
@@ -204,6 +209,89 @@ func TestRecordEnvelopeCheckpointIsTiedToDeliveredRecord(t *testing.T) {
 	}
 }
 
+func TestImportSessionLifecycleSupportsMalformedOnlySource(t *testing.T) {
+	source := testSource([]byte("{malformed}\n"))
+	initial := testSession(source)
+	envelope := testEnvelopeForSource(source, 0, 0, []byte("{malformed}\n"))
+	envelope.Diagnostics = []model.Diagnostic{{
+		Code: "record.malformed", Severity: model.SeverityWarning, Message: "record could not be normalized",
+		RawRecordIDs: []model.RawRecordID{envelope.RawRecord.Ref.ID},
+	}}
+	startedAt := time.Date(2026, time.July, 18, 10, 0, 0, 0, time.UTC)
+	endedAt := startedAt.Add(time.Minute)
+	completed := initial
+	completed.Title = "Recovered session"
+	completed.StartedAt = &startedAt
+	completed.EndedAt = &endedAt
+	completed.Diagnostics = append(completed.Diagnostics, envelope.Diagnostics...)
+
+	adapter := &fakeAdapter{importFn: func(ctx context.Context, _ Source, sink ImportSink) error {
+		if err := sink.Begin(ctx, initial); err != nil {
+			return err
+		}
+		if err := sink.Accept(ctx, envelope); err != nil {
+			return err
+		}
+		return sink.Complete(ctx, completed)
+	}}
+	sink := &lifecycleSink{}
+	if err := adapter.Import(context.Background(), source, sink); err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if sink.calls != "begin,accept,complete" {
+		t.Fatalf("lifecycle calls = %q, want begin,accept,complete", sink.calls)
+	}
+	if len(sink.envelopes) != 1 || len(sink.envelopes[0].Events) != 0 {
+		t.Fatalf("accepted envelopes = %#v, want one malformed record without events", sink.envelopes)
+	}
+	if err := sink.envelopes[0].ValidateForSession(sink.initial); err != nil {
+		t.Fatalf("ValidateForSession() error = %v", err)
+	}
+	if err := ValidateSessionTransition(sink.initial, sink.completed); err != nil {
+		t.Fatalf("ValidateSessionTransition() error = %v", err)
+	}
+	if sink.completed.StartedAt == nil || sink.completed.EndedAt == nil || len(sink.completed.Diagnostics) != 1 ||
+		!diagnosticEqual(sink.completed.Diagnostics[0], envelope.Diagnostics[0]) {
+		t.Fatalf("completed session did not retain adapter timestamps and record diagnostics: %#v", sink.completed)
+	}
+}
+
+func TestSessionLifecycleValidationRejectsChangedIdentityOrLostDiagnostics(t *testing.T) {
+	initial := testSession(testSource(nil))
+	initial.Diagnostics = []model.Diagnostic{{
+		Code: "session.partial", Severity: model.SeverityWarning, Message: "session metadata is partial",
+	}}
+	tests := []struct {
+		name   string
+		mutate func(*model.Session)
+	}{
+		{name: "session ID", mutate: func(session *model.Session) { session.ID = "other-session" }},
+		{name: "source ID", mutate: func(session *model.Session) { session.Import.SourceID = "other-source" }},
+		{name: "normalization version", mutate: func(session *model.Session) { session.Import.NormalizationVersion = "2" }},
+		{name: "lost diagnostics", mutate: func(session *model.Session) { session.Diagnostics = nil }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			completed := initial
+			completed.Diagnostics = append([]model.Diagnostic(nil), initial.Diagnostics...)
+			tt.mutate(&completed)
+			if err := ValidateSessionTransition(initial, completed); err == nil {
+				t.Fatal("ValidateSessionTransition() error = nil, want lifecycle mismatch")
+			}
+		})
+	}
+}
+
+func TestRecordEnvelopeRejectsDifferentLifecycleSession(t *testing.T) {
+	envelope := testEnvelope(t, 0, []byte("record\n"))
+	envelope.Events = []model.Event{testUnknownEvent(t, envelope.RawRecord.Ref, 0)}
+	session := testSession(testSource(nil))
+	session.ID = "another-session"
+	if err := envelope.ValidateForSession(session); err == nil {
+		t.Fatal("ValidateForSession() error = nil, want session mismatch")
+	}
+}
+
 func TestStreamingImportStopsWithoutReadingVeryLargeSource(t *testing.T) {
 	const records = int64(10_000_000)
 	reader := &syntheticRecordReader{remaining: records}
@@ -260,9 +348,29 @@ func TestStreamingImportHonorsCancellation(t *testing.T) {
 	}
 }
 
-func streamSyntheticRecords(ctx context.Context, source Source, sink RecordSink) error {
+func TestStreamingImportStopsBeforeCompleteOnSinkError(t *testing.T) {
+	source := testSource([]byte(syntheticLine))
+	stop := errors.New("stop delivery")
+	sink := &lifecycleSink{acceptErr: stop}
+	err := streamSyntheticRecords(context.Background(), source, sink)
+	if !errors.Is(err, stop) {
+		t.Fatalf("streamSyntheticRecords() error = %v, want sink error", err)
+	}
+	if sink.calls != "begin,accept" {
+		t.Fatalf("lifecycle calls = %q, want begin,accept without complete", sink.calls)
+	}
+}
+
+func streamSyntheticRecords(ctx context.Context, source Source, sink ImportSink) error {
 	if err := source.Validate(); err != nil {
 		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	session := testSession(source)
+	if err := sink.Begin(ctx, session); err != nil {
+		return fmt.Errorf("begin source %q session: %w", source.ID, err)
 	}
 	stream, err := source.Open(ctx)
 	if err != nil {
@@ -288,6 +396,9 @@ func streamSyntheticRecords(ctx context.Context, source Source, sink RecordSink)
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				if completeErr := sink.Complete(ctx, session); completeErr != nil {
+					return fmt.Errorf("complete source %q session: %w", source.ID, completeErr)
+				}
 				return nil
 			}
 			return fmt.Errorf("read source %q: %w", source.ID, err)
@@ -295,10 +406,53 @@ func streamSyntheticRecords(ctx context.Context, source Source, sink RecordSink)
 	}
 }
 
+type lifecycleSink struct {
+	calls     string
+	initial   model.Session
+	completed model.Session
+	envelopes []RecordEnvelope
+	acceptErr error
+}
+
+func (s *lifecycleSink) recordCall(call string) {
+	if s.calls != "" {
+		s.calls += ","
+	}
+	s.calls += call
+}
+
+func (s *lifecycleSink) Begin(_ context.Context, session model.Session) error {
+	s.recordCall("begin")
+	s.initial = session
+	return nil
+}
+
+func (s *lifecycleSink) Accept(_ context.Context, envelope RecordEnvelope) error {
+	s.recordCall("accept")
+	s.envelopes = append(s.envelopes, envelope)
+	return s.acceptErr
+}
+
+func (s *lifecycleSink) Complete(_ context.Context, session model.Session) error {
+	s.recordCall("complete")
+	s.completed = session
+	return nil
+}
+
 func testSource(content []byte) Source {
 	return Source{ID: "source-1", Size: int64(len(content)), Hint: "fixture-format", Open: func(context.Context) (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(content)), nil
 	}}
+}
+
+func testSession(source Source) model.Session {
+	return model.Session{
+		ID: "session-fixture",
+		Import: model.ImportMetadata{
+			SourceID: source.ID, AdapterName: "fixture", AdapterVersion: "1",
+			FormatVersion: "1", ModelVersion: "1", NormalizationVersion: "1",
+		},
+	}
 }
 
 func testEnvelope(t *testing.T, sequence int64, content []byte) RecordEnvelope {

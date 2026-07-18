@@ -124,8 +124,16 @@ Event identifiers are deterministic. Adapters choose the strongest available ide
 
 1. A globally stable native event ID.
 2. A native session ID combined with a native event ID.
-3. Source identity, record sequence, and record hash.
-4. Source identity, byte range, and record hash.
+3. Source identity, record sequence, record hash, and per-record event ordinal.
+4. Source identity, byte range, record hash, and per-record event ordinal.
+
+The event ordinal is the zero-based position of a canonical event among all
+events normalized from one raw record. Ordinal zero retains the original
+fallback identity encoding; positive ordinals use distinct versioned identity
+tiers. This preserves existing one-event record IDs while allowing one record
+to produce multiple canonical events. Adapters assign ordinals
+deterministically and change their normalization version if a mapping change
+would alter those assignments.
 
 Source ordering is retained separately as a sequence number. Timestamps enrich the timeline but do not define identity or ordering because they may be absent, duplicated, or unreliable. Random identifiers are not used for imported events.
 
@@ -196,20 +204,32 @@ type Adapter interface {
 	Name() string
 	Version() model.Version
 	Probe(ctx context.Context, source Source) (ProbeResult, error)
-	Import(ctx context.Context, source Source, sink RecordSink) error
+	Import(ctx context.Context, source Source, sink ImportSink) error
 }
 
-type RecordSink interface {
+type ImportSink interface {
+	Begin(ctx context.Context, session model.Session) error
 	Accept(ctx context.Context, record RecordEnvelope) error
+	Complete(ctx context.Context, session model.Session) error
 }
 ```
 
 Probe results contain only recognition confidence, detected format metadata,
-and diagnostics; probing cannot emit or commit canonical data. Import calls the
-sink synchronously, making return from `Accept` the backpressure boundary. Each
-record envelope carries the exact retained raw bytes, zero or more canonical
-events, recoverable diagnostics, and progress after that record. A sink error
-or context cancellation stops delivery immediately.
+and diagnostics; probing cannot emit or commit canonical data. `Begin`
+establishes a valid canonical session before any record delivery, including its
+stable ID, adapter-owned metadata, initial timestamps and diagnostics, and the
+format, model, and normalization versions. Import calls the sink synchronously,
+making return from `Accept` the backpressure boundary. Each record envelope
+carries the exact retained raw bytes, zero or more canonical events,
+recoverable diagnostics, and progress after that record.
+
+After successful parsing, `Complete` publishes the authoritative enriched
+session snapshot. Its session and import identities are unchanged from
+`Begin`, while its title, summary, timestamps, and diagnostics may be enriched.
+The final snapshot retains diagnostics known at `Begin` and diagnostics emitted
+for records. This lifecycle supplies a canonical session even when every
+trustworthy record is malformed and produces no event. A sink error or context
+cancellation stops delivery immediately and prevents `Complete`.
 
 An envelope checkpoint is tied to the record being delivered: its last-record
 hash matches the retained content hash, its sequence matches when present, and

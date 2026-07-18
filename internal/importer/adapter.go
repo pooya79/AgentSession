@@ -80,13 +80,21 @@ type Adapter interface {
 	Name() string
 	Version() model.Version
 	Probe(context.Context, Source) (ProbeResult, error)
-	Import(context.Context, Source, RecordSink) error
+	Import(context.Context, Source, ImportSink) error
 }
 
-// RecordSink consumes one source record at a time. Accept is synchronous:
-// returning from it is the backpressure boundary for the adapter.
-type RecordSink interface {
+// ImportSink consumes one canonical session lifecycle. Begin establishes the
+// session before any records are delivered. Accept is synchronous, making its
+// return the backpressure boundary. Complete publishes the authoritative
+// enriched session snapshot after a successful import, including imports that
+// retained malformed records but produced no events.
+//
+// An adapter must stop immediately on a sink error or context cancellation and
+// must not call Complete after either condition.
+type ImportSink interface {
+	Begin(context.Context, model.Session) error
 	Accept(context.Context, RecordEnvelope) error
+	Complete(context.Context, model.Session) error
 }
 
 // RecordEnvelope keeps a retained source record, its canonical interpretation,
@@ -148,6 +156,74 @@ func (e RecordEnvelope) Validate() error {
 		}
 	}
 	return nil
+}
+
+// ValidateForSession checks an envelope and verifies that its evidence belongs
+// to the canonical session established for the import.
+func (e RecordEnvelope) ValidateForSession(session model.Session) error {
+	if err := session.Validate(); err != nil {
+		return fmt.Errorf("validate session: %w", err)
+	}
+	if err := e.Validate(); err != nil {
+		return err
+	}
+	if e.RawRecord.Ref.SourceID != session.Import.SourceID {
+		return fmt.Errorf("raw record source %q does not match session source %q", e.RawRecord.Ref.SourceID, session.Import.SourceID)
+	}
+	for i, event := range e.Events {
+		if event.SessionID != session.ID {
+			return fmt.Errorf("event %d belongs to session %q, want %q", i, event.SessionID, session.ID)
+		}
+	}
+	return nil
+}
+
+// ValidateSessionTransition checks the immutable identity and normalization
+// metadata shared by the initial and completed session snapshots. Completion
+// may enrich display metadata, timestamps, and diagnostics, but cannot discard
+// diagnostics that were already present at Begin.
+func ValidateSessionTransition(initial, completed model.Session) error {
+	if err := initial.Validate(); err != nil {
+		return fmt.Errorf("validate initial session: %w", err)
+	}
+	if err := completed.Validate(); err != nil {
+		return fmt.Errorf("validate completed session: %w", err)
+	}
+	if completed.ID != initial.ID {
+		return fmt.Errorf("completed session ID %q does not match initial session ID %q", completed.ID, initial.ID)
+	}
+	if completed.Import != initial.Import {
+		return fmt.Errorf("completed session import metadata differs from initial session")
+	}
+	if len(completed.Diagnostics) < len(initial.Diagnostics) {
+		return fmt.Errorf("completed session discarded initial diagnostics")
+	}
+	for i := range initial.Diagnostics {
+		if !diagnosticEqual(initial.Diagnostics[i], completed.Diagnostics[i]) {
+			return fmt.Errorf("completed session diagnostic %d differs from initial diagnostic", i)
+		}
+	}
+	return nil
+}
+
+func diagnosticEqual(left, right model.Diagnostic) bool {
+	if left.Code != right.Code || left.Severity != right.Severity || left.Message != right.Message {
+		return false
+	}
+	if len(left.EventIDs) != len(right.EventIDs) || len(left.RawRecordIDs) != len(right.RawRecordIDs) {
+		return false
+	}
+	for i := range left.EventIDs {
+		if left.EventIDs[i] != right.EventIDs[i] {
+			return false
+		}
+	}
+	for i := range left.RawRecordIDs {
+		if left.RawRecordIDs[i] != right.RawRecordIDs[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func validateEnvelopeCheckpoint(ref model.RawRecordRef, checkpoint ImportCheckpoint) error {
