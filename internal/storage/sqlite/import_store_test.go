@@ -2,7 +2,9 @@ package sqlite
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/pooya79/AgentSession/internal/importer"
 	"github.com/pooya79/AgentSession/internal/model"
+	storagecontract "github.com/pooya79/AgentSession/internal/storage"
 )
 
 func TestImportStoreRoundTripAndStableSourceOrder(t *testing.T) {
@@ -125,6 +128,225 @@ func TestImportStoreCompressesAndRestoresLargeRawRecord(t *testing.T) {
 	got, found, err := store.RawRecord(context.Background(), batch.RawRecords[0].Ref.ID)
 	if err != nil || !found || !reflect.DeepEqual(got, batch.RawRecords[0]) {
 		t.Fatalf("RawRecord() = (%#v, %v, %v), want original large content", got, found, err)
+	}
+}
+
+func TestImportStoreRawRecordThresholdBoundaries(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name         string
+		size         int
+		wantEncoding string
+	}{
+		{name: "at threshold", size: storagecontract.InlinePayloadThresholdBytes, wantEncoding: rawEncodingIdentity},
+		{name: "above threshold", size: storagecontract.InlinePayloadThresholdBytes + 1, wantEncoding: rawEncodingZlib},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := openImportStore(t)
+			batch := testImportBatch()
+			batch.RawRecords[0].Content = []byte(strings.Repeat("r", tt.size))
+			batch.RawRecords[0].Ref.ByteRange = nil
+			batch.Events[0].RawRecord = batch.RawRecords[0].Ref
+
+			if err := store.CommitBatch(context.Background(), batch); err != nil {
+				t.Fatalf("CommitBatch() error = %v", err)
+			}
+			var encoding string
+			var policyVersion int
+			if err := store.db.QueryRow(`
+				SELECT storage_encoding, retention_policy_version FROM raw_records WHERE id = ?
+			`, batch.RawRecords[0].Ref.ID).Scan(&encoding, &policyVersion); err != nil {
+				t.Fatalf("query retained raw-record storage: %v", err)
+			}
+			if encoding != tt.wantEncoding || policyVersion != storagecontract.FullRetentionPolicyVersion {
+				t.Fatalf("raw storage = (%q, %d), want (%q, %d)", encoding, policyVersion, tt.wantEncoding, storagecontract.FullRetentionPolicyVersion)
+			}
+			assertRawRecord(t, store, batch.RawRecords[0])
+		})
+	}
+}
+
+func TestImportStoreNormalizedPayloadThresholdBoundaries(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name        string
+		encodedSize int
+		wantStorage string
+		wantPayload int
+	}{
+		{name: "at threshold", encodedSize: storagecontract.InlinePayloadThresholdBytes, wantStorage: payloadInline, wantPayload: 0},
+		{name: "above threshold", encodedSize: storagecontract.InlinePayloadThresholdBytes + 1, wantStorage: payloadDetached, wantPayload: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := openImportStore(t)
+			batch := testImportBatch()
+			batch.Events[0].Kind = model.EventKindSummary
+			batch.Events[0].Data = summaryPayloadWithEncodedSize(t, tt.encodedSize)
+
+			if err := store.CommitBatch(context.Background(), batch); err != nil {
+				t.Fatalf("CommitBatch() error = %v", err)
+			}
+			var storage string
+			var policyVersion int
+			if err := store.db.QueryRow(`
+				SELECT payload_storage, retention_policy_version FROM events WHERE id = ?
+			`, batch.Events[0].ID).Scan(&storage, &policyVersion); err != nil {
+				t.Fatalf("query event payload storage: %v", err)
+			}
+			if storage != tt.wantStorage || policyVersion != storagecontract.FullRetentionPolicyVersion {
+				t.Fatalf("event storage = (%q, %d), want (%q, %d)", storage, policyVersion, tt.wantStorage, storagecontract.FullRetentionPolicyVersion)
+			}
+			var payloadCount int
+			if err := store.db.QueryRow(`SELECT COUNT(*) FROM event_payloads WHERE event_id = ?`, batch.Events[0].ID).Scan(&payloadCount); err != nil {
+				t.Fatalf("query event payload count: %v", err)
+			}
+			if payloadCount != tt.wantPayload {
+				t.Fatalf("event payload count = %d, want %d", payloadCount, tt.wantPayload)
+			}
+			got, found, err := store.Event(context.Background(), batch.Events[0].ID)
+			if err != nil || !found || !reflect.DeepEqual(got, batch.Events[0]) {
+				t.Fatalf("Event() = (%#v, %v, %v), want full event", got, found, err)
+			}
+		})
+	}
+}
+
+func TestImportStoreRestoresLargeNormalizedEvidenceWithoutTruncation(t *testing.T) {
+	t.Parallel()
+
+	large := strings.Repeat("normalized evidence ", storagecontract.InlinePayloadThresholdBytes/8)
+	for _, tt := range []struct {
+		name string
+		data model.NormalizedData
+	}{
+		{name: "command output", data: model.CommandData{Command: "test", Output: large}},
+		{name: "tool output", data: model.ToolResultData{ToolName: "test", Output: large}},
+		{name: "patch", data: model.PatchData{Text: large, Paths: []string{"main.go"}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := openImportStore(t)
+			batch := testImportBatch()
+			batch.Events[0].Kind = payloadKind(tt.data)
+			batch.Events[0].Data = tt.data
+			if err := store.CommitBatch(context.Background(), batch); err != nil {
+				t.Fatalf("CommitBatch() error = %v", err)
+			}
+			var encoding string
+			if err := store.db.QueryRow(`SELECT storage_encoding FROM event_payloads WHERE event_id = ?`, batch.Events[0].ID).Scan(&encoding); err != nil {
+				t.Fatalf("query detached payload encoding: %v", err)
+			}
+			if encoding != storagecontract.EncodingZlib {
+				t.Fatalf("detached payload encoding = %q, want zlib", encoding)
+			}
+			got, found, err := store.Event(context.Background(), batch.Events[0].ID)
+			if err != nil || !found || !reflect.DeepEqual(got.Data, tt.data) {
+				t.Fatalf("Event() normalized data = (%#v, %v, %v), want untruncated payload", got.Data, found, err)
+			}
+		})
+	}
+}
+
+func TestImportStoreTimelineDoesNotLoadDetachedPayloads(t *testing.T) {
+	t.Parallel()
+
+	store := openImportStore(t)
+	batch := testImportBatch()
+	batch.Events[0].Kind = model.EventKindSummary
+	batch.Events[0].Data = summaryPayloadWithEncodedSize(t, storagecontract.InlinePayloadThresholdBytes+1)
+	if err := store.CommitBatch(context.Background(), batch); err != nil {
+		t.Fatalf("CommitBatch() error = %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE event_payloads SET content = ? WHERE event_id = ?`, []byte("corrupt"), batch.Events[0].ID); err != nil {
+		t.Fatalf("corrupt detached payload: %v", err)
+	}
+
+	summaries, err := store.EventSummaries(context.Background(), batch.Session.ID)
+	if err != nil {
+		t.Fatalf("EventSummaries() error = %v; timeline must not fetch detached content", err)
+	}
+	want := []model.EventSummary{{
+		ID: batch.Events[0].ID, SessionID: batch.Session.ID, Sequence: batch.Events[0].Sequence,
+		Timestamp: batch.Events[0].Timestamp, Kind: batch.Events[0].Kind, Summary: batch.Events[0].Summary,
+	}}
+	if !reflect.DeepEqual(summaries, want) {
+		t.Fatalf("EventSummaries() = %#v, want %#v", summaries, want)
+	}
+	if _, _, err := store.Event(context.Background(), batch.Events[0].ID); err == nil {
+		t.Fatal("Event() error = nil after payload corruption, want detail decode error")
+	}
+}
+
+func TestImportStoreDoesNotDeriveSearchableTextFromRawContent(t *testing.T) {
+	t.Parallel()
+
+	store := openImportStore(t)
+	batch := testImportBatch()
+	const rawOnly = "RAW-SECRET-MUST-NOT-BE-INDEXED"
+	batch.RawRecords[0].Content = []byte(rawOnly)
+	batch.Events[0].SearchableText = "normalized only"
+	if err := store.CommitBatch(context.Background(), batch); err != nil {
+		t.Fatalf("CommitBatch() error = %v", err)
+	}
+	var searchable string
+	if err := store.db.QueryRow(`SELECT searchable_text FROM events WHERE id = ?`, batch.Events[0].ID).Scan(&searchable); err != nil {
+		t.Fatalf("query searchable text: %v", err)
+	}
+	if searchable != batch.Events[0].SearchableText || strings.Contains(searchable, rawOnly) {
+		t.Fatalf("stored searchable text = %q, want normalized text only", searchable)
+	}
+}
+
+func TestImportStoreDeleteSessionRemovesOwnedDataWithoutTouchingSource(t *testing.T) {
+	t.Parallel()
+
+	store := openImportStore(t)
+	batch := testImportBatch()
+	batch.Events[0].Kind = model.EventKindSummary
+	batch.Events[0].Data = summaryPayloadWithEncodedSize(t, storagecontract.InlinePayloadThresholdBytes+1)
+	sourcePath := filepath.Join(t.TempDir(), "source.jsonl")
+	sourceContent := []byte("read-only source evidence\n")
+	if err := os.WriteFile(sourcePath, sourceContent, 0o600); err != nil {
+		t.Fatalf("write source fixture: %v", err)
+	}
+	if err := store.CommitBatch(context.Background(), batch); err != nil {
+		t.Fatalf("CommitBatch() error = %v", err)
+	}
+	if _, err := store.db.Exec(`
+		CREATE TABLE test_projection (
+			session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+			value TEXT NOT NULL
+		) STRICT
+	`); err != nil {
+		t.Fatalf("create projection fixture: %v", err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO test_projection (session_id, value) VALUES (?, 'projection')`, batch.Session.ID); err != nil {
+		t.Fatalf("insert projection fixture: %v", err)
+	}
+
+	deleted, err := store.DeleteSession(context.Background(), batch.Session.ID)
+	if err != nil || !deleted {
+		t.Fatalf("DeleteSession() = (%v, %v), want (true, nil)", deleted, err)
+	}
+	for _, table := range []string{"sessions", "events", "event_payloads", "raw_records", "session_diagnostics", "import_checkpoints", "test_projection"} {
+		var count int
+		if err := store.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+			t.Fatalf("count %s after deletion: %v", table, err)
+		}
+		if count != 0 {
+			t.Errorf("%s row count after deletion = %d, want 0", table, count)
+		}
+	}
+	gotSource, err := os.ReadFile(sourcePath)
+	if err != nil || !reflect.DeepEqual(gotSource, sourceContent) {
+		t.Fatalf("source after deletion = (%q, %v), want unchanged", gotSource, err)
+	}
+	if deleted, err := store.DeleteSession(context.Background(), batch.Session.ID); err != nil || deleted {
+		t.Fatalf("second DeleteSession() = (%v, %v), want (false, nil)", deleted, err)
 	}
 }
 
@@ -529,6 +751,26 @@ func payloadKind(payload model.NormalizedData) model.EventKind {
 	default:
 		panic("unsupported test payload")
 	}
+}
+
+func summaryPayloadWithEncodedSize(t *testing.T, size int) model.SummaryData {
+	t.Helper()
+	empty, err := json.Marshal(model.SummaryData{})
+	if err != nil {
+		t.Fatalf("marshal empty summary payload: %v", err)
+	}
+	if size < len(empty) {
+		t.Fatalf("requested encoded payload size %d is smaller than JSON envelope %d", size, len(empty))
+	}
+	payload := model.SummaryData{Text: strings.Repeat("x", size-len(empty))}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal sized summary payload: %v", err)
+	}
+	if len(encoded) != size {
+		t.Fatalf("sized summary payload length = %d, want %d", len(encoded), size)
+	}
+	return payload
 }
 
 func boolPointer(value bool) *bool    { return &value }
