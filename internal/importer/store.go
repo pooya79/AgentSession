@@ -127,8 +127,11 @@ func validateRawRecordPosition(ref model.RawRecordRef, checkpoint ImportCheckpoi
 		return fmt.Errorf("raw record sequence %d exceeds checkpoint sequence %d", *sequence, checkpoint.RecordSequence)
 	}
 	if byteRange := ref.ByteRange; byteRange != nil {
-		end := byteRange.Offset + byteRange.Length
-		if end < byteRange.Offset || end > checkpoint.ByteOffset {
+		end, err := byteRange.End()
+		if err != nil {
+			return fmt.Errorf("raw byte range: %w", err)
+		}
+		if end > checkpoint.ByteOffset {
 			return fmt.Errorf("raw byte range ends at %d beyond checkpoint offset %d", end, checkpoint.ByteOffset)
 		}
 	}

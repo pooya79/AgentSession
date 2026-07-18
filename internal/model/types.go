@@ -108,13 +108,30 @@ type ByteRange struct {
 }
 
 func (r ByteRange) validate() error {
+	return r.Validate()
+}
+
+// Validate checks that a byte range is non-empty and can be represented
+// without overflowing int64 when its end is calculated.
+func (r ByteRange) Validate() error {
 	if r.Offset < 0 {
 		return fmt.Errorf("byte offset must not be negative")
 	}
 	if r.Length <= 0 {
 		return fmt.Errorf("byte length must be positive")
 	}
+	if r.Length > int64(^uint64(0)>>1)-r.Offset {
+		return fmt.Errorf("byte range end overflows int64")
+	}
 	return nil
+}
+
+// End returns the exclusive end offset of the half-open byte range.
+func (r ByteRange) End() (int64, error) {
+	if err := r.Validate(); err != nil {
+		return 0, err
+	}
+	return r.Offset + r.Length, nil
 }
 
 // RawRecordRef points to an authoritative raw record without embedding its

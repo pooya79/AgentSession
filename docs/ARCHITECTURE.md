@@ -186,17 +186,41 @@ Platform-specific discoverers may identify candidate type hints, but adapters re
 
 Each coding-agent format has an isolated adapter. An adapter owns probing, streaming parsing, source-specific identifiers, and normalization into canonical events.
 
-The conceptual contract is:
+The importer owns the adapter contract it consumes. A source supplies stable
+identity and size metadata plus a function that opens a fresh read-only stream;
+discovery's source-kind hint remains advisory and is never used by shared
+import code to interpret a format.
 
 ```go
 type Adapter interface {
 	Name() string
+	Version() model.Version
 	Probe(ctx context.Context, source Source) (ProbeResult, error)
-	Import(ctx context.Context, source Source, sink EventSink) error
+	Import(ctx context.Context, source Source, sink RecordSink) error
+}
+
+type RecordSink interface {
+	Accept(ctx context.Context, record RecordEnvelope) error
 }
 ```
 
-This contract documents the intended boundary, not a promise that these exact exported Go types already exist. Interfaces should ultimately be defined by their consumers and kept as small as real implementations allow.
+Probe results contain only recognition confidence, detected format metadata,
+and diagnostics; probing cannot emit or commit canonical data. Import calls the
+sink synchronously, making return from `Accept` the backpressure boundary. Each
+record envelope carries the exact retained raw bytes, zero or more canonical
+events, recoverable diagnostics, and progress after that record. A sink error
+or context cancellation stops delivery immediately.
+
+An envelope checkpoint is tied to the record being delivered: its last-record
+hash matches the retained content hash, its sequence matches when present, and
+its byte offset is the exclusive end of the retained byte range when present.
+Batch checkpoints remain final-batch cursors, so records earlier in a durable
+batch may correctly lie before that checkpoint.
+
+Unknown records become canonical `Unknown` events when they can be associated
+with a session. A malformed record whose boundary is still trustworthy is
+retained with a diagnostic even when it cannot produce an event. Loss of a
+trustworthy record boundary or an unreadable source is an import error.
 
 No package outside an adapter may branch on a source name to interpret source-specific structure. Adding a source begins with a new adapter and sanitized fixtures, not conditionals in shared packages.
 

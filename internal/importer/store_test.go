@@ -20,6 +20,14 @@ func TestImportBatchValidateRejectsEvidenceBeyondCheckpoint(t *testing.T) {
 	}
 }
 
+func TestImportBatchAllowsEvidenceBeforeFinalCheckpoint(t *testing.T) {
+	batch := validBatchForTest(3)
+	batch.Checkpoint.RecordSequence = 9
+	if err := batch.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v, want an earlier record to remain valid under the final batch checkpoint", err)
+	}
+}
+
 func TestImportBatchValidateRequiresMatchingRetainedRawRecord(t *testing.T) {
 	tests := []struct {
 		name      string
