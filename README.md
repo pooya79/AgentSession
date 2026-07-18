@@ -2,7 +2,17 @@
 
 AgentSession is a lightweight, local-first explorer for coding-agent sessions. It turns local records from coding agents into repository-aware evidence about messages, commands, file changes, tests, failures, and outcomes.
 
-The project is currently an early runnable scaffold. Session discovery, importing, storage, and analysis are not implemented yet.
+The project is currently an early runnable scaffold. Read-only session source discovery and the authoritative import storage foundation are implemented; source adapters, import orchestration, search, and analysis are still under development.
+
+## Session source discovery
+
+The discovery package locates candidate session files without parsing their contents. It checks these defaults:
+
+- Codex CLI: `$CODEX_HOME/sessions`, falling back to `~/.codex/sessions`
+- Claude Code: `$CLAUDE_CONFIG_DIR/projects`, falling back to `~/.claude/projects`
+- OpenCode: `$XDG_DATA_HOME/opencode/opencode.db`, falling back to `~/.local/share/opencode/opencode.db`
+
+Callers may also provide tool-typed files or directories explicitly. Missing default locations are treated as tools that are not installed. Inaccessible or structurally malformed locations produce diagnostics without suppressing valid sources found elsewhere. Discovery opens candidate files only to verify read access; source adapters remain responsible for probing and parsing their formats.
 
 ## Requirements
 
