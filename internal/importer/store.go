@@ -14,6 +14,9 @@ var (
 	// ErrEventConflict means a stable event ID is already associated with
 	// different canonical evidence.
 	ErrEventConflict = errors.New("import event conflicts with committed evidence")
+	// ErrRawRecordConflict means a retained raw-record ID is already associated
+	// with different source evidence.
+	ErrRawRecordConflict = errors.New("import raw record conflicts with committed evidence")
 	// ErrCheckpointRegression means an ordinary import attempted to move a
 	// verified source cursor behind its committed position.
 	ErrCheckpointRegression = errors.New("import checkpoint would regress")
@@ -60,6 +63,7 @@ func (c ImportCheckpoint) Validate() error {
 // must become durable with Checkpoint in one transaction.
 type ImportBatch struct {
 	Session    model.Session
+	RawRecords []model.RawRecord
 	Events     []model.Event
 	Checkpoint ImportCheckpoint
 }
@@ -78,6 +82,22 @@ func (b ImportBatch) Validate() error {
 	if err := model.ValidateEventOrder(b.Events); err != nil {
 		return fmt.Errorf("validate event order: %w", err)
 	}
+	rawRecords := make(map[model.RawRecordID]model.RawRecord, len(b.RawRecords))
+	for i, rawRecord := range b.RawRecords {
+		if err := rawRecord.Validate(); err != nil {
+			return fmt.Errorf("validate raw record %d: %w", i, err)
+		}
+		if rawRecord.Ref.SourceID != b.Checkpoint.SourceID {
+			return fmt.Errorf("raw record %d source %q does not match checkpoint source %q", i, rawRecord.Ref.SourceID, b.Checkpoint.SourceID)
+		}
+		if _, exists := rawRecords[rawRecord.Ref.ID]; exists {
+			return fmt.Errorf("raw record %d repeats ID %q", i, rawRecord.Ref.ID)
+		}
+		if err := validateRawRecordPosition(rawRecord.Ref, b.Checkpoint); err != nil {
+			return fmt.Errorf("raw record %d: %w", i, err)
+		}
+		rawRecords[rawRecord.Ref.ID] = rawRecord
+	}
 	for i, event := range b.Events {
 		if err := event.Validate(); err != nil {
 			return fmt.Errorf("validate event %d: %w", i, err)
@@ -88,21 +108,53 @@ func (b ImportBatch) Validate() error {
 		if event.RawRecord.SourceID != b.Checkpoint.SourceID {
 			return fmt.Errorf("event %d raw source %q does not match checkpoint source %q", i, event.RawRecord.SourceID, b.Checkpoint.SourceID)
 		}
-		if sequence := event.RawRecord.RecordSequence; sequence != nil && *sequence > b.Checkpoint.RecordSequence {
-			return fmt.Errorf("event %d raw record sequence %d exceeds checkpoint sequence %d", i, *sequence, b.Checkpoint.RecordSequence)
+		if err := validateRawRecordPosition(event.RawRecord, b.Checkpoint); err != nil {
+			return fmt.Errorf("event %d: %w", i, err)
 		}
-		if byteRange := event.RawRecord.ByteRange; byteRange != nil {
-			end := byteRange.Offset + byteRange.Length
-			if end < byteRange.Offset || end > b.Checkpoint.ByteOffset {
-				return fmt.Errorf("event %d raw byte range ends at %d beyond checkpoint offset %d", i, end, b.Checkpoint.ByteOffset)
-			}
+		rawRecord, exists := rawRecords[event.RawRecord.ID]
+		if !exists {
+			return fmt.Errorf("event %d raw record %q is not retained in the batch", i, event.RawRecord.ID)
+		}
+		if !rawRecordRefEqual(rawRecord.Ref, event.RawRecord) {
+			return fmt.Errorf("event %d raw record reference does not match retained record %q", i, event.RawRecord.ID)
 		}
 	}
 	return nil
 }
 
+func validateRawRecordPosition(ref model.RawRecordRef, checkpoint ImportCheckpoint) error {
+	if sequence := ref.RecordSequence; sequence != nil && *sequence > checkpoint.RecordSequence {
+		return fmt.Errorf("raw record sequence %d exceeds checkpoint sequence %d", *sequence, checkpoint.RecordSequence)
+	}
+	if byteRange := ref.ByteRange; byteRange != nil {
+		end := byteRange.Offset + byteRange.Length
+		if end < byteRange.Offset || end > checkpoint.ByteOffset {
+			return fmt.Errorf("raw byte range ends at %d beyond checkpoint offset %d", end, checkpoint.ByteOffset)
+		}
+	}
+	return nil
+}
+
+func rawRecordRefEqual(left, right model.RawRecordRef) bool {
+	if left.ID != right.ID || left.SourceID != right.SourceID || left.ContentHash != right.ContentHash {
+		return false
+	}
+	if (left.RecordSequence == nil) != (right.RecordSequence == nil) ||
+		(left.RecordSequence != nil && *left.RecordSequence != *right.RecordSequence) {
+		return false
+	}
+	if (left.ByteRange == nil) != (right.ByteRange == nil) {
+		return false
+	}
+	return left.ByteRange == nil || *left.ByteRange == *right.ByteRange
+}
+
 // ImportStore is the persistence boundary consumed by import orchestration.
 type ImportStore interface {
 	CommitBatch(ctx context.Context, batch ImportBatch) error
+	// ReconcileSource replaces all previously imported data for a source with
+	// the supplied first batch. Callers must verify truncation, replacement, or
+	// a required re-normalization before choosing this destructive index update.
+	ReconcileSource(ctx context.Context, batch ImportBatch) error
 	Checkpoint(ctx context.Context, sourceID model.SourceID) (ImportCheckpoint, bool, error)
 }

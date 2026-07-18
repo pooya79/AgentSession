@@ -12,10 +12,52 @@ func TestImportBatchValidateRejectsEvidenceBeyondCheckpoint(t *testing.T) {
 	eventSequence := int64(4)
 	batch := validBatchForTest(sequence)
 	batch.Events[0].RawRecord.RecordSequence = &eventSequence
+	batch.RawRecords[0].Ref.RecordSequence = &eventSequence
 
 	err := batch.Validate()
 	if err == nil || !strings.Contains(err.Error(), "exceeds checkpoint sequence") {
 		t.Fatalf("Validate() error = %v, want checkpoint-bound error", err)
+	}
+}
+
+func TestImportBatchValidateRequiresMatchingRetainedRawRecord(t *testing.T) {
+	tests := []struct {
+		name      string
+		mutate    func(*ImportBatch)
+		wantError string
+	}{
+		{
+			name: "missing retained record",
+			mutate: func(batch *ImportBatch) {
+				batch.RawRecords = nil
+			},
+			wantError: "is not retained in the batch",
+		},
+		{
+			name: "reference differs",
+			mutate: func(batch *ImportBatch) {
+				batch.RawRecords[0].Ref.ContentHash = "different-hash"
+			},
+			wantError: "reference does not match retained record",
+		},
+		{
+			name: "duplicate retained record",
+			mutate: func(batch *ImportBatch) {
+				batch.RawRecords = append(batch.RawRecords, batch.RawRecords[0])
+			},
+			wantError: "repeats ID",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch := validBatchForTest(0)
+			tt.mutate(&batch)
+			err := batch.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("Validate() error = %v, want containing %q", err, tt.wantError)
+			}
+		})
 	}
 }
 
@@ -33,6 +75,15 @@ func validBatchForTest(sequence int64) ImportBatch {
 				NormalizationVersion: "1",
 			},
 		},
+		RawRecords: []model.RawRecord{{
+			Ref: model.RawRecordRef{
+				ID:             "raw-1",
+				SourceID:       "source-1",
+				RecordSequence: &recordSequence,
+				ContentHash:    "raw-hash",
+			},
+			Content: []byte(`{"type":"test"}`),
+		}},
 		Events: []model.Event{{
 			ID:        "event-1",
 			SessionID: "session-1",
@@ -40,7 +91,7 @@ func validBatchForTest(sequence int64) ImportBatch {
 			Kind:      model.EventKindUnknown,
 			Summary:   "record",
 			Data:      model.UnknownData{OriginalKind: "test"},
-			RawRecord: model.RawRecordRef{ID: "raw-1", SourceID: "source-1", RecordSequence: &recordSequence},
+			RawRecord: model.RawRecordRef{ID: "raw-1", SourceID: "source-1", RecordSequence: &recordSequence, ContentHash: "raw-hash"},
 		}},
 		Checkpoint: ImportCheckpoint{
 			SourceID:       "source-1",

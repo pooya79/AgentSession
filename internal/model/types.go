@@ -133,6 +133,26 @@ type RawRecordRef struct {
 	ContentHash string
 }
 
+// RawRecord retains one original source record as authoritative import
+// evidence. Content is untrusted input and must be sanitized at presentation
+// and export boundaries.
+type RawRecord struct {
+	Ref     RawRecordRef
+	Content []byte
+}
+
+// Validate checks the retained record metadata. Empty content is valid because
+// an original source record may itself be empty.
+func (r RawRecord) Validate() error {
+	if err := r.Ref.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(r.Ref.ContentHash) == "" {
+		return fmt.Errorf("raw record content hash is required")
+	}
+	return nil
+}
+
 // Validate checks the structural invariants of a raw-record reference.
 func (r RawRecordRef) Validate() error {
 	if strings.TrimSpace(string(r.ID)) == "" {

@@ -1,11 +1,14 @@
 package sqlite
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
 	"time"
@@ -25,6 +28,13 @@ type ImportStore struct {
 
 var _ importer.ImportStore = (*ImportStore)(nil)
 
+const rawRecordCompressionThreshold = 256 * 1024
+
+const (
+	rawEncodingIdentity = "identity"
+	rawEncodingZlib     = "zlib"
+)
+
 // NewImportStore creates an import store backed by a migrated database.
 func NewImportStore(db *sql.DB) (*ImportStore, error) {
 	if db == nil {
@@ -35,9 +45,23 @@ func NewImportStore(db *sql.DB) (*ImportStore, error) {
 
 // CommitBatch atomically persists a canonical batch and its checkpoint.
 func (s *ImportStore) CommitBatch(ctx context.Context, batch importer.ImportBatch) (err error) {
+	return s.commitBatch(ctx, batch, false)
+}
+
+// ReconcileSource atomically removes stale authoritative data for a verified
+// changed source and commits its first replacement batch and checkpoint.
+func (s *ImportStore) ReconcileSource(ctx context.Context, batch importer.ImportBatch) error {
+	return s.commitBatch(ctx, batch, true)
+}
+
+func (s *ImportStore) commitBatch(ctx context.Context, batch importer.ImportBatch, reconcile bool) (err error) {
 	sourceID := batch.Checkpoint.SourceID
-	wrap := func(operation string, cause error) error {
-		return fmt.Errorf("sqlite import store: commit batch for source %q: %s: %w", sourceID, operation, cause)
+	operation := "commit batch"
+	if reconcile {
+		operation = "reconcile source"
+	}
+	wrap := func(detail string, cause error) error {
+		return fmt.Errorf("sqlite import store: %s for source %q: %s: %w", operation, sourceID, detail, cause)
 	}
 	if err := batch.Validate(); err != nil {
 		return wrap("validate batch", err)
@@ -60,8 +84,18 @@ func (s *ImportStore) CommitBatch(ctx context.Context, batch importer.ImportBatc
 		}
 	}()
 
+	if reconcile {
+		if err := deleteSourceImport(ctx, tx, sourceID); err != nil {
+			return wrap("remove stale source data", err)
+		}
+	}
 	if err := upsertSession(ctx, tx, batch.Session); err != nil {
 		return wrap("persist session", err)
+	}
+	for i, rawRecord := range batch.RawRecords {
+		if err := persistRawRecord(ctx, tx, batch.Session.ID, rawRecord); err != nil {
+			return wrap(fmt.Sprintf("persist raw record %d (%q)", i, rawRecord.Ref.ID), err)
+		}
 	}
 	for i, event := range batch.Events {
 		if err := persistEvent(ctx, tx, event); err != nil {
@@ -85,6 +119,16 @@ func (s *ImportStore) CommitBatch(ctx context.Context, batch importer.ImportBatc
 		return wrap("commit transaction", err)
 	}
 	committed = true
+	return nil
+}
+
+func deleteSourceImport(ctx context.Context, tx *sql.Tx, sourceID model.SourceID) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE source_id = ?`, sourceID); err != nil {
+		return fmt.Errorf("delete sessions: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM import_checkpoints WHERE source_id = ?`, sourceID); err != nil {
+		return fmt.Errorf("delete checkpoint: %w", err)
+	}
 	return nil
 }
 
@@ -129,6 +173,113 @@ func upsertSession(ctx context.Context, tx *sql.Tx, session model.Session) error
 		return fmt.Errorf("session %q is already associated with another source", session.ID)
 	}
 	return nil
+}
+
+type storedRawRecord struct {
+	ID             string
+	SessionID      string
+	SourceID       string
+	RecordSequence sql.NullInt64
+	ByteOffset     sql.NullInt64
+	ByteLength     sql.NullInt64
+	ContentHash    string
+	Encoding       string
+	OriginalSize   int64
+	Content        []byte
+}
+
+func rawRecordForStorage(sessionID model.SessionID, rawRecord model.RawRecord) (storedRawRecord, error) {
+	stored := storedRawRecord{
+		ID:           string(rawRecord.Ref.ID),
+		SessionID:    string(sessionID),
+		SourceID:     string(rawRecord.Ref.SourceID),
+		ContentHash:  rawRecord.Ref.ContentHash,
+		Encoding:     rawEncodingIdentity,
+		OriginalSize: int64(len(rawRecord.Content)),
+		Content:      rawRecord.Content,
+	}
+	if rawRecord.Ref.RecordSequence != nil {
+		stored.RecordSequence = sql.NullInt64{Int64: *rawRecord.Ref.RecordSequence, Valid: true}
+	}
+	if rawRecord.Ref.ByteRange != nil {
+		stored.ByteOffset = sql.NullInt64{Int64: rawRecord.Ref.ByteRange.Offset, Valid: true}
+		stored.ByteLength = sql.NullInt64{Int64: rawRecord.Ref.ByteRange.Length, Valid: true}
+	}
+	if len(rawRecord.Content) > rawRecordCompressionThreshold {
+		var compressed bytes.Buffer
+		writer := zlib.NewWriter(&compressed)
+		if _, err := writer.Write(rawRecord.Content); err != nil {
+			return storedRawRecord{}, fmt.Errorf("compress content: %w", err)
+		}
+		if err := writer.Close(); err != nil {
+			return storedRawRecord{}, fmt.Errorf("finish compressing content: %w", err)
+		}
+		stored.Encoding = rawEncodingZlib
+		stored.Content = compressed.Bytes()
+	}
+	return stored, nil
+}
+
+func persistRawRecord(ctx context.Context, tx *sql.Tx, sessionID model.SessionID, rawRecord model.RawRecord) error {
+	stored, err := rawRecordForStorage(sessionID, rawRecord)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO raw_records (
+			id, session_id, source_id, record_sequence, byte_offset, byte_length,
+			content_hash, storage_encoding, original_size, content
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO NOTHING
+	`, stored.ID, stored.SessionID, stored.SourceID, nullableInt(stored.RecordSequence),
+		nullableInt(stored.ByteOffset), nullableInt(stored.ByteLength), stored.ContentHash,
+		stored.Encoding, stored.OriginalSize, stored.Content)
+	if err != nil {
+		return fmt.Errorf("insert raw record: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect raw record insert: %w", err)
+	}
+	if rows == 1 {
+		return nil
+	}
+	existing, found, err := selectStoredRawRecord(ctx, tx, rawRecord.Ref.ID)
+	if err != nil {
+		return fmt.Errorf("load duplicate raw record: %w", err)
+	}
+	if !found || !storedRawRecordEqual(existing, stored) {
+		return fmt.Errorf("%w: raw record ID %q has different source content", importer.ErrRawRecordConflict, rawRecord.Ref.ID)
+	}
+	return nil
+}
+
+func storedRawRecordEqual(left, right storedRawRecord) bool {
+	return left.ID == right.ID && left.SessionID == right.SessionID && left.SourceID == right.SourceID &&
+		left.RecordSequence == right.RecordSequence && left.ByteOffset == right.ByteOffset &&
+		left.ByteLength == right.ByteLength && left.ContentHash == right.ContentHash &&
+		left.Encoding == right.Encoding && left.OriginalSize == right.OriginalSize &&
+		bytes.Equal(left.Content, right.Content)
+}
+
+func selectStoredRawRecord(ctx context.Context, queryer rowQueryer, rawRecordID model.RawRecordID) (storedRawRecord, bool, error) {
+	var rawRecord storedRawRecord
+	err := queryer.QueryRowContext(ctx, `
+		SELECT id, session_id, source_id, record_sequence, byte_offset, byte_length,
+		       content_hash, storage_encoding, original_size, content
+		FROM raw_records WHERE id = ?
+	`, rawRecordID).Scan(
+		&rawRecord.ID, &rawRecord.SessionID, &rawRecord.SourceID, &rawRecord.RecordSequence,
+		&rawRecord.ByteOffset, &rawRecord.ByteLength, &rawRecord.ContentHash, &rawRecord.Encoding,
+		&rawRecord.OriginalSize, &rawRecord.Content,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return storedRawRecord{}, false, nil
+	}
+	if err != nil {
+		return storedRawRecord{}, false, err
+	}
+	return rawRecord, true, nil
 }
 
 type storedEvent struct {
@@ -342,6 +493,70 @@ func (s *ImportStore) Checkpoint(ctx context.Context, sourceID model.SourceID) (
 		return importer.ImportCheckpoint{}, false, fmt.Errorf("sqlite import store: read checkpoint for source %q: %w", sourceID, err)
 	}
 	return checkpoint, found, nil
+}
+
+// RawRecord returns retained, untrusted source content without rendering it.
+func (s *ImportStore) RawRecord(ctx context.Context, rawRecordID model.RawRecordID) (model.RawRecord, bool, error) {
+	if strings.TrimSpace(string(rawRecordID)) == "" {
+		return model.RawRecord{}, false, errors.New("sqlite import store: read raw record: raw record ID is required")
+	}
+	stored, found, err := selectStoredRawRecord(ctx, s.db, rawRecordID)
+	if err != nil {
+		return model.RawRecord{}, false, fmt.Errorf("sqlite import store: read raw record %q: %w", rawRecordID, err)
+	}
+	if !found {
+		return model.RawRecord{}, false, nil
+	}
+	rawRecord, err := stored.toModel()
+	if err != nil {
+		return model.RawRecord{}, false, fmt.Errorf("sqlite import store: decode raw record %q: %w", rawRecordID, err)
+	}
+	return rawRecord, true, nil
+}
+
+func (r storedRawRecord) toModel() (model.RawRecord, error) {
+	var content []byte
+	switch r.Encoding {
+	case rawEncodingIdentity:
+		content = append([]byte(nil), r.Content...)
+	case rawEncodingZlib:
+		reader, err := zlib.NewReader(bytes.NewReader(r.Content))
+		if err != nil {
+			return model.RawRecord{}, fmt.Errorf("open compressed content: %w", err)
+		}
+		content, err = io.ReadAll(io.LimitReader(reader, r.OriginalSize+1))
+		closeErr := reader.Close()
+		if err != nil {
+			return model.RawRecord{}, fmt.Errorf("decompress content: %w", err)
+		}
+		if closeErr != nil {
+			return model.RawRecord{}, fmt.Errorf("close compressed content: %w", closeErr)
+		}
+	default:
+		return model.RawRecord{}, fmt.Errorf("unsupported storage encoding %q", r.Encoding)
+	}
+	if int64(len(content)) != r.OriginalSize {
+		return model.RawRecord{}, fmt.Errorf("content size %d does not match recorded size %d", len(content), r.OriginalSize)
+	}
+	rawRecord := model.RawRecord{
+		Ref: model.RawRecordRef{
+			ID:          model.RawRecordID(r.ID),
+			SourceID:    model.SourceID(r.SourceID),
+			ContentHash: r.ContentHash,
+		},
+		Content: content,
+	}
+	if r.RecordSequence.Valid {
+		value := r.RecordSequence.Int64
+		rawRecord.Ref.RecordSequence = &value
+	}
+	if r.ByteOffset.Valid {
+		rawRecord.Ref.ByteRange = &model.ByteRange{Offset: r.ByteOffset.Int64, Length: r.ByteLength.Int64}
+	}
+	if err := rawRecord.Validate(); err != nil {
+		return model.RawRecord{}, fmt.Errorf("validate stored raw record: %w", err)
+	}
+	return rawRecord, nil
 }
 
 // Session returns a canonical session and its ordered diagnostic snapshot.

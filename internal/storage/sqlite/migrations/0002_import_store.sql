@@ -12,6 +12,22 @@ CREATE TABLE sessions (
     normalization_version TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE raw_records (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    source_id TEXT NOT NULL,
+    record_sequence INTEGER CHECK (record_sequence IS NULL OR record_sequence >= 0),
+    byte_offset INTEGER CHECK (byte_offset IS NULL OR byte_offset >= 0),
+    byte_length INTEGER CHECK (byte_length IS NULL OR byte_length > 0),
+    content_hash TEXT NOT NULL,
+    storage_encoding TEXT NOT NULL CHECK (storage_encoding IN ('identity', 'zlib')),
+    original_size INTEGER NOT NULL CHECK (original_size >= 0),
+    content BLOB NOT NULL,
+    CHECK ((byte_offset IS NULL) = (byte_length IS NULL))
+) STRICT;
+
+CREATE INDEX raw_records_session ON raw_records(session_id);
+
 CREATE TABLE events (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -21,7 +37,7 @@ CREATE TABLE events (
     summary TEXT NOT NULL,
     searchable_text TEXT NOT NULL,
     data_json TEXT NOT NULL,
-    raw_record_id TEXT NOT NULL,
+    raw_record_id TEXT NOT NULL REFERENCES raw_records(id),
     raw_source_id TEXT NOT NULL,
     raw_record_sequence INTEGER CHECK (raw_record_sequence IS NULL OR raw_record_sequence >= 0),
     raw_byte_offset INTEGER CHECK (raw_byte_offset IS NULL OR raw_byte_offset >= 0),
