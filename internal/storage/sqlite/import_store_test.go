@@ -62,11 +62,20 @@ func TestImportStoreRoundTripAndStableSourceOrder(t *testing.T) {
 	}
 	batch.Checkpoint.RecordSequence = int64(len(payloads) - 1)
 	batch.Session.Diagnostics = []model.Diagnostic{{
-		Code:         "record.partial",
-		Severity:     model.SeverityWarning,
-		Message:      "partial evidence",
-		EventIDs:     []model.EventID{batch.Events[0].ID},
-		RawRecordIDs: []model.RawRecordID{batch.Events[0].RawRecord.ID},
+		Code:     "session.partial",
+		Severity: model.SeverityWarning,
+		Message:  "session metadata is partial",
+	}}
+	batch.RecordDiagnostics = []model.RecordDiagnostic{{
+		RawRecordID: batch.Events[0].RawRecord.ID,
+		Ordinal:     0,
+		Diagnostic: model.Diagnostic{
+			Code:         "record.partial",
+			Severity:     model.SeverityWarning,
+			Message:      "partial evidence",
+			EventIDs:     []model.EventID{batch.Events[0].ID},
+			RawRecordIDs: []model.RawRecordID{batch.Events[0].RawRecord.ID},
+		},
 	}}
 
 	if err := store.CommitBatch(context.Background(), batch); err != nil {
@@ -86,6 +95,10 @@ func TestImportStoreRoundTripAndStableSourceOrder(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotEvents, batch.Events) {
 		t.Fatalf("Events() = %#v, want %#v", gotEvents, batch.Events)
+	}
+	gotDiagnostics, err := store.RecordDiagnostics(context.Background(), batch.Session.ID)
+	if err != nil || !reflect.DeepEqual(gotDiagnostics, batch.RecordDiagnostics) {
+		t.Fatalf("RecordDiagnostics() = (%#v, %v), want %#v", gotDiagnostics, err, batch.RecordDiagnostics)
 	}
 	for i, event := range gotEvents {
 		if event.Sequence != int64(i) {
@@ -332,7 +345,7 @@ func TestImportStoreDeleteSessionRemovesOwnedDataWithoutTouchingSource(t *testin
 	if err != nil || !deleted {
 		t.Fatalf("DeleteSession() = (%v, %v), want (true, nil)", deleted, err)
 	}
-	for _, table := range []string{"sessions", "events", "event_payloads", "raw_records", "session_diagnostics", "import_checkpoints", "test_projection"} {
+	for _, table := range []string{"sessions", "events", "event_payloads", "raw_records", "session_diagnostics", "record_diagnostics", "import_checkpoints", "test_projection"} {
 		var count int
 		if err := store.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
 			t.Fatalf("count %s after deletion: %v", table, err)
@@ -371,6 +384,30 @@ func TestImportStoreConflictingRawRecordRollsBackWholeBatch(t *testing.T) {
 	assertRawRecord(t, store, original.RawRecords[0])
 }
 
+func TestImportStoreConflictingRecordDiagnosticRollsBackWholeBatch(t *testing.T) {
+	t.Parallel()
+
+	store := openImportStore(t)
+	original := testImportBatch()
+	if err := store.CommitBatch(context.Background(), original); err != nil {
+		t.Fatalf("initial CommitBatch() error = %v", err)
+	}
+
+	changed := original
+	changed.Session.Title = "must roll back"
+	changed.RecordDiagnostics = append([]model.RecordDiagnostic(nil), original.RecordDiagnostics...)
+	changed.RecordDiagnostics[0].Diagnostic.Message = "different diagnostic evidence"
+	err := store.CommitBatch(context.Background(), changed)
+	if !errors.Is(err, importer.ErrDiagnosticConflict) {
+		t.Fatalf("CommitBatch() error = %v, want ErrDiagnosticConflict", err)
+	}
+	assertOriginalState(t, store, original)
+	diagnostics, readErr := store.RecordDiagnostics(context.Background(), original.Session.ID)
+	if readErr != nil || !reflect.DeepEqual(diagnostics, original.RecordDiagnostics) {
+		t.Fatalf("RecordDiagnostics() after rollback = (%#v, %v), want original", diagnostics, readErr)
+	}
+}
+
 func TestImportStoreReconcileSourceReplacesStaleEvidenceAndRegressedCheckpoint(t *testing.T) {
 	t.Parallel()
 
@@ -394,6 +431,14 @@ func TestImportStoreReconcileSourceReplacesStaleEvidenceAndRegressedCheckpoint(t
 		SearchableText: "stale",
 		Data:           model.UnknownData{OriginalKind: "stale"},
 		RawRecord:      secondRef,
+	})
+	original.RecordDiagnostics = append(original.RecordDiagnostics, model.RecordDiagnostic{
+		RawRecordID: secondRef.ID,
+		Ordinal:     0,
+		Diagnostic: model.Diagnostic{
+			Code: "record.stale", Severity: model.SeverityWarning, Message: "stale diagnostic",
+			RawRecordIDs: []model.RawRecordID{secondRef.ID},
+		},
 	})
 	original.Checkpoint.ByteOffset = 20
 	original.Checkpoint.RecordSequence = 1
@@ -428,6 +473,10 @@ func TestImportStoreReconcileSourceReplacesStaleEvidenceAndRegressedCheckpoint(t
 	gotEvents, err := store.Events(context.Background(), replacement.Session.ID)
 	if err != nil || !reflect.DeepEqual(gotEvents, replacement.Events) {
 		t.Fatalf("Events() = (%#v, %v), want replacement only", gotEvents, err)
+	}
+	gotDiagnostics, err := store.RecordDiagnostics(context.Background(), replacement.Session.ID)
+	if err != nil || !reflect.DeepEqual(gotDiagnostics, replacement.RecordDiagnostics) {
+		t.Fatalf("RecordDiagnostics() = (%#v, %v), want replacement only", gotDiagnostics, err)
 	}
 	assertRawRecord(t, store, replacement.RawRecords[0])
 	if _, found, err := store.RawRecord(context.Background(), secondRef.ID); err != nil || found {
@@ -496,9 +545,49 @@ func TestImportStoreRetryPreventsDuplicatesAndAdvancesCheckpoint(t *testing.T) {
 	if len(events) != len(batch.Events) {
 		t.Fatalf("Events() length = %d, want %d", len(events), len(batch.Events))
 	}
+	diagnostics, err := store.RecordDiagnostics(context.Background(), batch.Session.ID)
+	if err != nil || len(diagnostics) != len(batch.RecordDiagnostics) {
+		t.Fatalf("RecordDiagnostics() = (%#v, %v), want one idempotent copy", diagnostics, err)
+	}
 	checkpoint, found, err := store.Checkpoint(context.Background(), batch.Checkpoint.SourceID)
 	if err != nil || !found || checkpoint != advanced.Checkpoint {
 		t.Fatalf("Checkpoint() = (%#v, %v, %v), want advanced checkpoint", checkpoint, found, err)
+	}
+}
+
+func TestImportStorePersistsRecordDiagnosticsAcrossIncrementalBatches(t *testing.T) {
+	t.Parallel()
+
+	store := openImportStore(t)
+	first := testImportBatch()
+	if err := store.CommitBatch(context.Background(), first); err != nil {
+		t.Fatalf("first CommitBatch() error = %v", err)
+	}
+
+	second := testImportBatch()
+	sequence := int64(1)
+	second.RawRecords[0].Ref.ID = "raw-2"
+	second.RawRecords[0].Ref.RecordSequence = &sequence
+	second.RawRecords[0].Ref.ByteRange = &model.ByteRange{Offset: 10, Length: 10}
+	second.Events[0].ID = "event-2"
+	second.Events[0].Sequence = sequence
+	second.Events[0].RawRecord = second.RawRecords[0].Ref
+	second.RecordDiagnostics[0].RawRecordID = "raw-2"
+	second.RecordDiagnostics[0].Diagnostic.EventIDs = []model.EventID{"event-2"}
+	second.RecordDiagnostics[0].Diagnostic.RawRecordIDs = []model.RawRecordID{"raw-2"}
+	second.Checkpoint.ByteOffset = 20
+	second.Checkpoint.RecordSequence = sequence
+	second.Checkpoint.SourceSize = 20
+	second.Checkpoint.PrefixHash = "second-prefix"
+	second.Checkpoint.LastRecordHash = "second-record"
+	if err := store.CommitBatch(context.Background(), second); err != nil {
+		t.Fatalf("second CommitBatch() error = %v", err)
+	}
+
+	want := append(append([]model.RecordDiagnostic(nil), first.RecordDiagnostics...), second.RecordDiagnostics...)
+	got, err := store.RecordDiagnostics(context.Background(), first.Session.ID)
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("RecordDiagnostics() = (%#v, %v), want incremental diagnostics %#v", got, err, want)
 	}
 }
 
@@ -558,6 +647,7 @@ func TestImportStoreCheckpointRegressionRollsBackSessionSnapshot(t *testing.T) {
 	regressed.Session.Diagnostics = nil
 	regressed.RawRecords = nil
 	regressed.Events = nil
+	regressed.RecordDiagnostics = nil
 	regressed.Checkpoint.ByteOffset--
 	err := store.CommitBatch(context.Background(), regressed)
 	if !errors.Is(err, importer.ErrCheckpointRegression) {
@@ -656,11 +746,9 @@ func testImportBatch() importer.ImportBatch {
 				NormalizationVersion: "1",
 			},
 			Diagnostics: []model.Diagnostic{{
-				Code:         "partial",
-				Severity:     model.SeverityWarning,
-				Message:      "partial record",
-				EventIDs:     []model.EventID{"event-1"},
-				RawRecordIDs: []model.RawRecordID{"raw-1"},
+				Code:     "session.partial",
+				Severity: model.SeverityWarning,
+				Message:  "session metadata is partial",
 			}},
 		},
 		RawRecords: []model.RawRecord{{
@@ -689,6 +777,17 @@ func testImportBatch() importer.ImportBatch {
 				ContentHash:    "content-hash",
 			},
 		}},
+		RecordDiagnostics: []model.RecordDiagnostic{{
+			RawRecordID: "raw-1",
+			Ordinal:     0,
+			Diagnostic: model.Diagnostic{
+				Code:         "record.partial",
+				Severity:     model.SeverityWarning,
+				Message:      "partial record",
+				EventIDs:     []model.EventID{"event-1"},
+				RawRecordIDs: []model.RawRecordID{"raw-1"},
+			},
+		}},
 		Checkpoint: importer.ImportCheckpoint{
 			SourceID:       "source-1",
 			ByteOffset:     10,
@@ -709,6 +808,10 @@ func assertOriginalState(t *testing.T, store *ImportStore, original importer.Imp
 	events, err := store.Events(context.Background(), original.Session.ID)
 	if err != nil || !reflect.DeepEqual(events, original.Events) {
 		t.Fatalf("Events() after rollback = (%#v, %v), want original", events, err)
+	}
+	diagnostics, err := store.RecordDiagnostics(context.Background(), original.Session.ID)
+	if err != nil || !reflect.DeepEqual(diagnostics, original.RecordDiagnostics) {
+		t.Fatalf("RecordDiagnostics() after rollback = (%#v, %v), want original", diagnostics, err)
 	}
 	checkpoint, found, err := store.Checkpoint(context.Background(), original.Checkpoint.SourceID)
 	if err != nil || !found || checkpoint != original.Checkpoint {

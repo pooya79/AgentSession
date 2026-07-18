@@ -103,7 +103,12 @@ correlate repository and Git evidence
 run deterministic analysis and update aggregates
 ```
 
-An import is incremental and idempotent. Only canonical event batches, their session updates, and the corresponding checkpoint share the import transaction. FTS indexing, repository and Git correlation, findings, outcomes, and aggregates run after commit. Failure in any of those projections is recorded and retried without invalidating otherwise durable imported evidence.
+An import is incremental and idempotent. Canonical event batches, retained raw
+records, their record diagnostics, session updates, and the corresponding
+checkpoint share the import transaction. FTS indexing, repository and Git
+correlation, findings, outcomes, and aggregates run after commit. Failure in
+any of those projections is recorded and retried without invalidating otherwise
+durable imported evidence.
 
 The importer records enough source identity and progress to distinguish an append from truncation, replacement, or mutation before the checkpoint. A conceptual checkpoint is:
 
@@ -226,10 +231,17 @@ recoverable diagnostics, and progress after that record.
 After successful parsing, `Complete` publishes the authoritative enriched
 session snapshot. Its session and import identities are unchanged from
 `Begin`, while its title, summary, timestamps, and diagnostics may be enriched.
-The final snapshot retains diagnostics known at `Begin` and diagnostics emitted
-for records. This lifecycle supplies a canonical session even when every
-trustworthy record is malformed and produces no event. A sink error or context
-cancellation stops delivery immediately and prevents `Complete`.
+`Session.Diagnostics` is reserved for session-level diagnostics and bounded
+summaries; it does not accumulate diagnostics emitted for individual records.
+This lifecycle supplies a canonical session even when every trustworthy record
+is malformed and produces no event. A sink error or context cancellation stops
+delivery immediately and prevents `Complete`.
+
+Record diagnostics retain their envelope order as a zero-based per-record
+ordinal. The sink persists them incrementally in the same transaction as their
+raw record, canonical events, and checkpoint. Their stable raw-record and
+ordinal identity makes retries idempotent without retaining diagnostics from
+the full source in memory.
 
 An envelope checkpoint is tied to the record being delivered: its last-record
 hash matches the retained content hash, its sequence matches when present, and

@@ -43,6 +43,35 @@ func TestSessionValidate(t *testing.T) {
 	}
 }
 
+func TestRecordDiagnosticValidate(t *testing.T) {
+	valid := RecordDiagnostic{
+		RawRecordID: "raw-1",
+		Ordinal:     0,
+		Diagnostic: Diagnostic{
+			Code: "record.malformed", Severity: SeverityWarning, Message: "record is malformed",
+			RawRecordIDs: []RawRecordID{"raw-1"},
+		},
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	tests := []RecordDiagnostic{
+		{},
+		{RawRecordID: "raw-1", Ordinal: -1, Diagnostic: valid.Diagnostic},
+		{RawRecordID: "raw-1", Diagnostic: Diagnostic{Severity: SeverityWarning, Message: "missing code"}},
+		{RawRecordID: "raw-1", Diagnostic: Diagnostic{
+			Code: "record.malformed", Severity: SeverityWarning, Message: "record is malformed",
+			RawRecordIDs: []RawRecordID{"raw-2"},
+		}},
+	}
+	for i, diagnostic := range tests {
+		if err := diagnostic.Validate(); err == nil {
+			t.Errorf("case %d Validate() error = nil", i)
+		}
+	}
+}
+
 func TestEventKindsAndPayloadValidation(t *testing.T) {
 	payloads := []NormalizedData{
 		MessageData{Role: MessageRoleUser, Text: "please inspect"},

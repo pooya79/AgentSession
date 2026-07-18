@@ -59,8 +59,9 @@ type Session struct {
 
 	Import ImportMetadata
 
-	// Diagnostics describe partial or unavailable evidence without making the
-	// otherwise usable session invalid.
+	// Diagnostics describe session-level partial or unavailable evidence without
+	// making the otherwise usable session invalid. Per-record diagnostics are
+	// stored incrementally as RecordDiagnostic values.
 	Diagnostics []Diagnostic
 }
 

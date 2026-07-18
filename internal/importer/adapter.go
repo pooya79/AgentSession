@@ -106,6 +106,24 @@ type RecordEnvelope struct {
 	Checkpoint  ImportCheckpoint
 }
 
+// RecordDiagnostics returns the envelope diagnostics with stable per-record
+// ordinals for incremental batch persistence. The returned slice is detached
+// from the envelope and may be retained by the sink until its current batch is
+// committed.
+func (e RecordEnvelope) RecordDiagnostics() []model.RecordDiagnostic {
+	diagnostics := make([]model.RecordDiagnostic, len(e.Diagnostics))
+	for i, diagnostic := range e.Diagnostics {
+		diagnostic.EventIDs = append([]model.EventID(nil), diagnostic.EventIDs...)
+		diagnostic.RawRecordIDs = append([]model.RawRecordID(nil), diagnostic.RawRecordIDs...)
+		diagnostics[i] = model.RecordDiagnostic{
+			RawRecordID: e.RawRecord.Ref.ID,
+			Ordinal:     int64(i),
+			Diagnostic:  diagnostic,
+		}
+	}
+	return diagnostics
+}
+
 // Validate checks that all evidence in an envelope belongs to its raw record
 // and lies at or before its post-record checkpoint.
 func (e RecordEnvelope) Validate() error {
@@ -180,8 +198,9 @@ func (e RecordEnvelope) ValidateForSession(session model.Session) error {
 
 // ValidateSessionTransition checks the immutable identity and normalization
 // metadata shared by the initial and completed session snapshots. Completion
-// may enrich display metadata, timestamps, and diagnostics, but cannot discard
-// diagnostics that were already present at Begin.
+// may enrich display metadata, timestamps, and bounded session-level
+// diagnostics, but cannot discard diagnostics that were already present at
+// Begin. Record-level diagnostics travel through RecordEnvelope instead.
 func ValidateSessionTransition(initial, completed model.Session) error {
 	if err := initial.Validate(); err != nil {
 		return fmt.Errorf("validate initial session: %w", err)

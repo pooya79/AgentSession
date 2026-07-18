@@ -223,7 +223,6 @@ func TestImportSessionLifecycleSupportsMalformedOnlySource(t *testing.T) {
 	completed.Title = "Recovered session"
 	completed.StartedAt = &startedAt
 	completed.EndedAt = &endedAt
-	completed.Diagnostics = append(completed.Diagnostics, envelope.Diagnostics...)
 
 	adapter := &fakeAdapter{importFn: func(ctx context.Context, _ Source, sink ImportSink) error {
 		if err := sink.Begin(ctx, initial); err != nil {
@@ -250,9 +249,13 @@ func TestImportSessionLifecycleSupportsMalformedOnlySource(t *testing.T) {
 	if err := ValidateSessionTransition(sink.initial, sink.completed); err != nil {
 		t.Fatalf("ValidateSessionTransition() error = %v", err)
 	}
-	if sink.completed.StartedAt == nil || sink.completed.EndedAt == nil || len(sink.completed.Diagnostics) != 1 ||
-		!diagnosticEqual(sink.completed.Diagnostics[0], envelope.Diagnostics[0]) {
-		t.Fatalf("completed session did not retain adapter timestamps and record diagnostics: %#v", sink.completed)
+	if sink.completed.StartedAt == nil || sink.completed.EndedAt == nil || len(sink.completed.Diagnostics) != 0 {
+		t.Fatalf("completed session lost timestamps or unexpectedly accumulated record diagnostics: %#v", sink.completed)
+	}
+	recordDiagnostics := sink.envelopes[0].RecordDiagnostics()
+	if len(recordDiagnostics) != 1 || recordDiagnostics[0].RawRecordID != envelope.RawRecord.Ref.ID ||
+		recordDiagnostics[0].Ordinal != 0 || !diagnosticEqual(recordDiagnostics[0].Diagnostic, envelope.Diagnostics[0]) {
+		t.Fatalf("RecordDiagnostics() = %#v, want independently persistable envelope diagnostic", recordDiagnostics)
 	}
 }
 
@@ -289,6 +292,25 @@ func TestRecordEnvelopeRejectsDifferentLifecycleSession(t *testing.T) {
 	session.ID = "another-session"
 	if err := envelope.ValidateForSession(session); err == nil {
 		t.Fatal("ValidateForSession() error = nil, want session mismatch")
+	}
+}
+
+func TestRecordEnvelopeDiagnosticsDetachForBatching(t *testing.T) {
+	envelope := testEnvelope(t, 0, []byte("record\n"))
+	event := testUnknownEvent(t, envelope.RawRecord.Ref, 0)
+	envelope.Events = []model.Event{event}
+	envelope.Diagnostics = []model.Diagnostic{{
+		Code: "record.partial", Severity: model.SeverityWarning, Message: "partial record",
+		EventIDs: []model.EventID{event.ID}, RawRecordIDs: []model.RawRecordID{envelope.RawRecord.Ref.ID},
+	}}
+
+	diagnostics := envelope.RecordDiagnostics()
+	envelope.Diagnostics[0].Message = "changed"
+	envelope.Diagnostics[0].EventIDs[0] = "changed-event"
+	envelope.Diagnostics[0].RawRecordIDs[0] = "changed-record"
+	if diagnostics[0].Diagnostic.Message != "partial record" || diagnostics[0].Diagnostic.EventIDs[0] != event.ID ||
+		diagnostics[0].Diagnostic.RawRecordIDs[0] != envelope.RawRecord.Ref.ID {
+		t.Fatalf("RecordDiagnostics() retained mutable envelope storage: %#v", diagnostics)
 	}
 }
 
