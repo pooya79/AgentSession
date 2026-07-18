@@ -2,19 +2,18 @@ package sqlite
 
 import (
 	"bytes"
-	"compress/zlib"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"reflect"
 	"strings"
 	"time"
 
 	"github.com/pooya79/AgentSession/internal/importer"
 	"github.com/pooya79/AgentSession/internal/model"
+	storagecontract "github.com/pooya79/AgentSession/internal/storage"
 )
 
 // ImportStore persists authoritative import data in SQLite.
@@ -27,12 +26,16 @@ type ImportStore struct {
 }
 
 var _ importer.ImportStore = (*ImportStore)(nil)
+var _ storagecontract.SessionReader = (*ImportStore)(nil)
+var _ storagecontract.SessionDeleter = (*ImportStore)(nil)
 
-const rawRecordCompressionThreshold = 256 * 1024
+const rawRecordCompressionThreshold = storagecontract.InlinePayloadThresholdBytes
 
 const (
-	rawEncodingIdentity = "identity"
-	rawEncodingZlib     = "zlib"
+	rawEncodingIdentity = storagecontract.EncodingIdentity
+	rawEncodingZlib     = storagecontract.EncodingZlib
+	payloadInline       = "inline"
+	payloadDetached     = "detached"
 )
 
 // NewImportStore creates an import store backed by a migrated database.
@@ -183,20 +186,26 @@ type storedRawRecord struct {
 	ByteOffset     sql.NullInt64
 	ByteLength     sql.NullInt64
 	ContentHash    string
+	PolicyVersion  int
 	Encoding       string
 	OriginalSize   int64
 	Content        []byte
 }
 
 func rawRecordForStorage(sessionID model.SessionID, rawRecord model.RawRecord) (storedRawRecord, error) {
+	encoded, err := storagecontract.EncodePayload(rawRecord.Content)
+	if err != nil {
+		return storedRawRecord{}, err
+	}
 	stored := storedRawRecord{
-		ID:           string(rawRecord.Ref.ID),
-		SessionID:    string(sessionID),
-		SourceID:     string(rawRecord.Ref.SourceID),
-		ContentHash:  rawRecord.Ref.ContentHash,
-		Encoding:     rawEncodingIdentity,
-		OriginalSize: int64(len(rawRecord.Content)),
-		Content:      rawRecord.Content,
+		ID:            string(rawRecord.Ref.ID),
+		SessionID:     string(sessionID),
+		SourceID:      string(rawRecord.Ref.SourceID),
+		ContentHash:   rawRecord.Ref.ContentHash,
+		PolicyVersion: encoded.PolicyVersion,
+		Encoding:      encoded.Encoding,
+		OriginalSize:  encoded.OriginalSize,
+		Content:       encoded.Content,
 	}
 	if rawRecord.Ref.RecordSequence != nil {
 		stored.RecordSequence = sql.NullInt64{Int64: *rawRecord.Ref.RecordSequence, Valid: true}
@@ -204,18 +213,6 @@ func rawRecordForStorage(sessionID model.SessionID, rawRecord model.RawRecord) (
 	if rawRecord.Ref.ByteRange != nil {
 		stored.ByteOffset = sql.NullInt64{Int64: rawRecord.Ref.ByteRange.Offset, Valid: true}
 		stored.ByteLength = sql.NullInt64{Int64: rawRecord.Ref.ByteRange.Length, Valid: true}
-	}
-	if len(rawRecord.Content) > rawRecordCompressionThreshold {
-		var compressed bytes.Buffer
-		writer := zlib.NewWriter(&compressed)
-		if _, err := writer.Write(rawRecord.Content); err != nil {
-			return storedRawRecord{}, fmt.Errorf("compress content: %w", err)
-		}
-		if err := writer.Close(); err != nil {
-			return storedRawRecord{}, fmt.Errorf("finish compressing content: %w", err)
-		}
-		stored.Encoding = rawEncodingZlib
-		stored.Content = compressed.Bytes()
 	}
 	return stored, nil
 }
@@ -228,12 +225,12 @@ func persistRawRecord(ctx context.Context, tx *sql.Tx, sessionID model.SessionID
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO raw_records (
 			id, session_id, source_id, record_sequence, byte_offset, byte_length,
-			content_hash, storage_encoding, original_size, content
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			content_hash, storage_encoding, original_size, content, retention_policy_version
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING
 	`, stored.ID, stored.SessionID, stored.SourceID, nullableInt(stored.RecordSequence),
 		nullableInt(stored.ByteOffset), nullableInt(stored.ByteLength), stored.ContentHash,
-		stored.Encoding, stored.OriginalSize, stored.Content)
+		stored.Encoding, stored.OriginalSize, stored.Content, stored.PolicyVersion)
 	if err != nil {
 		return fmt.Errorf("insert raw record: %w", err)
 	}
@@ -258,7 +255,7 @@ func storedRawRecordEqual(left, right storedRawRecord) bool {
 	return left.ID == right.ID && left.SessionID == right.SessionID && left.SourceID == right.SourceID &&
 		left.RecordSequence == right.RecordSequence && left.ByteOffset == right.ByteOffset &&
 		left.ByteLength == right.ByteLength && left.ContentHash == right.ContentHash &&
-		left.Encoding == right.Encoding && left.OriginalSize == right.OriginalSize &&
+		left.PolicyVersion == right.PolicyVersion && left.Encoding == right.Encoding && left.OriginalSize == right.OriginalSize &&
 		bytes.Equal(left.Content, right.Content)
 }
 
@@ -266,11 +263,11 @@ func selectStoredRawRecord(ctx context.Context, queryer rowQueryer, rawRecordID 
 	var rawRecord storedRawRecord
 	err := queryer.QueryRowContext(ctx, `
 		SELECT id, session_id, source_id, record_sequence, byte_offset, byte_length,
-		       content_hash, storage_encoding, original_size, content
+		       content_hash, retention_policy_version, storage_encoding, original_size, content
 		FROM raw_records WHERE id = ?
 	`, rawRecordID).Scan(
 		&rawRecord.ID, &rawRecord.SessionID, &rawRecord.SourceID, &rawRecord.RecordSequence,
-		&rawRecord.ByteOffset, &rawRecord.ByteLength, &rawRecord.ContentHash, &rawRecord.Encoding,
+		&rawRecord.ByteOffset, &rawRecord.ByteLength, &rawRecord.ContentHash, &rawRecord.PolicyVersion, &rawRecord.Encoding,
 		&rawRecord.OriginalSize, &rawRecord.Content,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -291,12 +288,22 @@ type storedEvent struct {
 	Summary           string
 	SearchableText    string
 	DataJSON          string
+	PolicyVersion     int
+	PayloadStorage    string
+	Payload           *storedEventPayload
 	RawRecordID       string
 	RawSourceID       string
 	RawRecordSequence sql.NullInt64
 	RawByteOffset     sql.NullInt64
 	RawByteLength     sql.NullInt64
 	RawContentHash    string
+}
+
+type storedEventPayload struct {
+	PolicyVersion int
+	Encoding      string
+	OriginalSize  int64
+	Content       []byte
 }
 
 func eventForStorage(event model.Event) (storedEvent, error) {
@@ -313,9 +320,25 @@ func eventForStorage(event model.Event) (storedEvent, error) {
 		Summary:        event.Summary,
 		SearchableText: event.SearchableText,
 		DataJSON:       string(dataJSON),
+		PolicyVersion:  storagecontract.FullRetentionPolicyVersion,
+		PayloadStorage: payloadInline,
 		RawRecordID:    string(event.RawRecord.ID),
 		RawSourceID:    string(event.RawRecord.SourceID),
 		RawContentHash: event.RawRecord.ContentHash,
+	}
+	if len(dataJSON) > storagecontract.InlinePayloadThresholdBytes {
+		encoded, err := storagecontract.EncodePayload(dataJSON)
+		if err != nil {
+			return storedEvent{}, fmt.Errorf("encode detached normalized data: %w", err)
+		}
+		stored.DataJSON = ""
+		stored.PayloadStorage = payloadDetached
+		stored.Payload = &storedEventPayload{
+			PolicyVersion: encoded.PolicyVersion,
+			Encoding:      encoded.Encoding,
+			OriginalSize:  encoded.OriginalSize,
+			Content:       encoded.Content,
+		}
 	}
 	if event.RawRecord.RecordSequence != nil {
 		stored.RawRecordSequence = sql.NullInt64{Int64: *event.RawRecord.RecordSequence, Valid: true}
@@ -335,8 +358,9 @@ func persistEvent(ctx context.Context, tx *sql.Tx, event model.Event) error {
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO events (
 			id, session_id, sequence, timestamp, kind, summary, searchable_text, data_json,
-			raw_record_id, raw_source_id, raw_record_sequence, raw_byte_offset, raw_byte_length, raw_content_hash
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			raw_record_id, raw_source_id, raw_record_sequence, raw_byte_offset, raw_byte_length, raw_content_hash,
+			retention_policy_version, payload_storage
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING
 	`, stored.values()...)
 	if err != nil {
@@ -347,6 +371,11 @@ func persistEvent(ctx context.Context, tx *sql.Tx, event model.Event) error {
 		return fmt.Errorf("inspect event insert: %w", err)
 	}
 	if rows == 1 {
+		if stored.Payload != nil {
+			if err := persistEventPayload(ctx, tx, event.ID, *stored.Payload); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 
@@ -364,8 +393,23 @@ func (e storedEvent) values() []any {
 	return []any{
 		e.ID, e.SessionID, e.Sequence, nullIfEmpty(e.Timestamp), e.Kind, e.Summary, e.SearchableText, e.DataJSON,
 		e.RawRecordID, e.RawSourceID, nullableInt(e.RawRecordSequence), nullableInt(e.RawByteOffset),
-		nullableInt(e.RawByteLength), e.RawContentHash,
+		nullableInt(e.RawByteLength), e.RawContentHash, e.PolicyVersion, e.PayloadStorage,
 	}
+}
+
+func persistEventPayload(ctx context.Context, tx *sql.Tx, eventID model.EventID, payload storedEventPayload) error {
+	if payload.Encoding != storagecontract.EncodingZlib {
+		return fmt.Errorf("detached event payload %q is not compressed", eventID)
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO event_payloads (
+			event_id, retention_policy_version, storage_encoding, original_size, content
+		) VALUES (?, ?, ?, ?, ?)
+	`, eventID, payload.PolicyVersion, payload.Encoding, payload.OriginalSize, payload.Content)
+	if err != nil {
+		return fmt.Errorf("insert detached event payload: %w", err)
+	}
+	return nil
 }
 
 type rowQueryer interface {
@@ -373,27 +417,55 @@ type rowQueryer interface {
 }
 
 func selectStoredEvent(ctx context.Context, queryer rowQueryer, eventID model.EventID) (storedEvent, bool, error) {
-	var event storedEvent
-	var timestamp sql.NullString
-	err := queryer.QueryRowContext(ctx, `
-		SELECT id, session_id, sequence, timestamp, kind, summary, searchable_text, data_json,
-		       raw_record_id, raw_source_id, raw_record_sequence, raw_byte_offset, raw_byte_length, raw_content_hash
-		FROM events WHERE id = ?
-	`, eventID).Scan(
-		&event.ID, &event.SessionID, &event.Sequence, &timestamp, &event.Kind, &event.Summary,
-		&event.SearchableText, &event.DataJSON, &event.RawRecordID, &event.RawSourceID,
-		&event.RawRecordSequence, &event.RawByteOffset, &event.RawByteLength, &event.RawContentHash,
-	)
+	event, err := scanStoredEvent(queryer.QueryRowContext(ctx, storedEventSelect+` WHERE e.id = ?`, eventID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return storedEvent{}, false, nil
 	}
 	if err != nil {
 		return storedEvent{}, false, err
 	}
+	return event, true, nil
+}
+
+const storedEventSelect = `
+	SELECT e.id, e.session_id, e.sequence, e.timestamp, e.kind, e.summary, e.searchable_text, e.data_json,
+	       e.raw_record_id, e.raw_source_id, e.raw_record_sequence, e.raw_byte_offset, e.raw_byte_length,
+	       e.raw_content_hash, e.retention_policy_version, e.payload_storage,
+	       p.retention_policy_version, p.storage_encoding, p.original_size, p.content
+	FROM events e LEFT JOIN event_payloads p ON p.event_id = e.id`
+
+type rowScanner interface {
+	Scan(...any) error
+}
+
+func scanStoredEvent(scanner rowScanner) (storedEvent, error) {
+	var event storedEvent
+	var timestamp, payloadEncoding sql.NullString
+	var payloadPolicy, payloadSize sql.NullInt64
+	var payloadContent []byte
+	if err := scanner.Scan(
+		&event.ID, &event.SessionID, &event.Sequence, &timestamp, &event.Kind, &event.Summary,
+		&event.SearchableText, &event.DataJSON, &event.RawRecordID, &event.RawSourceID,
+		&event.RawRecordSequence, &event.RawByteOffset, &event.RawByteLength, &event.RawContentHash,
+		&event.PolicyVersion, &event.PayloadStorage, &payloadPolicy, &payloadEncoding, &payloadSize, &payloadContent,
+	); err != nil {
+		return storedEvent{}, err
+	}
 	if timestamp.Valid {
 		event.Timestamp = timestamp.String
 	}
-	return event, true, nil
+	if payloadPolicy.Valid || payloadEncoding.Valid || payloadSize.Valid || payloadContent != nil {
+		if !payloadPolicy.Valid || !payloadEncoding.Valid || !payloadSize.Valid || payloadContent == nil {
+			return storedEvent{}, errors.New("detached event payload metadata is incomplete")
+		}
+		event.Payload = &storedEventPayload{
+			PolicyVersion: int(payloadPolicy.Int64),
+			Encoding:      payloadEncoding.String,
+			OriginalSize:  payloadSize.Int64,
+			Content:       payloadContent,
+		}
+	}
+	return event, nil
 }
 
 func replaceDiagnostics(ctx context.Context, tx *sql.Tx, session model.Session) error {
@@ -515,28 +587,14 @@ func (s *ImportStore) RawRecord(ctx context.Context, rawRecordID model.RawRecord
 }
 
 func (r storedRawRecord) toModel() (model.RawRecord, error) {
-	var content []byte
-	switch r.Encoding {
-	case rawEncodingIdentity:
-		content = append([]byte(nil), r.Content...)
-	case rawEncodingZlib:
-		reader, err := zlib.NewReader(bytes.NewReader(r.Content))
-		if err != nil {
-			return model.RawRecord{}, fmt.Errorf("open compressed content: %w", err)
-		}
-		content, err = io.ReadAll(io.LimitReader(reader, r.OriginalSize+1))
-		closeErr := reader.Close()
-		if err != nil {
-			return model.RawRecord{}, fmt.Errorf("decompress content: %w", err)
-		}
-		if closeErr != nil {
-			return model.RawRecord{}, fmt.Errorf("close compressed content: %w", closeErr)
-		}
-	default:
-		return model.RawRecord{}, fmt.Errorf("unsupported storage encoding %q", r.Encoding)
-	}
-	if int64(len(content)) != r.OriginalSize {
-		return model.RawRecord{}, fmt.Errorf("content size %d does not match recorded size %d", len(content), r.OriginalSize)
+	content, err := storagecontract.DecodePayload(storagecontract.EncodedPayload{
+		PolicyVersion: r.PolicyVersion,
+		Encoding:      r.Encoding,
+		OriginalSize:  r.OriginalSize,
+		Content:       r.Content,
+	})
+	if err != nil {
+		return model.RawRecord{}, err
 	}
 	rawRecord := model.RawRecord{
 		Ref: model.RawRecordRef{
@@ -613,13 +671,109 @@ func (s *ImportStore) Session(ctx context.Context, sessionID model.SessionID) (m
 	return session, true, nil
 }
 
-// Events returns full canonical events in stable source order.
-func (s *ImportStore) Events(ctx context.Context, sessionID model.SessionID) ([]model.Event, error) {
+// EventSummaries returns the ordered timeline envelope without normalized or raw payloads.
+func (s *ImportStore) EventSummaries(ctx context.Context, sessionID model.SessionID) ([]model.EventSummary, error) {
+	if strings.TrimSpace(string(sessionID)) == "" {
+		return nil, errors.New("sqlite import store: read event summaries: session ID is required")
+	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, session_id, sequence, timestamp, kind, summary, searchable_text, data_json,
-		       raw_record_id, raw_source_id, raw_record_sequence, raw_byte_offset, raw_byte_length, raw_content_hash
+		SELECT id, session_id, sequence, timestamp, kind, summary
 		FROM events WHERE session_id = ? ORDER BY sequence
 	`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite import store: read event summaries for session %q: %w", sessionID, err)
+	}
+	defer rows.Close()
+
+	var summaries []model.EventSummary
+	for rows.Next() {
+		var summary model.EventSummary
+		var timestamp sql.NullString
+		if err := rows.Scan(&summary.ID, &summary.SessionID, &summary.Sequence, &timestamp, &summary.Kind, &summary.Summary); err != nil {
+			return nil, fmt.Errorf("sqlite import store: scan event summary for session %q: %w", sessionID, err)
+		}
+		if summary.Timestamp, err = decodeTime(timestamp); err != nil {
+			return nil, fmt.Errorf("sqlite import store: decode event summary %q timestamp: %w", summary.ID, err)
+		}
+		summaries = append(summaries, summary)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite import store: iterate event summaries for session %q: %w", sessionID, err)
+	}
+	return summaries, nil
+}
+
+// Event returns full normalized event detail, resolving detached payloads on demand.
+func (s *ImportStore) Event(ctx context.Context, eventID model.EventID) (model.Event, bool, error) {
+	if strings.TrimSpace(string(eventID)) == "" {
+		return model.Event{}, false, errors.New("sqlite import store: read event: event ID is required")
+	}
+	stored, found, err := selectStoredEvent(ctx, s.db, eventID)
+	if err != nil {
+		return model.Event{}, false, fmt.Errorf("sqlite import store: read event %q: %w", eventID, err)
+	}
+	if !found {
+		return model.Event{}, false, nil
+	}
+	event, err := stored.toModel()
+	if err != nil {
+		return model.Event{}, false, fmt.Errorf("sqlite import store: decode event %q: %w", eventID, err)
+	}
+	return event, true, nil
+}
+
+// DeleteSession removes AgentSession-owned data without consulting or modifying the source.
+func (s *ImportStore) DeleteSession(ctx context.Context, sessionID model.SessionID) (deleted bool, err error) {
+	if strings.TrimSpace(string(sessionID)) == "" {
+		return false, errors.New("sqlite import store: delete session: session ID is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("sqlite import store: delete session %q: begin transaction: %w", sessionID, err)
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			err = errors.Join(err, fmt.Errorf("sqlite import store: delete session %q: roll back transaction: %w", sessionID, rollbackErr))
+		}
+	}()
+
+	var sourceID model.SourceID
+	if err := tx.QueryRowContext(ctx, `SELECT source_id FROM sessions WHERE id = ?`, sessionID).Scan(&sourceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			if err := tx.Commit(); err != nil {
+				return false, fmt.Errorf("sqlite import store: delete missing session %q: commit transaction: %w", sessionID, err)
+			}
+			committed = true
+			return false, nil
+		}
+		return false, fmt.Errorf("sqlite import store: delete session %q: resolve source: %w", sessionID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, sessionID); err != nil {
+		return false, fmt.Errorf("sqlite import store: delete session %q: remove owned data: %w", sessionID, err)
+	}
+	var remaining int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE source_id = ?`, sourceID).Scan(&remaining); err != nil {
+		return false, fmt.Errorf("sqlite import store: delete session %q: count remaining source sessions: %w", sessionID, err)
+	}
+	if remaining == 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM import_checkpoints WHERE source_id = ?`, sourceID); err != nil {
+			return false, fmt.Errorf("sqlite import store: delete session %q: remove source checkpoint: %w", sessionID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("sqlite import store: delete session %q: commit transaction: %w", sessionID, err)
+	}
+	committed = true
+	return true, nil
+}
+
+// Events returns full canonical events in stable source order.
+func (s *ImportStore) Events(ctx context.Context, sessionID model.SessionID) ([]model.Event, error) {
+	rows, err := s.db.QueryContext(ctx, storedEventSelect+` WHERE e.session_id = ? ORDER BY e.sequence`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite import store: read events for session %q: %w", sessionID, err)
 	}
@@ -627,17 +781,9 @@ func (s *ImportStore) Events(ctx context.Context, sessionID model.SessionID) ([]
 
 	var events []model.Event
 	for rows.Next() {
-		var stored storedEvent
-		var timestamp sql.NullString
-		if err := rows.Scan(
-			&stored.ID, &stored.SessionID, &stored.Sequence, &timestamp, &stored.Kind, &stored.Summary,
-			&stored.SearchableText, &stored.DataJSON, &stored.RawRecordID, &stored.RawSourceID,
-			&stored.RawRecordSequence, &stored.RawByteOffset, &stored.RawByteLength, &stored.RawContentHash,
-		); err != nil {
+		stored, err := scanStoredEvent(rows)
+		if err != nil {
 			return nil, fmt.Errorf("sqlite import store: scan event for session %q: %w", sessionID, err)
-		}
-		if timestamp.Valid {
-			stored.Timestamp = timestamp.String
 		}
 		event, err := stored.toModel()
 		if err != nil {
@@ -656,8 +802,35 @@ func (e storedEvent) toModel() (model.Event, error) {
 	if err != nil {
 		return model.Event{}, fmt.Errorf("decode timestamp: %w", err)
 	}
+	encodedData := e.DataJSON
+	switch e.PayloadStorage {
+	case payloadInline:
+		if e.Payload != nil {
+			return model.Event{}, errors.New("inline event unexpectedly has a detached payload")
+		}
+	case payloadDetached:
+		if e.Payload == nil {
+			return model.Event{}, errors.New("detached event payload is missing")
+		}
+		decoded, err := storagecontract.DecodePayload(storagecontract.EncodedPayload{
+			PolicyVersion: e.Payload.PolicyVersion,
+			Encoding:      e.Payload.Encoding,
+			OriginalSize:  e.Payload.OriginalSize,
+			Content:       e.Payload.Content,
+		})
+		if err != nil {
+			return model.Event{}, fmt.Errorf("decode detached normalized data: %w", err)
+		}
+		encodedData = string(decoded)
+	default:
+		return model.Event{}, fmt.Errorf("unsupported event payload storage %q", e.PayloadStorage)
+	}
+	if e.PolicyVersion != storagecontract.FullRetentionPolicyVersion {
+		return model.Event{}, fmt.Errorf("unsupported event retention policy version %d", e.PolicyVersion)
+	}
+
 	kind := model.EventKind(e.Kind)
-	data, err := decodeNormalizedData(kind, e.DataJSON)
+	data, err := decodeNormalizedData(kind, encodedData)
 	if err != nil {
 		return model.Event{}, err
 	}
