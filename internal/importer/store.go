@@ -17,6 +17,9 @@ var (
 	// ErrRawRecordConflict means a retained raw-record ID is already associated
 	// with different source evidence.
 	ErrRawRecordConflict = errors.New("import raw record conflicts with committed evidence")
+	// ErrDiagnosticConflict means a stable record-diagnostic position is
+	// already associated with different diagnostic evidence.
+	ErrDiagnosticConflict = errors.New("import record diagnostic conflicts with committed evidence")
 	// ErrCheckpointRegression means an ordinary import attempted to move a
 	// verified source cursor behind its committed position.
 	ErrCheckpointRegression = errors.New("import checkpoint would regress")
@@ -62,10 +65,11 @@ func (c ImportCheckpoint) Validate() error {
 // ImportBatch is the authoritative session snapshot and source evidence that
 // must become durable with Checkpoint in one transaction.
 type ImportBatch struct {
-	Session    model.Session
-	RawRecords []model.RawRecord
-	Events     []model.Event
-	Checkpoint ImportCheckpoint
+	Session           model.Session
+	RawRecords        []model.RawRecord
+	Events            []model.Event
+	RecordDiagnostics []model.RecordDiagnostic
+	Checkpoint        ImportCheckpoint
 }
 
 // Validate checks cross-record invariants before persistence starts.
@@ -98,6 +102,7 @@ func (b ImportBatch) Validate() error {
 		}
 		rawRecords[rawRecord.Ref.ID] = rawRecord
 	}
+	events := make(map[model.EventID]model.Event, len(b.Events))
 	for i, event := range b.Events {
 		if err := event.Validate(); err != nil {
 			return fmt.Errorf("validate event %d: %w", i, err)
@@ -118,8 +123,37 @@ func (b ImportBatch) Validate() error {
 		if !rawRecordRefEqual(rawRecord.Ref, event.RawRecord) {
 			return fmt.Errorf("event %d raw record reference does not match retained record %q", i, event.RawRecord.ID)
 		}
+		events[event.ID] = event
+	}
+	diagnosticPositions := make(map[recordDiagnosticPosition]struct{}, len(b.RecordDiagnostics))
+	for i, recordDiagnostic := range b.RecordDiagnostics {
+		if err := recordDiagnostic.Validate(); err != nil {
+			return fmt.Errorf("validate record diagnostic %d: %w", i, err)
+		}
+		if _, exists := rawRecords[recordDiagnostic.RawRecordID]; !exists {
+			return fmt.Errorf("record diagnostic %d raw record %q is not retained in the batch", i, recordDiagnostic.RawRecordID)
+		}
+		position := recordDiagnosticPosition{rawRecordID: recordDiagnostic.RawRecordID, ordinal: recordDiagnostic.Ordinal}
+		if _, exists := diagnosticPositions[position]; exists {
+			return fmt.Errorf("record diagnostic %d repeats raw record %q ordinal %d", i, recordDiagnostic.RawRecordID, recordDiagnostic.Ordinal)
+		}
+		diagnosticPositions[position] = struct{}{}
+		for _, eventID := range recordDiagnostic.Diagnostic.EventIDs {
+			event, exists := events[eventID]
+			if !exists {
+				return fmt.Errorf("record diagnostic %d references event %q outside the batch", i, eventID)
+			}
+			if event.RawRecord.ID != recordDiagnostic.RawRecordID {
+				return fmt.Errorf("record diagnostic %d references event %q from another raw record", i, eventID)
+			}
+		}
 	}
 	return nil
+}
+
+type recordDiagnosticPosition struct {
+	rawRecordID model.RawRecordID
+	ordinal     int64
 }
 
 func validateRawRecordPosition(ref model.RawRecordRef, checkpoint ImportCheckpoint) error {
@@ -127,8 +161,11 @@ func validateRawRecordPosition(ref model.RawRecordRef, checkpoint ImportCheckpoi
 		return fmt.Errorf("raw record sequence %d exceeds checkpoint sequence %d", *sequence, checkpoint.RecordSequence)
 	}
 	if byteRange := ref.ByteRange; byteRange != nil {
-		end := byteRange.Offset + byteRange.Length
-		if end < byteRange.Offset || end > checkpoint.ByteOffset {
+		end, err := byteRange.End()
+		if err != nil {
+			return fmt.Errorf("raw byte range: %w", err)
+		}
+		if end > checkpoint.ByteOffset {
 			return fmt.Errorf("raw byte range ends at %d beyond checkpoint offset %d", end, checkpoint.ByteOffset)
 		}
 	}

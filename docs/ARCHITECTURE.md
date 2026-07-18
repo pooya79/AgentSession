@@ -103,7 +103,12 @@ correlate repository and Git evidence
 run deterministic analysis and update aggregates
 ```
 
-An import is incremental and idempotent. Only canonical event batches, their session updates, and the corresponding checkpoint share the import transaction. FTS indexing, repository and Git correlation, findings, outcomes, and aggregates run after commit. Failure in any of those projections is recorded and retried without invalidating otherwise durable imported evidence.
+An import is incremental and idempotent. Canonical event batches, retained raw
+records, their record diagnostics, session updates, and the corresponding
+checkpoint share the import transaction. FTS indexing, repository and Git
+correlation, findings, outcomes, and aggregates run after commit. Failure in
+any of those projections is recorded and retried without invalidating otherwise
+durable imported evidence.
 
 The importer records enough source identity and progress to distinguish an append from truncation, replacement, or mutation before the checkpoint. A conceptual checkpoint is:
 
@@ -124,8 +129,16 @@ Event identifiers are deterministic. Adapters choose the strongest available ide
 
 1. A globally stable native event ID.
 2. A native session ID combined with a native event ID.
-3. Source identity, record sequence, and record hash.
-4. Source identity, byte range, and record hash.
+3. Source identity, record sequence, record hash, and per-record event ordinal.
+4. Source identity, byte range, record hash, and per-record event ordinal.
+
+The event ordinal is the zero-based position of a canonical event among all
+events normalized from one raw record. Ordinal zero retains the original
+fallback identity encoding; positive ordinals use distinct versioned identity
+tiers. This preserves existing one-event record IDs while allowing one record
+to produce multiple canonical events. Adapters assign ordinals
+deterministically and change their normalization version if a mapping change
+would alter those assignments.
 
 Source ordering is retained separately as a sequence number. Timestamps enrich the timeline but do not define identity or ordering because they may be absent, duplicated, or unreliable. Random identifiers are not used for imported events.
 
@@ -186,17 +199,60 @@ Platform-specific discoverers may identify candidate type hints, but adapters re
 
 Each coding-agent format has an isolated adapter. An adapter owns probing, streaming parsing, source-specific identifiers, and normalization into canonical events.
 
-The conceptual contract is:
+The importer owns the adapter contract it consumes. A source supplies stable
+identity and size metadata plus a function that opens a fresh read-only stream;
+discovery's source-kind hint remains advisory and is never used by shared
+import code to interpret a format.
 
 ```go
 type Adapter interface {
 	Name() string
+	Version() model.Version
 	Probe(ctx context.Context, source Source) (ProbeResult, error)
-	Import(ctx context.Context, source Source, sink EventSink) error
+	Import(ctx context.Context, source Source, sink ImportSink) error
+}
+
+type ImportSink interface {
+	Begin(ctx context.Context, session model.Session) error
+	Accept(ctx context.Context, record RecordEnvelope) error
+	Complete(ctx context.Context, session model.Session) error
 }
 ```
 
-This contract documents the intended boundary, not a promise that these exact exported Go types already exist. Interfaces should ultimately be defined by their consumers and kept as small as real implementations allow.
+Probe results contain only recognition confidence, detected format metadata,
+and diagnostics; probing cannot emit or commit canonical data. `Begin`
+establishes a valid canonical session before any record delivery, including its
+stable ID, adapter-owned metadata, initial timestamps and diagnostics, and the
+format, model, and normalization versions. Import calls the sink synchronously,
+making return from `Accept` the backpressure boundary. Each record envelope
+carries the exact retained raw bytes, zero or more canonical events,
+recoverable diagnostics, and progress after that record.
+
+After successful parsing, `Complete` publishes the authoritative enriched
+session snapshot. Its session and import identities are unchanged from
+`Begin`, while its title, summary, timestamps, and diagnostics may be enriched.
+`Session.Diagnostics` is reserved for session-level diagnostics and bounded
+summaries; it does not accumulate diagnostics emitted for individual records.
+This lifecycle supplies a canonical session even when every trustworthy record
+is malformed and produces no event. A sink error or context cancellation stops
+delivery immediately and prevents `Complete`.
+
+Record diagnostics retain their envelope order as a zero-based per-record
+ordinal. The sink persists them incrementally in the same transaction as their
+raw record, canonical events, and checkpoint. Their stable raw-record and
+ordinal identity makes retries idempotent without retaining diagnostics from
+the full source in memory.
+
+An envelope checkpoint is tied to the record being delivered: its last-record
+hash matches the retained content hash, its sequence matches when present, and
+its byte offset is the exclusive end of the retained byte range when present.
+Batch checkpoints remain final-batch cursors, so records earlier in a durable
+batch may correctly lie before that checkpoint.
+
+Unknown records become canonical `Unknown` events when they can be associated
+with a session. A malformed record whose boundary is still trustworthy is
+retained with a diagnostic even when it cannot produce an event. Loss of a
+trustworthy record boundary or an unreadable source is an import error.
 
 No package outside an adapter may branch on a source name to interpret source-specific structure. Adding a source begins with a new adapter and sanitized fixtures, not conditionals in shared packages.
 

@@ -37,11 +37,18 @@ type EventIDInput struct {
 	Native *NativeEventIdentity
 
 	// Fallback identities combine SourceID and RecordHash with RecordSequence
-	// when available, otherwise ByteRange.
+	// when available, otherwise ByteRange. EventOrdinal disambiguates multiple
+	// canonical events normalized from the same raw record.
 	SourceID       SourceID
 	RecordSequence *int64
 	ByteRange      *ByteRange
 	RecordHash     string
+
+	// EventOrdinal is the zero-based position of a canonical event among all
+	// events normalized from the same raw record. Zero preserves the original
+	// fallback identity for compatibility; positive ordinals disambiguate
+	// additional events from that record.
+	EventOrdinal uint64
 }
 
 // NewEventID returns a deterministic ID for canonical imported evidence. It
@@ -62,7 +69,16 @@ func NewEventID(input EventIDInput) (EventID, error) {
 		if *input.RecordSequence < 0 {
 			return "", fmt.Errorf("record sequence must not be negative")
 		}
-		return hashEventID("source-sequence", sourceID, strconv.FormatInt(*input.RecordSequence, 10), recordHash), nil
+		if input.EventOrdinal == 0 {
+			return hashEventID("source-sequence", sourceID, strconv.FormatInt(*input.RecordSequence, 10), recordHash), nil
+		}
+		return hashEventID(
+			"source-sequence-event-ordinal",
+			sourceID,
+			strconv.FormatInt(*input.RecordSequence, 10),
+			recordHash,
+			strconv.FormatUint(input.EventOrdinal, 10),
+		), nil
 	}
 	if input.ByteRange != nil {
 		if sourceID == "" || recordHash == "" {
@@ -71,12 +87,18 @@ func NewEventID(input EventIDInput) (EventID, error) {
 		if err := input.ByteRange.validate(); err != nil {
 			return "", fmt.Errorf("event identity byte range: %w", err)
 		}
-		return hashEventID(
-			"source-byte-range",
+		fields := []string{
 			sourceID,
 			strconv.FormatInt(input.ByteRange.Offset, 10),
 			strconv.FormatInt(input.ByteRange.Length, 10),
 			recordHash,
+		}
+		if input.EventOrdinal == 0 {
+			return hashEventID("source-byte-range", fields...), nil
+		}
+		return hashEventID(
+			"source-byte-range-event-ordinal",
+			append(fields, strconv.FormatUint(input.EventOrdinal, 10))...,
 		), nil
 	}
 	return "", fmt.Errorf("event identity requires native identity, record sequence, or byte range")

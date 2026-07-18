@@ -38,6 +38,34 @@ type Diagnostic struct {
 	RawRecordIDs []RawRecordID
 }
 
+// RecordDiagnostic associates a recoverable normalization diagnostic with one
+// retained raw record. Ordinal is the zero-based position among diagnostics
+// emitted for that record and provides stable incremental persistence identity.
+type RecordDiagnostic struct {
+	RawRecordID RawRecordID
+	Ordinal     int64
+	Diagnostic  Diagnostic
+}
+
+// Validate checks the record association and diagnostic structure.
+func (d RecordDiagnostic) Validate() error {
+	if strings.TrimSpace(string(d.RawRecordID)) == "" {
+		return fmt.Errorf("record diagnostic raw record ID is required")
+	}
+	if d.Ordinal < 0 {
+		return fmt.Errorf("record diagnostic ordinal must not be negative")
+	}
+	if err := d.Diagnostic.Validate(); err != nil {
+		return fmt.Errorf("record diagnostic: %w", err)
+	}
+	for _, rawRecordID := range d.Diagnostic.RawRecordIDs {
+		if rawRecordID != d.RawRecordID {
+			return fmt.Errorf("record diagnostic references unrelated raw record %q", rawRecordID)
+		}
+	}
+	return nil
+}
+
 // Validate checks the structural invariants of a diagnostic.
 func (d Diagnostic) Validate() error {
 	if strings.TrimSpace(d.Code) == "" {

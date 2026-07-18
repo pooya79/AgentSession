@@ -20,6 +20,14 @@ func TestImportBatchValidateRejectsEvidenceBeyondCheckpoint(t *testing.T) {
 	}
 }
 
+func TestImportBatchAllowsEvidenceBeforeFinalCheckpoint(t *testing.T) {
+	batch := validBatchForTest(3)
+	batch.Checkpoint.RecordSequence = 9
+	if err := batch.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v, want an earlier record to remain valid under the final batch checkpoint", err)
+	}
+}
+
 func TestImportBatchValidateRequiresMatchingRetainedRawRecord(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -52,6 +60,54 @@ func TestImportBatchValidateRequiresMatchingRetainedRawRecord(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			batch := validBatchForTest(0)
+			tt.mutate(&batch)
+			err := batch.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("Validate() error = %v, want containing %q", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestImportBatchValidateRecordDiagnostics(t *testing.T) {
+	valid := validBatchForTest(0)
+	valid.RecordDiagnostics = []model.RecordDiagnostic{{
+		RawRecordID: "raw-1",
+		Ordinal:     0,
+		Diagnostic: model.Diagnostic{
+			Code: "record.partial", Severity: model.SeverityWarning, Message: "partial record",
+			EventIDs: []model.EventID{"event-1"}, RawRecordIDs: []model.RawRecordID{"raw-1"},
+		},
+	}}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		mutate    func(*ImportBatch)
+		wantError string
+	}{
+		{name: "missing retained record", mutate: func(batch *ImportBatch) {
+			batch.RecordDiagnostics[0].RawRecordID = "raw-other"
+			batch.RecordDiagnostics[0].Diagnostic.RawRecordIDs = nil
+		}, wantError: "is not retained in the batch"},
+		{name: "duplicate position", mutate: func(batch *ImportBatch) {
+			batch.RecordDiagnostics = append(batch.RecordDiagnostics, batch.RecordDiagnostics[0])
+		}, wantError: "repeats raw record"},
+		{name: "event outside batch", mutate: func(batch *ImportBatch) {
+			batch.RecordDiagnostics[0].Diagnostic.EventIDs = []model.EventID{"event-other"}
+		}, wantError: "outside the batch"},
+		{name: "unrelated raw record evidence", mutate: func(batch *ImportBatch) {
+			batch.RecordDiagnostics[0].Diagnostic.RawRecordIDs = []model.RawRecordID{"raw-other"}
+		}, wantError: "unrelated raw record"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batch := valid
+			batch.RecordDiagnostics = append([]model.RecordDiagnostic(nil), valid.RecordDiagnostics...)
+			batch.RecordDiagnostics[0].Diagnostic.EventIDs = append([]model.EventID(nil), valid.RecordDiagnostics[0].Diagnostic.EventIDs...)
+			batch.RecordDiagnostics[0].Diagnostic.RawRecordIDs = append([]model.RawRecordID(nil), valid.RecordDiagnostics[0].Diagnostic.RawRecordIDs...)
 			tt.mutate(&batch)
 			err := batch.Validate()
 			if err == nil || !strings.Contains(err.Error(), tt.wantError) {

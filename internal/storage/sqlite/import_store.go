@@ -105,6 +105,11 @@ func (s *ImportStore) commitBatch(ctx context.Context, batch importer.ImportBatc
 			return wrap(fmt.Sprintf("persist event %d (%q)", i, event.ID), err)
 		}
 	}
+	for i, diagnostic := range batch.RecordDiagnostics {
+		if err := persistRecordDiagnostic(ctx, tx, batch.Session.ID, diagnostic); err != nil {
+			return wrap(fmt.Sprintf("persist record diagnostic %d for %q", i, diagnostic.RawRecordID), err)
+		}
+	}
 	if err := replaceDiagnostics(ctx, tx, batch.Session); err != nil {
 		return wrap("replace diagnostics", err)
 	}
@@ -492,6 +497,88 @@ func replaceDiagnostics(ctx context.Context, tx *sql.Tx, session model.Session) 
 	return nil
 }
 
+type storedRecordDiagnostic struct {
+	SessionID        string
+	RawRecordID      string
+	Ordinal          int64
+	Code             string
+	Severity         string
+	Message          string
+	EventIDsJSON     string
+	RawRecordIDsJSON string
+}
+
+func recordDiagnosticForStorage(sessionID model.SessionID, diagnostic model.RecordDiagnostic) (storedRecordDiagnostic, error) {
+	eventIDs, err := json.Marshal(diagnostic.Diagnostic.EventIDs)
+	if err != nil {
+		return storedRecordDiagnostic{}, fmt.Errorf("encode event IDs: %w", err)
+	}
+	rawRecordIDs, err := json.Marshal(diagnostic.Diagnostic.RawRecordIDs)
+	if err != nil {
+		return storedRecordDiagnostic{}, fmt.Errorf("encode raw record IDs: %w", err)
+	}
+	return storedRecordDiagnostic{
+		SessionID:        string(sessionID),
+		RawRecordID:      string(diagnostic.RawRecordID),
+		Ordinal:          diagnostic.Ordinal,
+		Code:             diagnostic.Diagnostic.Code,
+		Severity:         string(diagnostic.Diagnostic.Severity),
+		Message:          diagnostic.Diagnostic.Message,
+		EventIDsJSON:     string(eventIDs),
+		RawRecordIDsJSON: string(rawRecordIDs),
+	}, nil
+}
+
+func persistRecordDiagnostic(ctx context.Context, tx *sql.Tx, sessionID model.SessionID, diagnostic model.RecordDiagnostic) error {
+	stored, err := recordDiagnosticForStorage(sessionID, diagnostic)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO record_diagnostics (
+			session_id, raw_record_id, ordinal, code, severity, message, event_ids_json, raw_record_ids_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(raw_record_id, ordinal) DO NOTHING
+	`, stored.SessionID, stored.RawRecordID, stored.Ordinal, stored.Code, stored.Severity, stored.Message,
+		stored.EventIDsJSON, stored.RawRecordIDsJSON)
+	if err != nil {
+		return fmt.Errorf("insert record diagnostic: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect record diagnostic insert: %w", err)
+	}
+	if rows == 1 {
+		return nil
+	}
+	existing, found, err := selectStoredRecordDiagnostic(ctx, tx, diagnostic.RawRecordID, diagnostic.Ordinal)
+	if err != nil {
+		return fmt.Errorf("load duplicate record diagnostic: %w", err)
+	}
+	if !found || existing != stored {
+		return fmt.Errorf("%w: raw record %q ordinal %d has different diagnostic content", importer.ErrDiagnosticConflict, diagnostic.RawRecordID, diagnostic.Ordinal)
+	}
+	return nil
+}
+
+func selectStoredRecordDiagnostic(ctx context.Context, queryer rowQueryer, rawRecordID model.RawRecordID, ordinal int64) (storedRecordDiagnostic, bool, error) {
+	var diagnostic storedRecordDiagnostic
+	err := queryer.QueryRowContext(ctx, `
+		SELECT session_id, raw_record_id, ordinal, code, severity, message, event_ids_json, raw_record_ids_json
+		FROM record_diagnostics WHERE raw_record_id = ? AND ordinal = ?
+	`, rawRecordID, ordinal).Scan(
+		&diagnostic.SessionID, &diagnostic.RawRecordID, &diagnostic.Ordinal, &diagnostic.Code,
+		&diagnostic.Severity, &diagnostic.Message, &diagnostic.EventIDsJSON, &diagnostic.RawRecordIDsJSON,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return storedRecordDiagnostic{}, false, nil
+	}
+	if err != nil {
+		return storedRecordDiagnostic{}, false, err
+	}
+	return diagnostic, true, nil
+}
+
 func persistCheckpoint(ctx context.Context, tx *sql.Tx, checkpoint importer.ImportCheckpoint) error {
 	existing, found, err := selectCheckpoint(ctx, tx, checkpoint.SourceID)
 	if err != nil {
@@ -669,6 +756,52 @@ func (s *ImportStore) Session(ctx context.Context, sessionID model.SessionID) (m
 		return model.Session{}, false, fmt.Errorf("sqlite import store: iterate diagnostics for session %q: %w", sessionID, err)
 	}
 	return session, true, nil
+}
+
+// RecordDiagnostics returns incrementally persisted record-level diagnostics in
+// source-record and per-record ordinal order.
+func (s *ImportStore) RecordDiagnostics(ctx context.Context, sessionID model.SessionID) ([]model.RecordDiagnostic, error) {
+	if strings.TrimSpace(string(sessionID)) == "" {
+		return nil, errors.New("sqlite import store: read record diagnostics: session ID is required")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT d.raw_record_id, d.ordinal, d.code, d.severity, d.message,
+		       d.event_ids_json, d.raw_record_ids_json
+		FROM record_diagnostics d
+		JOIN raw_records r ON r.id = d.raw_record_id
+		WHERE d.session_id = ?
+		ORDER BY COALESCE(r.record_sequence, r.byte_offset), d.ordinal
+	`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite import store: read record diagnostics for session %q: %w", sessionID, err)
+	}
+	defer rows.Close()
+
+	var diagnostics []model.RecordDiagnostic
+	for rows.Next() {
+		var diagnostic model.RecordDiagnostic
+		var eventIDs, rawRecordIDs string
+		if err := rows.Scan(
+			&diagnostic.RawRecordID, &diagnostic.Ordinal, &diagnostic.Diagnostic.Code,
+			&diagnostic.Diagnostic.Severity, &diagnostic.Diagnostic.Message, &eventIDs, &rawRecordIDs,
+		); err != nil {
+			return nil, fmt.Errorf("sqlite import store: scan record diagnostic for session %q: %w", sessionID, err)
+		}
+		if err := json.Unmarshal([]byte(eventIDs), &diagnostic.Diagnostic.EventIDs); err != nil {
+			return nil, fmt.Errorf("sqlite import store: decode record diagnostic event IDs for session %q: %w", sessionID, err)
+		}
+		if err := json.Unmarshal([]byte(rawRecordIDs), &diagnostic.Diagnostic.RawRecordIDs); err != nil {
+			return nil, fmt.Errorf("sqlite import store: decode record diagnostic raw record IDs for session %q: %w", sessionID, err)
+		}
+		if err := diagnostic.Validate(); err != nil {
+			return nil, fmt.Errorf("sqlite import store: validate record diagnostic for session %q: %w", sessionID, err)
+		}
+		diagnostics = append(diagnostics, diagnostic)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite import store: iterate record diagnostics for session %q: %w", sessionID, err)
+	}
+	return diagnostics, nil
 }
 
 // EventSummaries returns the ordered timeline envelope without normalized or raw payloads.
