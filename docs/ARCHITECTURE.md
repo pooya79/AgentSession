@@ -209,7 +209,12 @@ type Adapter interface {
 	Name() string
 	Version() model.Version
 	Probe(ctx context.Context, source Source) (ProbeResult, error)
-	Import(ctx context.Context, source Source, sink ImportSink) error
+	Import(ctx context.Context, request ImportRequest, sink ImportSink) error
+}
+
+type ImportRequest struct {
+	Source Source
+	Resume *ImportCheckpoint
 }
 
 type ImportSink interface {
@@ -236,6 +241,15 @@ summaries; it does not accumulate diagnostics emitted for individual records.
 This lifecycle supplies a canonical session even when every trustworthy record
 is malformed and produces no event. A sink error or context cancellation stops
 delivery immediately and prevents `Complete`.
+
+`ImportRequest.Resume` is nil for a first import and after truncation,
+replacement, or mutation before the committed cursor. It is non-nil only after
+orchestration has used adapter-aware fingerprint verification to establish that
+the records through the checkpoint are unchanged. The adapter then resumes
+after that record and uses the checkpoint's byte offset and record sequence as
+the absolute basis for subsequent raw-record and event identities. Structural
+request validation catches source-ID and size regressions but does not replace
+content verification.
 
 Record diagnostics retain their envelope order as a zero-based per-record
 ordinal. The sink persists them incrementally in the same transaction as their

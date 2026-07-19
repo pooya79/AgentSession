@@ -17,7 +17,7 @@ type fakeAdapter struct {
 	probeResult ProbeResult
 	probeErr    error
 	probeFn     func(context.Context, Source) (ProbeResult, error)
-	importFn    func(context.Context, Source, ImportSink) error
+	importFn    func(context.Context, ImportRequest, ImportSink) error
 	probeCalls  int
 	importCalls int
 }
@@ -33,12 +33,12 @@ func (a *fakeAdapter) Probe(ctx context.Context, source Source) (ProbeResult, er
 	return a.probeResult, a.probeErr
 }
 
-func (a *fakeAdapter) Import(ctx context.Context, source Source, sink ImportSink) error {
+func (a *fakeAdapter) Import(ctx context.Context, request ImportRequest, sink ImportSink) error {
 	a.importCalls++
 	if a.importFn == nil {
 		return nil
 	}
-	return a.importFn(ctx, source, sink)
+	return a.importFn(ctx, request, sink)
 }
 
 type sinkFunc func(context.Context, RecordEnvelope) error
@@ -98,6 +98,38 @@ func TestSourceAndProbeResultValidation(t *testing.T) {
 	unsupported := ProbeResult{Confidence: ProbeUnsupported}
 	if err := unsupported.Validate(); err != nil {
 		t.Fatalf("unsupported ProbeResult.Validate() error = %v", err)
+	}
+}
+
+func TestImportRequestValidatesVerifiedResumeState(t *testing.T) {
+	source := testSource([]byte("first\nsecond\n"))
+	checkpoint := testEnvelopeForSource(source, 0, 0, []byte("first\n")).Checkpoint
+
+	if err := (ImportRequest{Source: source}).Validate(); err != nil {
+		t.Fatalf("new ImportRequest.Validate() error = %v", err)
+	}
+	if err := (ImportRequest{Source: source, Resume: &checkpoint}).Validate(); err != nil {
+		t.Fatalf("resumed ImportRequest.Validate() error = %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		source Source
+		resume ImportCheckpoint
+	}{
+		{name: "different source", source: source, resume: func() ImportCheckpoint {
+			changed := checkpoint
+			changed.SourceID = "other-source"
+			return changed
+		}()},
+		{name: "truncated source", source: testSource([]byte("fir")), resume: checkpoint},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := (ImportRequest{Source: tt.source, Resume: &tt.resume}).Validate(); err == nil {
+				t.Fatal("Validate() error = nil, want unsafe resume rejection")
+			}
+		})
 	}
 }
 
@@ -224,7 +256,7 @@ func TestImportSessionLifecycleSupportsMalformedOnlySource(t *testing.T) {
 	completed.StartedAt = &startedAt
 	completed.EndedAt = &endedAt
 
-	adapter := &fakeAdapter{importFn: func(ctx context.Context, _ Source, sink ImportSink) error {
+	adapter := &fakeAdapter{importFn: func(ctx context.Context, _ ImportRequest, sink ImportSink) error {
 		if err := sink.Begin(ctx, initial); err != nil {
 			return err
 		}
@@ -234,7 +266,7 @@ func TestImportSessionLifecycleSupportsMalformedOnlySource(t *testing.T) {
 		return sink.Complete(ctx, completed)
 	}}
 	sink := &lifecycleSink{}
-	if err := adapter.Import(context.Background(), source, sink); err != nil {
+	if err := adapter.Import(context.Background(), ImportRequest{Source: source}, sink); err != nil {
 		t.Fatalf("Import() error = %v", err)
 	}
 	if sink.calls != "begin,accept,complete" {
@@ -339,7 +371,7 @@ func TestStreamingImportStopsWithoutReadingVeryLargeSource(t *testing.T) {
 		return nil
 	})
 
-	err := adapter.Import(context.Background(), source, sink)
+	err := adapter.Import(context.Background(), ImportRequest{Source: source}, sink)
 	if !errors.Is(err, stop) {
 		t.Fatalf("Import() error = %v, want sink error", err)
 	}
@@ -354,6 +386,31 @@ func TestStreamingImportStopsWithoutReadingVeryLargeSource(t *testing.T) {
 	}
 }
 
+func TestStreamingImportResumesWithAbsoluteRecordPositions(t *testing.T) {
+	content := []byte("{}\n{}\n{}\n")
+	source := testSource(content)
+	checkpoint := testEnvelopeForSource(source, 0, 0, []byte("{}\n")).Checkpoint
+	var envelopes []RecordEnvelope
+
+	err := streamSyntheticRecords(context.Background(), ImportRequest{Source: source, Resume: &checkpoint}, sinkFunc(func(_ context.Context, envelope RecordEnvelope) error {
+		envelopes = append(envelopes, envelope)
+		return nil
+	}))
+	if err != nil {
+		t.Fatalf("streamSyntheticRecords() error = %v", err)
+	}
+	if len(envelopes) != 2 {
+		t.Fatalf("accepted envelopes = %d, want only two records after checkpoint", len(envelopes))
+	}
+	first := envelopes[0].RawRecord.Ref
+	if first.RecordSequence == nil || *first.RecordSequence != 1 {
+		t.Fatalf("first resumed record sequence = %v, want 1", first.RecordSequence)
+	}
+	if first.ByteRange == nil || first.ByteRange.Offset != checkpoint.ByteOffset {
+		t.Fatalf("first resumed byte range = %#v, want offset %d", first.ByteRange, checkpoint.ByteOffset)
+	}
+}
+
 func TestStreamingImportHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -361,7 +418,7 @@ func TestStreamingImportHonorsCancellation(t *testing.T) {
 	source := Source{ID: "source-cancelled", Size: int64(len(syntheticLine)), Open: func(context.Context) (io.ReadCloser, error) {
 		return &syntheticRecordReader{remaining: 1}, nil
 	}}
-	err := adapter.Import(ctx, source, sinkFunc(func(context.Context, RecordEnvelope) error {
+	err := adapter.Import(ctx, ImportRequest{Source: source}, sinkFunc(func(context.Context, RecordEnvelope) error {
 		t.Fatal("sink called after cancellation")
 		return nil
 	}))
@@ -374,7 +431,7 @@ func TestStreamingImportStopsBeforeCompleteOnSinkError(t *testing.T) {
 	source := testSource([]byte(syntheticLine))
 	stop := errors.New("stop delivery")
 	sink := &lifecycleSink{acceptErr: stop}
-	err := streamSyntheticRecords(context.Background(), source, sink)
+	err := streamSyntheticRecords(context.Background(), ImportRequest{Source: source}, sink)
 	if !errors.Is(err, stop) {
 		t.Fatalf("streamSyntheticRecords() error = %v, want sink error", err)
 	}
@@ -383,10 +440,11 @@ func TestStreamingImportStopsBeforeCompleteOnSinkError(t *testing.T) {
 	}
 }
 
-func streamSyntheticRecords(ctx context.Context, source Source, sink ImportSink) error {
-	if err := source.Validate(); err != nil {
+func streamSyntheticRecords(ctx context.Context, request ImportRequest, sink ImportSink) error {
+	if err := request.Validate(); err != nil {
 		return err
 	}
+	source := request.Source
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -399,9 +457,16 @@ func streamSyntheticRecords(ctx context.Context, source Source, sink ImportSink)
 		return fmt.Errorf("open source %q: %w", source.ID, err)
 	}
 	defer stream.Close()
-	reader := bufio.NewReader(stream)
 	var sequence int64
 	var offset int64
+	if request.Resume != nil {
+		if _, err := io.CopyN(io.Discard, stream, request.Resume.ByteOffset); err != nil {
+			return fmt.Errorf("position source %q at resume offset %d: %w", source.ID, request.Resume.ByteOffset, err)
+		}
+		sequence = request.Resume.RecordSequence + 1
+		offset = request.Resume.ByteOffset
+	}
+	reader := bufio.NewReader(stream)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
