@@ -80,7 +80,43 @@ type Adapter interface {
 	Name() string
 	Version() model.Version
 	Probe(context.Context, Source) (ProbeResult, error)
-	Import(context.Context, Source, ImportSink) error
+	Import(context.Context, ImportRequest, ImportSink) error
+}
+
+// ImportRequest supplies an adapter with the current source and, for an
+// incremental append, the last checkpoint that import orchestration verified
+// against that source. Resume must be nil for a first import or whenever the
+// source was truncated, replaced, or changed before the committed cursor.
+//
+// A non-nil Resume lets an adapter preserve absolute byte offsets and record
+// sequences while starting after already committed records. It is not itself
+// proof that the source is unchanged: callers must perform the adapter-aware
+// fingerprint verification before setting it.
+type ImportRequest struct {
+	Source Source
+	Resume *ImportCheckpoint
+}
+
+// Validate checks source-neutral request invariants. It catches structurally
+// impossible resume attempts, but cannot replace adapter-aware fingerprint
+// verification of the source content.
+func (r ImportRequest) Validate() error {
+	if err := r.Source.Validate(); err != nil {
+		return fmt.Errorf("validate source: %w", err)
+	}
+	if r.Resume == nil {
+		return nil
+	}
+	if err := r.Resume.Validate(); err != nil {
+		return fmt.Errorf("validate resume checkpoint: %w", err)
+	}
+	if r.Resume.SourceID != r.Source.ID {
+		return fmt.Errorf("resume checkpoint source %q does not match import source %q", r.Resume.SourceID, r.Source.ID)
+	}
+	if r.Resume.SourceSize > r.Source.Size {
+		return fmt.Errorf("resume checkpoint source size %d exceeds current source size %d", r.Resume.SourceSize, r.Source.Size)
+	}
+	return nil
 }
 
 // ImportSink consumes one canonical session lifecycle. Begin establishes the
