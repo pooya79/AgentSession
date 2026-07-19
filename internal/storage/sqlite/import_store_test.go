@@ -116,6 +116,35 @@ func TestImportStoreRoundTripAndStableSourceOrder(t *testing.T) {
 	if !found || checkpoint != batch.Checkpoint {
 		t.Fatalf("Checkpoint() = (%#v, %v), want (%#v, true)", checkpoint, found, batch.Checkpoint)
 	}
+	state, found, err := store.SourceState(context.Background(), batch.Checkpoint.SourceID)
+	if err != nil || !found {
+		t.Fatalf("SourceState() = (%#v, %v, %v), want durable state", state, found, err)
+	}
+	if state.SessionID != batch.Session.ID || state.Import != batch.Session.Import || !reflect.DeepEqual(state.Session, batch.Session) || state.Checkpoint != batch.Checkpoint ||
+		state.LastEventSequence == nil || *state.LastEventSequence != batch.Events[len(batch.Events)-1].Sequence {
+		t.Fatalf("SourceState() = %#v, want session metadata, checkpoint, and last event sequence", state)
+	}
+}
+
+func TestImportStoreCommitsZeroRecordCheckpoint(t *testing.T) {
+	t.Parallel()
+
+	store := openImportStore(t)
+	batch := testImportBatch()
+	batch.RawRecords = nil
+	batch.Events = nil
+	batch.RecordDiagnostics = nil
+	batch.Checkpoint = importer.ImportCheckpoint{
+		SourceID: batch.Session.Import.SourceID, ByteOffset: 0, RecordSequence: importer.NoRecordSequence,
+		PrefixHash: model.HashRecord(nil), LastRecordHash: importer.NoRecordHash, SourceSize: 17,
+	}
+	if err := store.CommitBatch(context.Background(), batch); err != nil {
+		t.Fatalf("CommitBatch() zero-record error = %v", err)
+	}
+	state, found, err := store.SourceState(context.Background(), batch.Checkpoint.SourceID)
+	if err != nil || !found || state.Checkpoint != batch.Checkpoint || state.LastEventSequence != nil {
+		t.Fatalf("SourceState() = (%#v, %v, %v), want zero-record state", state, found, err)
+	}
 }
 
 func TestImportStoreCompressesAndRestoresLargeRawRecord(t *testing.T) {

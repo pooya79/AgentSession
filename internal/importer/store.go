@@ -23,6 +23,19 @@ var (
 	// ErrCheckpointRegression means an ordinary import attempted to move a
 	// verified source cursor behind its committed position.
 	ErrCheckpointRegression = errors.New("import checkpoint would regress")
+	// ErrSourceChanged means the committed prefix could not be verified.
+	ErrSourceChanged = errors.New("import source changed before committed checkpoint")
+	// ErrIncompatibleImport means persisted canonical data was produced by a
+	// different adapter, format, model, or normalization version.
+	ErrIncompatibleImport = errors.New("import metadata is incompatible with committed data")
+)
+
+const (
+	// NoRecordSequence represents a checkpoint before the first complete
+	// record. It is also used for empty and deferred-partial sources.
+	NoRecordSequence int64 = -1
+	// NoRecordHash is the last-record sentinel paired with NoRecordSequence.
+	NoRecordHash = "none"
 )
 
 // ImportCheckpoint identifies verified source progress. The hashes make the
@@ -44,8 +57,8 @@ func (c ImportCheckpoint) Validate() error {
 	if c.ByteOffset < 0 {
 		return fmt.Errorf("checkpoint byte offset must not be negative")
 	}
-	if c.RecordSequence < 0 {
-		return fmt.Errorf("checkpoint record sequence must not be negative")
+	if c.RecordSequence < NoRecordSequence {
+		return fmt.Errorf("checkpoint record sequence must not be less than %d", NoRecordSequence)
 	}
 	if c.SourceSize < 0 {
 		return fmt.Errorf("checkpoint source size must not be negative")
@@ -59,7 +72,27 @@ func (c ImportCheckpoint) Validate() error {
 	if strings.TrimSpace(c.LastRecordHash) == "" {
 		return fmt.Errorf("checkpoint last record hash is required")
 	}
+	if c.RecordSequence == NoRecordSequence {
+		if c.ByteOffset != 0 {
+			return fmt.Errorf("zero-record checkpoint byte offset must be zero")
+		}
+		if c.LastRecordHash != NoRecordHash {
+			return fmt.Errorf("zero-record checkpoint last record hash must be %q", NoRecordHash)
+		}
+	} else if c.LastRecordHash == NoRecordHash {
+		return fmt.Errorf("record checkpoint must not use the no-record hash")
+	}
 	return nil
+}
+
+// SourceState is the durable import identity used to decide whether a source
+// may safely resume without mixing normalization versions.
+type SourceState struct {
+	SessionID         model.SessionID
+	Import            model.ImportMetadata
+	Session           model.Session
+	Checkpoint        ImportCheckpoint
+	LastEventSequence *int64
 }
 
 // ImportBatch is the authoritative session snapshot and source evidence that
@@ -194,4 +227,5 @@ type ImportStore interface {
 	// a required re-normalization before choosing this destructive index update.
 	ReconcileSource(ctx context.Context, batch ImportBatch) error
 	Checkpoint(ctx context.Context, sourceID model.SourceID) (ImportCheckpoint, bool, error)
+	SourceState(ctx context.Context, sourceID model.SourceID) (SourceState, bool, error)
 }

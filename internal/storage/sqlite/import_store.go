@@ -654,6 +654,74 @@ func (s *ImportStore) Checkpoint(ctx context.Context, sourceID model.SourceID) (
 	return checkpoint, found, nil
 }
 
+// SourceState returns the checkpoint and canonical producer identity required
+// to verify an append. Multiple sessions for one source are treated as corrupt
+// state rather than selected arbitrarily.
+func (s *ImportStore) SourceState(ctx context.Context, sourceID model.SourceID) (importer.SourceState, bool, error) {
+	if strings.TrimSpace(string(sourceID)) == "" {
+		return importer.SourceState{}, false, errors.New("sqlite import store: read source state: source ID is required")
+	}
+	checkpoint, found, err := selectCheckpoint(ctx, s.db, sourceID)
+	if err != nil {
+		return importer.SourceState{}, false, fmt.Errorf("sqlite import store: read source state for %q: checkpoint: %w", sourceID, err)
+	}
+	if !found {
+		return importer.SourceState{}, false, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, adapter_name, adapter_version, format_version, model_version, normalization_version
+		FROM sessions WHERE source_id = ?
+		ORDER BY id
+	`, sourceID)
+	if err != nil {
+		return importer.SourceState{}, false, fmt.Errorf("sqlite import store: read source state for %q: sessions: %w", sourceID, err)
+	}
+	defer rows.Close()
+	var state importer.SourceState
+	state.Checkpoint = checkpoint
+	count := 0
+	for rows.Next() {
+		count++
+		if count > 1 {
+			return importer.SourceState{}, false, fmt.Errorf("sqlite import store: read source state for %q: multiple canonical sessions", sourceID)
+		}
+		state.Import.SourceID = sourceID
+		if err := rows.Scan(
+			&state.SessionID, &state.Import.AdapterName, &state.Import.AdapterVersion,
+			&state.Import.FormatVersion, &state.Import.ModelVersion, &state.Import.NormalizationVersion,
+		); err != nil {
+			return importer.SourceState{}, false, fmt.Errorf("sqlite import store: read source state for %q: scan session: %w", sourceID, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return importer.SourceState{}, false, fmt.Errorf("sqlite import store: read source state for %q: iterate sessions: %w", sourceID, err)
+	}
+	if err := rows.Close(); err != nil {
+		return importer.SourceState{}, false, fmt.Errorf("sqlite import store: read source state for %q: close sessions: %w", sourceID, err)
+	}
+	if count == 0 {
+		return importer.SourceState{}, false, fmt.Errorf("sqlite import store: read source state for %q: checkpoint has no canonical session", sourceID)
+	}
+	session, sessionFound, err := s.Session(ctx, state.SessionID)
+	if err != nil {
+		return importer.SourceState{}, false, fmt.Errorf("sqlite import store: read source state for %q: canonical session: %w", sourceID, err)
+	}
+	if !sessionFound {
+		return importer.SourceState{}, false, fmt.Errorf("sqlite import store: read source state for %q: canonical session disappeared", sourceID)
+	}
+	state.Session = session
+	var last sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(sequence) FROM events WHERE session_id = ?`, state.SessionID).Scan(&last); err != nil {
+		return importer.SourceState{}, false, fmt.Errorf("sqlite import store: read source state for %q: last event sequence: %w", sourceID, err)
+	}
+	if last.Valid {
+		sequence := last.Int64
+		state.LastEventSequence = &sequence
+	}
+	return state, true, nil
+}
+
 // RawRecord returns retained, untrusted source content without rendering it.
 func (s *ImportStore) RawRecord(ctx context.Context, rawRecordID model.RawRecordID) (model.RawRecord, bool, error) {
 	if strings.TrimSpace(string(rawRecordID)) == "" {
