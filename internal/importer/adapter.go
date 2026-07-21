@@ -15,6 +15,11 @@ import (
 // receive the same capability and must open and close their own view.
 type SourceOpener func(context.Context) (io.ReadCloser, error)
 
+// SourceOffsetOpener opens a read-only view positioned at offset. Discovery
+// should provide this capability for seekable local sources so verified
+// appends do not have to scan the committed prefix a second time.
+type SourceOffsetOpener func(context.Context, int64) (io.ReadCloser, error)
+
 // Source is the source-neutral input consumed by adapters. Hint is advisory
 // discovery metadata; shared import code must not interpret it as a format.
 type Source struct {
@@ -22,6 +27,9 @@ type Source struct {
 	Size int64
 	Hint string
 	Open SourceOpener
+	// OpenAt is optional for compatibility with non-seekable sources. When it
+	// is absent, OpenFrom falls back to opening at zero and discarding bytes.
+	OpenAt SourceOffsetOpener
 }
 
 // Validate checks the source metadata without opening the source.
@@ -32,10 +40,36 @@ func (s Source) Validate() error {
 	if s.Size < 0 {
 		return fmt.Errorf("source size must not be negative")
 	}
-	if s.Open == nil {
-		return fmt.Errorf("source opener is required")
+	if s.Open == nil && s.OpenAt == nil {
+		return fmt.Errorf("source opener or offset opener is required")
 	}
 	return nil
+}
+
+// OpenFrom opens a source at an absolute byte offset. An offset opener avoids
+// re-reading an already verified prefix; the fallback remains streaming.
+func (s Source) OpenFrom(ctx context.Context, offset int64) (io.ReadCloser, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("source offset must not be negative")
+	}
+	if s.OpenAt != nil {
+		return s.OpenAt(ctx, offset)
+	}
+	if s.Open == nil {
+		return nil, fmt.Errorf("source opener is required")
+	}
+	stream, err := s.Open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if offset == 0 {
+		return stream, nil
+	}
+	if _, err := io.CopyN(io.Discard, stream, offset); err != nil {
+		_ = stream.Close()
+		return nil, fmt.Errorf("position source at offset %d: %w", offset, err)
+	}
+	return stream, nil
 }
 
 // ProbeConfidence expresses how strongly an adapter recognizes a source.
@@ -80,8 +114,18 @@ type Adapter interface {
 	Name() string
 	Version() model.Version
 	Probe(context.Context, Source) (ProbeResult, error)
+	Verify(context.Context, Source, ImportCheckpoint) (CheckpointVerification, error)
 	Import(context.Context, ImportRequest, ImportSink) error
 }
+
+// CheckpointVerification is the adapter-owned verdict for the committed
+// source prefix. Shared orchestration never interprets source fingerprints.
+type CheckpointVerification uint8
+
+const (
+	CheckpointChanged CheckpointVerification = iota
+	CheckpointVerified
+)
 
 // ImportRequest supplies an adapter with the current source and, for an
 // incremental append, the last checkpoint that import orchestration verified
@@ -130,7 +174,7 @@ func (r ImportRequest) Validate() error {
 type ImportSink interface {
 	Begin(context.Context, model.Session) error
 	Accept(context.Context, RecordEnvelope) error
-	Complete(context.Context, model.Session) error
+	Complete(context.Context, model.Session, ImportCheckpoint) error
 }
 
 // RecordEnvelope keeps a retained source record, its canonical interpretation,

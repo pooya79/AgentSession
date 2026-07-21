@@ -206,10 +206,11 @@ import code to interpret a format.
 
 ```go
 type Adapter interface {
-	Name() string
-	Version() model.Version
-	Probe(ctx context.Context, source Source) (ProbeResult, error)
-	Import(ctx context.Context, request ImportRequest, sink ImportSink) error
+    Name() string
+    Version() model.Version
+    Probe(ctx context.Context, source Source) (ProbeResult, error)
+    Verify(ctx context.Context, source Source, checkpoint ImportCheckpoint) (CheckpointVerification, error)
+    Import(ctx context.Context, request ImportRequest, sink ImportSink) error
 }
 
 type ImportRequest struct {
@@ -218,9 +219,9 @@ type ImportRequest struct {
 }
 
 type ImportSink interface {
-	Begin(ctx context.Context, session model.Session) error
-	Accept(ctx context.Context, record RecordEnvelope) error
-	Complete(ctx context.Context, session model.Session) error
+    Begin(ctx context.Context, session model.Session) error
+    Accept(ctx context.Context, record RecordEnvelope) error
+    Complete(ctx context.Context, session model.Session, checkpoint ImportCheckpoint) error
 }
 ```
 
@@ -256,6 +257,13 @@ ordinal. The sink persists them incrementally in the same transaction as their
 raw record, canonical events, and checkpoint. Their stable raw-record and
 ordinal identity makes retries idempotent without retaining diagnostics from
 the full source in memory.
+
+The position before any complete record uses sequence `-1`, byte offset zero,
+and the `none` last-record sentinel. This lets empty and partial-only sources
+retain a durable checkpoint. Adapters defer incomplete trailing records so a
+later append retries them from the last complete boundary. Complete malformed
+records are retained with diagnostics and do not prevent later records from
+being imported.
 
 An envelope checkpoint is tied to the record being delivered: its last-record
 hash matches the retained content hash, its sequence matches when present, and
@@ -301,6 +309,15 @@ Raw content is untrusted and must not be rendered as HTML or written to a termin
 ### Importer
 
 The importer coordinates adapters, transactions, checkpoints, search indexing, and post-import projection work. It owns import lifecycle and progress reporting but delegates source parsing to adapters and persistence details to storage.
+
+The coordinator selects the strongest unambiguous probe result, compares its
+adapter and normalization identity with durable source state, and asks the
+adapter to verify the committed prefix. Verification failure stops safely and
+does not automatically reconcile the source. Records are buffered to configured
+count and byte limits, and each canonical batch is committed with its
+checkpoint. Cancellation preserves earlier batches and rolls back or discards
+only the current batch. Rebuildable projection work starts after completion and
+the final canonical commit; projection failure cannot invalidate that import.
 
 A central application-level import coordinator owns active work. It permits one active import per source, coalesces duplicate requests, and publishes one shared progress stream to both interfaces. An import is application work rather than request-scoped work: closing a TUI view or HTTP connection stops that observer but does not cancel the shared import. Process shutdown stops new requests, cancels active work, and lets the current transaction commit or roll back safely. Neither presentation layer implements a separate import path.
 

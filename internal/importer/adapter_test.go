@@ -33,6 +33,10 @@ func (a *fakeAdapter) Probe(ctx context.Context, source Source) (ProbeResult, er
 	return a.probeResult, a.probeErr
 }
 
+func (a *fakeAdapter) Verify(context.Context, Source, ImportCheckpoint) (CheckpointVerification, error) {
+	return CheckpointVerified, nil
+}
+
 func (a *fakeAdapter) Import(ctx context.Context, request ImportRequest, sink ImportSink) error {
 	a.importCalls++
 	if a.importFn == nil {
@@ -49,7 +53,7 @@ func (f sinkFunc) Accept(ctx context.Context, envelope RecordEnvelope) error {
 	return f(ctx, envelope)
 }
 
-func (sinkFunc) Complete(context.Context, model.Session) error { return nil }
+func (sinkFunc) Complete(context.Context, model.Session, ImportCheckpoint) error { return nil }
 
 func TestProbeIsIndependentFromCanonicalImport(t *testing.T) {
 	adapter := &fakeAdapter{probeResult: ProbeResult{Confidence: ProbeCertain, FormatVersion: "1"}}
@@ -263,7 +267,7 @@ func TestImportSessionLifecycleSupportsMalformedOnlySource(t *testing.T) {
 		if err := sink.Accept(ctx, envelope); err != nil {
 			return err
 		}
-		return sink.Complete(ctx, completed)
+		return sink.Complete(ctx, completed, envelope.Checkpoint)
 	}}
 	sink := &lifecycleSink{}
 	if err := adapter.Import(context.Background(), ImportRequest{Source: source}, sink); err != nil {
@@ -452,7 +456,11 @@ func streamSyntheticRecords(ctx context.Context, request ImportRequest, sink Imp
 	if err := sink.Begin(ctx, session); err != nil {
 		return fmt.Errorf("begin source %q session: %w", source.ID, err)
 	}
-	stream, err := source.Open(ctx)
+	resumeOffset := int64(0)
+	if request.Resume != nil {
+		resumeOffset = request.Resume.ByteOffset
+	}
+	stream, err := source.OpenFrom(ctx, resumeOffset)
 	if err != nil {
 		return fmt.Errorf("open source %q: %w", source.ID, err)
 	}
@@ -460,13 +468,14 @@ func streamSyntheticRecords(ctx context.Context, request ImportRequest, sink Imp
 	var sequence int64
 	var offset int64
 	if request.Resume != nil {
-		if _, err := io.CopyN(io.Discard, stream, request.Resume.ByteOffset); err != nil {
-			return fmt.Errorf("position source %q at resume offset %d: %w", source.ID, request.Resume.ByteOffset, err)
-		}
 		sequence = request.Resume.RecordSequence + 1
 		offset = request.Resume.ByteOffset
 	}
 	reader := bufio.NewReader(stream)
+	completion := ImportCheckpoint{
+		SourceID: source.ID, RecordSequence: NoRecordSequence, PrefixHash: model.HashRecord(nil),
+		LastRecordHash: NoRecordHash, SourceSize: source.Size,
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -478,12 +487,13 @@ func streamSyntheticRecords(ctx context.Context, request ImportRequest, sink Imp
 			if sinkErr := sink.Accept(ctx, envelope); sinkErr != nil {
 				return fmt.Errorf("deliver source %q record %d: %w", source.ID, sequence, sinkErr)
 			}
+			completion = envelope.Checkpoint
 			offset += int64(len(record))
 			sequence++
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				if completeErr := sink.Complete(ctx, session); completeErr != nil {
+				if completeErr := sink.Complete(ctx, session, completion); completeErr != nil {
 					return fmt.Errorf("complete source %q session: %w", source.ID, completeErr)
 				}
 				return nil
@@ -520,7 +530,7 @@ func (s *lifecycleSink) Accept(_ context.Context, envelope RecordEnvelope) error
 	return s.acceptErr
 }
 
-func (s *lifecycleSink) Complete(_ context.Context, session model.Session) error {
+func (s *lifecycleSink) Complete(_ context.Context, session model.Session, _ ImportCheckpoint) error {
 	s.recordCall("complete")
 	s.completed = session
 	return nil

@@ -2,7 +2,7 @@
 
 AgentSession is a lightweight, local-first explorer for coding-agent sessions. It turns local records from coding agents into repository-aware evidence about messages, commands, file changes, tests, failures, and outcomes.
 
-The project is currently an early runnable scaffold. Read-only session source discovery, authoritative import storage, and the source-neutral probing and streaming adapter contracts are implemented; concrete source adapters, import orchestration, search, and analysis are still under development.
+The project is currently an early runnable scaffold. Read-only session source discovery, authoritative import storage, and verified, bounded import orchestration are implemented; concrete source adapters, search, and analysis are still under development.
 
 ## Session source discovery
 
