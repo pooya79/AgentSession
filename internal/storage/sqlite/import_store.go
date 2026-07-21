@@ -3,7 +3,9 @@ package sqlite
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,23 +50,13 @@ func NewImportStore(db *sql.DB) (*ImportStore, error) {
 
 // CommitBatch atomically persists a canonical batch and its checkpoint.
 func (s *ImportStore) CommitBatch(ctx context.Context, batch importer.ImportBatch) (err error) {
-	return s.commitBatch(ctx, batch, false)
+	return s.commitBatch(ctx, batch)
 }
 
-// ReconcileSource atomically removes stale authoritative data for a verified
-// changed source and commits its first replacement batch and checkpoint.
-func (s *ImportStore) ReconcileSource(ctx context.Context, batch importer.ImportBatch) error {
-	return s.commitBatch(ctx, batch, true)
-}
-
-func (s *ImportStore) commitBatch(ctx context.Context, batch importer.ImportBatch, reconcile bool) (err error) {
+func (s *ImportStore) commitBatch(ctx context.Context, batch importer.ImportBatch) (err error) {
 	sourceID := batch.Checkpoint.SourceID
-	operation := "commit batch"
-	if reconcile {
-		operation = "reconcile source"
-	}
 	wrap := func(detail string, cause error) error {
-		return fmt.Errorf("sqlite import store: %s for source %q: %s: %w", operation, sourceID, detail, cause)
+		return fmt.Errorf("sqlite import store: commit batch for source %q: %s: %w", sourceID, detail, cause)
 	}
 	if err := batch.Validate(); err != nil {
 		return wrap("validate batch", err)
@@ -87,34 +79,8 @@ func (s *ImportStore) commitBatch(ctx context.Context, batch importer.ImportBatc
 		}
 	}()
 
-	if reconcile {
-		if err := deleteSourceImport(ctx, tx, sourceID); err != nil {
-			return wrap("remove stale source data", err)
-		}
-	}
-	if err := upsertSession(ctx, tx, batch.Session); err != nil {
-		return wrap("persist session", err)
-	}
-	for i, rawRecord := range batch.RawRecords {
-		if err := persistRawRecord(ctx, tx, batch.Session.ID, rawRecord); err != nil {
-			return wrap(fmt.Sprintf("persist raw record %d (%q)", i, rawRecord.Ref.ID), err)
-		}
-	}
-	for i, event := range batch.Events {
-		if err := persistEvent(ctx, tx, event); err != nil {
-			return wrap(fmt.Sprintf("persist event %d (%q)", i, event.ID), err)
-		}
-	}
-	for i, diagnostic := range batch.RecordDiagnostics {
-		if err := persistRecordDiagnostic(ctx, tx, batch.Session.ID, diagnostic); err != nil {
-			return wrap(fmt.Sprintf("persist record diagnostic %d for %q", i, diagnostic.RawRecordID), err)
-		}
-	}
-	if err := replaceDiagnostics(ctx, tx, batch.Session); err != nil {
-		return wrap("replace diagnostics", err)
-	}
-	if err := persistCheckpoint(ctx, tx, batch.Checkpoint); err != nil {
-		return wrap("persist checkpoint", err)
+	if err := persistImportBatch(ctx, tx, batch); err != nil {
+		return wrap("persist canonical evidence", err)
 	}
 
 	if s.beforeCommit != nil {
@@ -128,6 +94,294 @@ func (s *ImportStore) commitBatch(ctx context.Context, batch importer.ImportBatc
 	}
 	committed = true
 	return nil
+}
+
+func persistImportBatch(ctx context.Context, tx *sql.Tx, batch importer.ImportBatch) error {
+	if err := upsertSession(ctx, tx, batch.Session); err != nil {
+		return fmt.Errorf("persist session: %w", err)
+	}
+	for i, rawRecord := range batch.RawRecords {
+		if err := persistRawRecord(ctx, tx, batch.Session.ID, rawRecord); err != nil {
+			return fmt.Errorf("persist raw record %d (%q): %w", i, rawRecord.Ref.ID, err)
+		}
+	}
+	for i, event := range batch.Events {
+		if err := persistEvent(ctx, tx, event); err != nil {
+			return fmt.Errorf("persist event %d (%q): %w", i, event.ID, err)
+		}
+	}
+	for i, diagnostic := range batch.RecordDiagnostics {
+		if err := persistRecordDiagnostic(ctx, tx, batch.Session.ID, diagnostic); err != nil {
+			return fmt.Errorf("persist record diagnostic %d for %q: %w", i, diagnostic.RawRecordID, err)
+		}
+	}
+	if err := replaceDiagnostics(ctx, tx, batch.Session); err != nil {
+		return fmt.Errorf("replace diagnostics: %w", err)
+	}
+	if err := persistCheckpoint(ctx, tx, batch.Checkpoint); err != nil {
+		return fmt.Errorf("persist checkpoint: %w", err)
+	}
+	return nil
+}
+
+type sqliteReconciliation struct {
+	store    *ImportStore
+	runID    string
+	sourceID model.SourceID
+}
+
+func (s *ImportStore) BeginReconciliation(ctx context.Context, sourceID model.SourceID, expected importer.ImportCheckpoint) (importer.Reconciliation, error) {
+	if strings.TrimSpace(string(sourceID)) == "" {
+		return nil, errors.New("sqlite import store: begin reconciliation: source ID is required")
+	}
+	if err := expected.Validate(); err != nil {
+		return nil, fmt.Errorf("sqlite import store: begin reconciliation for source %q: expected checkpoint: %w", sourceID, err)
+	}
+	if expected.SourceID != sourceID {
+		return nil, fmt.Errorf("sqlite import store: begin reconciliation: checkpoint source %q does not match %q", expected.SourceID, sourceID)
+	}
+	runID, err := newReconciliationRunID()
+	if err != nil {
+		return nil, fmt.Errorf("sqlite import store: begin reconciliation for source %q: %w", sourceID, err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite import store: begin reconciliation for source %q: begin transaction: %w", sourceID, err)
+	}
+	defer tx.Rollback()
+	current, found, err := selectCheckpoint(ctx, tx, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite import store: begin reconciliation for source %q: read live checkpoint: %w", sourceID, err)
+	}
+	if !found || !importer.CheckpointEqual(current, expected) {
+		return nil, fmt.Errorf("%w: source %q no longer matches expected generation", importer.ErrCheckpointConflict, sourceID)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM reconciliation_runs WHERE source_id = ?`, sourceID); err != nil {
+		return nil, fmt.Errorf("sqlite import store: begin reconciliation for source %q: clear abandoned staging: %w", sourceID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO reconciliation_runs (
+			run_id, source_id, expected_record_sequence, expected_state_version, expected_cursor, expected_fingerprint
+		) VALUES (?, ?, ?, ?, ?, ?)
+	`, runID, sourceID, expected.RecordSequence, expected.StateVersion, expected.Cursor, expected.Fingerprint); err != nil {
+		return nil, fmt.Errorf("sqlite import store: begin reconciliation for source %q: persist staging run: %w", sourceID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("sqlite import store: begin reconciliation for source %q: commit staging run: %w", sourceID, err)
+	}
+	return &sqliteReconciliation{store: s, runID: runID, sourceID: sourceID}, nil
+}
+
+func newReconciliationRunID() (string, error) {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", fmt.Errorf("generate staging run ID: %w", err)
+	}
+	return "reconcile_" + hex.EncodeToString(value[:]), nil
+}
+
+func (r *sqliteReconciliation) StageBatch(ctx context.Context, batch importer.ImportBatch) error {
+	if err := batch.Validate(); err != nil {
+		return fmt.Errorf("sqlite import store: stage reconciliation for source %q: validate batch: %w", r.sourceID, err)
+	}
+	if batch.Checkpoint.SourceID != r.sourceID {
+		return fmt.Errorf("sqlite import store: stage reconciliation source %q does not match %q", batch.Checkpoint.SourceID, r.sourceID)
+	}
+	encoded, err := encodeImportBatch(batch)
+	if err != nil {
+		return fmt.Errorf("sqlite import store: stage reconciliation for source %q: encode batch: %w", r.sourceID, err)
+	}
+	tx, err := r.store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("sqlite import store: stage reconciliation for source %q: begin transaction: %w", r.sourceID, err)
+	}
+	defer tx.Rollback()
+	var previous []byte
+	err = tx.QueryRowContext(ctx, `
+		SELECT batch FROM reconciliation_batches WHERE run_id = ? ORDER BY ordinal DESC LIMIT 1
+	`, r.runID).Scan(&previous)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("sqlite import store: stage reconciliation for source %q: read previous batch: %w", r.sourceID, err)
+	}
+	if err == nil {
+		prior, decodeErr := decodeImportBatch(previous)
+		if decodeErr != nil {
+			return fmt.Errorf("sqlite import store: stage reconciliation for source %q: decode previous batch: %w", r.sourceID, decodeErr)
+		}
+		if batch.Checkpoint.RecordSequence <= prior.Checkpoint.RecordSequence {
+			return fmt.Errorf("%w: staged sequence %d does not advance beyond %d", importer.ErrCheckpointRegression, batch.Checkpoint.RecordSequence, prior.Checkpoint.RecordSequence)
+		}
+		if err := importer.ValidateSessionTransition(prior.Session, batch.Session); err != nil {
+			return fmt.Errorf("sqlite import store: stage reconciliation for source %q: session transition: %w", r.sourceID, err)
+		}
+	}
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO reconciliation_batches (run_id, ordinal, batch)
+		SELECT ?, COALESCE(MAX(ordinal) + 1, 0), ? FROM reconciliation_batches WHERE run_id = ?
+	`, r.runID, encoded, r.runID)
+	if err != nil {
+		return fmt.Errorf("sqlite import store: stage reconciliation for source %q: persist batch: %w", r.sourceID, err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		return fmt.Errorf("sqlite import store: stage reconciliation for source %q: staging run is unavailable", r.sourceID)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("sqlite import store: stage reconciliation for source %q: commit batch: %w", r.sourceID, err)
+	}
+	return nil
+}
+
+func (r *sqliteReconciliation) Finalize(ctx context.Context) (err error) {
+	wrap := func(detail string, cause error) error {
+		return fmt.Errorf("sqlite import store: finalize reconciliation for source %q: %s: %w", r.sourceID, detail, cause)
+	}
+	tx, err := r.store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return wrap("begin transaction", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+				err = errors.Join(err, wrap("roll back", rollbackErr))
+			}
+		}
+	}()
+	expected, err := selectReconciliationExpected(ctx, tx, r.runID, r.sourceID)
+	if err != nil {
+		return wrap("read expected checkpoint", err)
+	}
+	current, found, err := selectCheckpoint(ctx, tx, r.sourceID)
+	if err != nil {
+		return wrap("read live checkpoint", err)
+	}
+	if !found || !importer.CheckpointEqual(current, expected) {
+		return wrap("compare live checkpoint", importer.ErrCheckpointConflict)
+	}
+	var batchCount int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM reconciliation_batches WHERE run_id = ?`, r.runID).Scan(&batchCount); err != nil {
+		return wrap("count staged batches", err)
+	}
+	if batchCount == 0 {
+		return wrap("validate staged batches", errors.New("no completed batch was staged"))
+	}
+	if err := deleteSourceImport(ctx, tx, r.sourceID); err != nil {
+		return wrap("remove stale source data", err)
+	}
+	for i := 0; i < batchCount; i++ {
+		var encoded []byte
+		if err := tx.QueryRowContext(ctx, `SELECT batch FROM reconciliation_batches WHERE run_id = ? AND ordinal = ?`, r.runID, i).Scan(&encoded); err != nil {
+			return wrap(fmt.Sprintf("read staged batch %d", i), err)
+		}
+		batch, err := decodeImportBatch(encoded)
+		if err != nil {
+			return wrap(fmt.Sprintf("decode staged batch %d", i), err)
+		}
+		if err := persistImportBatch(ctx, tx, batch); err != nil {
+			return wrap(fmt.Sprintf("promote staged batch %d", i), err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM reconciliation_runs WHERE run_id = ?`, r.runID); err != nil {
+		return wrap("remove staging run", err)
+	}
+	if r.store.beforeCommit != nil {
+		r.store.beforeCommit()
+	}
+	if err := ctx.Err(); err != nil {
+		return wrap("check cancellation before commit", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return wrap("commit", err)
+	}
+	committed = true
+	return nil
+}
+
+func selectReconciliationExpected(ctx context.Context, queryer rowQueryer, runID string, sourceID model.SourceID) (importer.ImportCheckpoint, error) {
+	checkpoint := importer.ImportCheckpoint{SourceID: sourceID}
+	err := queryer.QueryRowContext(ctx, `
+		SELECT expected_record_sequence, expected_state_version, expected_cursor, expected_fingerprint
+		FROM reconciliation_runs WHERE run_id = ? AND source_id = ?
+	`, runID, sourceID).Scan(&checkpoint.RecordSequence, &checkpoint.StateVersion, &checkpoint.Cursor, &checkpoint.Fingerprint)
+	if errors.Is(err, sql.ErrNoRows) {
+		return importer.ImportCheckpoint{}, errors.New("staging run is unavailable")
+	}
+	return checkpoint, err
+}
+
+func (r *sqliteReconciliation) Abort(ctx context.Context) error {
+	_, err := r.store.db.ExecContext(ctx, `DELETE FROM reconciliation_runs WHERE run_id = ?`, r.runID)
+	if err != nil {
+		return fmt.Errorf("sqlite import store: abort reconciliation for source %q: %w", r.sourceID, err)
+	}
+	return nil
+}
+
+func encodeImportBatch(batch importer.ImportBatch) ([]byte, error) {
+	staged := stagedImportBatch{
+		Session: batch.Session, RawRecords: batch.RawRecords,
+		RecordDiagnostics: batch.RecordDiagnostics, Checkpoint: batch.Checkpoint,
+	}
+	staged.Events = make([]stagedEvent, len(batch.Events))
+	for i, event := range batch.Events {
+		data, err := json.Marshal(event.Data)
+		if err != nil {
+			return nil, fmt.Errorf("event %d data: %w", i, err)
+		}
+		staged.Events[i] = stagedEvent{
+			ID: event.ID, SessionID: event.SessionID, Sequence: event.Sequence, Timestamp: event.Timestamp,
+			Kind: event.Kind, Summary: event.Summary, SearchableText: event.SearchableText,
+			Data: data, RawRecord: event.RawRecord,
+		}
+	}
+	return json.Marshal(staged)
+}
+
+func decodeImportBatch(encoded []byte) (importer.ImportBatch, error) {
+	var staged stagedImportBatch
+	if err := json.Unmarshal(encoded, &staged); err != nil {
+		return importer.ImportBatch{}, err
+	}
+	batch := importer.ImportBatch{
+		Session: staged.Session, RawRecords: staged.RawRecords,
+		RecordDiagnostics: staged.RecordDiagnostics, Checkpoint: staged.Checkpoint,
+		Events: make([]model.Event, len(staged.Events)),
+	}
+	for i, event := range staged.Events {
+		data, err := decodeNormalizedData(event.Kind, string(event.Data))
+		if err != nil {
+			return importer.ImportBatch{}, fmt.Errorf("event %d data: %w", i, err)
+		}
+		batch.Events[i] = model.Event{
+			ID: event.ID, SessionID: event.SessionID, Sequence: event.Sequence, Timestamp: event.Timestamp,
+			Kind: event.Kind, Summary: event.Summary, SearchableText: event.SearchableText,
+			Data: data, RawRecord: event.RawRecord,
+		}
+	}
+	if err := batch.Validate(); err != nil {
+		return importer.ImportBatch{}, err
+	}
+	return batch, nil
+}
+
+type stagedImportBatch struct {
+	Session           model.Session
+	RawRecords        []model.RawRecord
+	Events            []stagedEvent
+	RecordDiagnostics []model.RecordDiagnostic
+	Checkpoint        importer.ImportCheckpoint
+}
+
+type stagedEvent struct {
+	ID             model.EventID
+	SessionID      model.SessionID
+	Sequence       int64
+	Timestamp      *time.Time
+	Kind           model.EventKind
+	Summary        string
+	SearchableText string
+	Data           json.RawMessage
+	RawRecord      model.RawRecordRef
 }
 
 func deleteSourceImport(ctx context.Context, tx *sql.Tx, sourceID model.SourceID) error {
@@ -584,36 +838,28 @@ func persistCheckpoint(ctx context.Context, tx *sql.Tx, checkpoint importer.Impo
 	if err != nil {
 		return fmt.Errorf("load current checkpoint: %w", err)
 	}
-	if found && (checkpoint.ByteOffset < existing.ByteOffset ||
-		checkpoint.RecordSequence < existing.RecordSequence ||
-		checkpoint.SourceSize < existing.SourceSize) {
+	if found && checkpoint.RecordSequence < existing.RecordSequence {
 		return fmt.Errorf(
-			"%w: source %q cursor (%d, %d, %d) is behind (%d, %d, %d)",
+			"%w: source %q record sequence %d is behind %d",
 			importer.ErrCheckpointRegression,
 			checkpoint.SourceID,
-			checkpoint.ByteOffset,
 			checkpoint.RecordSequence,
-			checkpoint.SourceSize,
-			existing.ByteOffset,
 			existing.RecordSequence,
-			existing.SourceSize,
 		)
 	}
-	if found && checkpoint.ByteOffset == existing.ByteOffset && checkpoint.RecordSequence == existing.RecordSequence &&
-		(checkpoint.PrefixHash != existing.PrefixHash || checkpoint.LastRecordHash != existing.LastRecordHash) {
+	if found && checkpoint.RecordSequence == existing.RecordSequence && !importer.CheckpointEqual(checkpoint, existing) {
 		return fmt.Errorf("%w: source %q fingerprints changed at the committed cursor", importer.ErrCheckpointRegression, checkpoint.SourceID)
 	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO import_checkpoints (
-			source_id, byte_offset, record_sequence, prefix_hash, last_record_hash, source_size
-		) VALUES (?, ?, ?, ?, ?, ?)
+			source_id, record_sequence, state_version, cursor, fingerprint
+		) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(source_id) DO UPDATE SET
-			byte_offset = excluded.byte_offset,
 			record_sequence = excluded.record_sequence,
-			prefix_hash = excluded.prefix_hash,
-			last_record_hash = excluded.last_record_hash,
-			source_size = excluded.source_size
-	`, checkpoint.SourceID, checkpoint.ByteOffset, checkpoint.RecordSequence, checkpoint.PrefixHash, checkpoint.LastRecordHash, checkpoint.SourceSize)
+			state_version = excluded.state_version,
+			cursor = excluded.cursor,
+			fingerprint = excluded.fingerprint
+	`, checkpoint.SourceID, checkpoint.RecordSequence, checkpoint.StateVersion, checkpoint.Cursor, checkpoint.Fingerprint)
 	if err != nil {
 		return fmt.Errorf("upsert source checkpoint: %w", err)
 	}
@@ -623,15 +869,14 @@ func persistCheckpoint(ctx context.Context, tx *sql.Tx, checkpoint importer.Impo
 func selectCheckpoint(ctx context.Context, queryer rowQueryer, sourceID model.SourceID) (importer.ImportCheckpoint, bool, error) {
 	var checkpoint importer.ImportCheckpoint
 	err := queryer.QueryRowContext(ctx, `
-		SELECT source_id, byte_offset, record_sequence, prefix_hash, last_record_hash, source_size
+		SELECT source_id, record_sequence, state_version, cursor, fingerprint
 		FROM import_checkpoints WHERE source_id = ?
 	`, sourceID).Scan(
 		&checkpoint.SourceID,
-		&checkpoint.ByteOffset,
 		&checkpoint.RecordSequence,
-		&checkpoint.PrefixHash,
-		&checkpoint.LastRecordHash,
-		&checkpoint.SourceSize,
+		&checkpoint.StateVersion,
+		&checkpoint.Cursor,
+		&checkpoint.Fingerprint,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return importer.ImportCheckpoint{}, false, nil
@@ -961,6 +1206,9 @@ func (s *ImportStore) DeleteSession(ctx context.Context, sessionID model.Session
 		return false, fmt.Errorf("sqlite import store: delete session %q: count remaining source sessions: %w", sessionID, err)
 	}
 	if remaining == 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM reconciliation_runs WHERE source_id = ?`, sourceID); err != nil {
+			return false, fmt.Errorf("sqlite import store: delete session %q: remove staged reconciliation: %w", sessionID, err)
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM import_checkpoints WHERE source_id = ?`, sourceID); err != nil {
 			return false, fmt.Errorf("sqlite import store: delete session %q: remove source checkpoint: %w", sessionID, err)
 		}

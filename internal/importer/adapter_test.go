@@ -17,7 +17,7 @@ type fakeAdapter struct {
 	probeResult ProbeResult
 	probeErr    error
 	probeFn     func(context.Context, Source) (ProbeResult, error)
-	importFn    func(context.Context, ImportRequest, ImportSink) error
+	importFn    func(context.Context, Source, *ImportCheckpoint, ImportSink) error
 	probeCalls  int
 	importCalls int
 }
@@ -33,17 +33,36 @@ func (a *fakeAdapter) Probe(ctx context.Context, source Source) (ProbeResult, er
 	return a.probeResult, a.probeErr
 }
 
-func (a *fakeAdapter) Verify(context.Context, Source, ImportCheckpoint) (CheckpointVerification, error) {
-	return CheckpointVerified, nil
+func (a *fakeAdapter) Prepare(_ context.Context, source Source) (PreparedSource, error) {
+	return &fakePreparedSource{adapter: a, source: source}, nil
 }
 
-func (a *fakeAdapter) Import(ctx context.Context, request ImportRequest, sink ImportSink) error {
+func (a *fakeAdapter) runImport(ctx context.Context, source Source, resume *ImportCheckpoint, sink ImportSink) error {
 	a.importCalls++
 	if a.importFn == nil {
 		return nil
 	}
-	return a.importFn(ctx, request, sink)
+	return a.importFn(ctx, source, resume, sink)
 }
+
+type fakePreparedSource struct {
+	adapter *fakeAdapter
+	source  Source
+}
+
+func (*fakePreparedSource) Verify(context.Context, SourceState) (SourceChange, error) {
+	return SourceAppend, nil
+}
+
+func (p *fakePreparedSource) Import(ctx context.Context, resume *ImportCheckpoint, sink ImportSink) error {
+	return p.adapter.runImport(ctx, p.source, resume, sink)
+}
+
+func (p *fakePreparedSource) Reconcile(ctx context.Context, sink ImportSink) error {
+	return p.adapter.runImport(ctx, p.source, nil, sink)
+}
+
+func (*fakePreparedSource) Close() error { return nil }
 
 type sinkFunc func(context.Context, RecordEnvelope) error
 
@@ -102,38 +121,6 @@ func TestSourceAndProbeResultValidation(t *testing.T) {
 	unsupported := ProbeResult{Confidence: ProbeUnsupported}
 	if err := unsupported.Validate(); err != nil {
 		t.Fatalf("unsupported ProbeResult.Validate() error = %v", err)
-	}
-}
-
-func TestImportRequestValidatesVerifiedResumeState(t *testing.T) {
-	source := testSource([]byte("first\nsecond\n"))
-	checkpoint := testEnvelopeForSource(source, 0, 0, []byte("first\n")).Checkpoint
-
-	if err := (ImportRequest{Source: source}).Validate(); err != nil {
-		t.Fatalf("new ImportRequest.Validate() error = %v", err)
-	}
-	if err := (ImportRequest{Source: source, Resume: &checkpoint}).Validate(); err != nil {
-		t.Fatalf("resumed ImportRequest.Validate() error = %v", err)
-	}
-
-	tests := []struct {
-		name   string
-		source Source
-		resume ImportCheckpoint
-	}{
-		{name: "different source", source: source, resume: func() ImportCheckpoint {
-			changed := checkpoint
-			changed.SourceID = "other-source"
-			return changed
-		}()},
-		{name: "truncated source", source: testSource([]byte("fir")), resume: checkpoint},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := (ImportRequest{Source: tt.source, Resume: &tt.resume}).Validate(); err == nil {
-				t.Fatal("Validate() error = nil, want unsafe resume rejection")
-			}
-		})
 	}
 }
 
@@ -216,14 +203,8 @@ func TestRecordEnvelopeCheckpointIsTiedToDeliveredRecord(t *testing.T) {
 		name   string
 		mutate func(*RecordEnvelope)
 	}{
-		{name: "last record hash", mutate: func(e *RecordEnvelope) {
-			e.Checkpoint.LastRecordHash = model.HashRecord([]byte("other record"))
-		}},
 		{name: "record sequence", mutate: func(e *RecordEnvelope) {
 			e.Checkpoint.RecordSequence++
-		}},
-		{name: "byte offset", mutate: func(e *RecordEnvelope) {
-			e.Checkpoint.ByteOffset--
 		}},
 		{name: "missing record position", mutate: func(e *RecordEnvelope) {
 			e.RawRecord.Ref.RecordSequence = nil
@@ -260,7 +241,7 @@ func TestImportSessionLifecycleSupportsMalformedOnlySource(t *testing.T) {
 	completed.StartedAt = &startedAt
 	completed.EndedAt = &endedAt
 
-	adapter := &fakeAdapter{importFn: func(ctx context.Context, _ ImportRequest, sink ImportSink) error {
+	adapter := &fakeAdapter{importFn: func(ctx context.Context, _ Source, _ *ImportCheckpoint, sink ImportSink) error {
 		if err := sink.Begin(ctx, initial); err != nil {
 			return err
 		}
@@ -270,7 +251,7 @@ func TestImportSessionLifecycleSupportsMalformedOnlySource(t *testing.T) {
 		return sink.Complete(ctx, completed, envelope.Checkpoint)
 	}}
 	sink := &lifecycleSink{}
-	if err := adapter.Import(context.Background(), ImportRequest{Source: source}, sink); err != nil {
+	if err := adapter.runImport(context.Background(), source, nil, sink); err != nil {
 		t.Fatalf("Import() error = %v", err)
 	}
 	if sink.calls != "begin,accept,complete" {
@@ -375,7 +356,7 @@ func TestStreamingImportStopsWithoutReadingVeryLargeSource(t *testing.T) {
 		return nil
 	})
 
-	err := adapter.Import(context.Background(), ImportRequest{Source: source}, sink)
+	err := adapter.runImport(context.Background(), source, nil, sink)
 	if !errors.Is(err, stop) {
 		t.Fatalf("Import() error = %v, want sink error", err)
 	}
@@ -396,7 +377,7 @@ func TestStreamingImportResumesWithAbsoluteRecordPositions(t *testing.T) {
 	checkpoint := testEnvelopeForSource(source, 0, 0, []byte("{}\n")).Checkpoint
 	var envelopes []RecordEnvelope
 
-	err := streamSyntheticRecords(context.Background(), ImportRequest{Source: source, Resume: &checkpoint}, sinkFunc(func(_ context.Context, envelope RecordEnvelope) error {
+	err := streamSyntheticRecords(context.Background(), source, &checkpoint, sinkFunc(func(_ context.Context, envelope RecordEnvelope) error {
 		envelopes = append(envelopes, envelope)
 		return nil
 	}))
@@ -410,9 +391,89 @@ func TestStreamingImportResumesWithAbsoluteRecordPositions(t *testing.T) {
 	if first.RecordSequence == nil || *first.RecordSequence != 1 {
 		t.Fatalf("first resumed record sequence = %v, want 1", first.RecordSequence)
 	}
-	if first.ByteRange == nil || first.ByteRange.Offset != checkpoint.ByteOffset {
-		t.Fatalf("first resumed byte range = %#v, want offset %d", first.ByteRange, checkpoint.ByteOffset)
+	resumeOffset := checkpointByteOffset(checkpoint)
+	if first.ByteRange == nil || first.ByteRange.Offset != resumeOffset {
+		t.Fatalf("first resumed byte range = %#v, want offset %d", first.ByteRange, resumeOffset)
 	}
+}
+
+func TestLogicalDatabaseFingerprintUsesRowsNotOffsets(t *testing.T) {
+	original := []logicalFixtureRow{{ID: "row-1", Value: "one"}, {ID: "row-2", Value: "two"}}
+	checkpoint := logicalFixtureCheckpoint("source-1", "database-1", original)
+
+	tests := []struct {
+		name     string
+		identity string
+		rows     []logicalFixtureRow
+		want     SourceChange
+	}{
+		{name: "unchanged", identity: "database-1", rows: original, want: SourceUnchanged},
+		{name: "append", identity: "database-1", rows: append(append([]logicalFixtureRow(nil), original...), logicalFixtureRow{ID: "row-3", Value: "three"}), want: SourceAppend},
+		{name: "truncation", identity: "database-1", rows: original[:1], want: SourceTruncated},
+		{name: "mutation", identity: "database-1", rows: []logicalFixtureRow{{ID: "row-1", Value: "changed"}, {ID: "row-2", Value: "two"}}, want: SourceMutated},
+		{name: "replacement", identity: "database-2", rows: original, want: SourceReplaced},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := verifyLogicalFixture(tt.identity, tt.rows, checkpoint); got != tt.want {
+				t.Fatalf("verifyLogicalFixture() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+type logicalFixtureRow struct {
+	ID    string
+	Value string
+}
+
+func logicalFixtureCheckpoint(sourceID model.SourceID, identity string, rows []logicalFixtureRow) ImportCheckpoint {
+	cursor := "start"
+	sequence := NoRecordSequence
+	if len(rows) > 0 {
+		cursor = rows[len(rows)-1].ID
+		sequence = int64(len(rows) - 1)
+	}
+	return ImportCheckpoint{
+		SourceID: sourceID, RecordSequence: sequence, StateVersion: "logical-rows-v1",
+		Cursor: []byte(cursor), Fingerprint: logicalFixtureFingerprint(identity, rows),
+	}
+}
+
+func verifyLogicalFixture(identity string, rows []logicalFixtureRow, checkpoint ImportCheckpoint) SourceChange {
+	storedIdentity, storedHash, ok := bytes.Cut(checkpoint.Fingerprint, []byte{0})
+	if checkpoint.StateVersion != "logical-rows-v1" || !ok || string(storedIdentity) != identity {
+		return SourceReplaced
+	}
+	count := 0
+	if string(checkpoint.Cursor) != "start" {
+		for count < len(rows) && rows[count].ID != string(checkpoint.Cursor) {
+			count++
+		}
+		if count == len(rows) {
+			return SourceTruncated
+		}
+		count++
+	}
+	if !bytes.Equal(storedHash, logicalFixtureFingerprintHash(rows[:count])) {
+		return SourceMutated
+	}
+	if count < len(rows) {
+		return SourceAppend
+	}
+	return SourceUnchanged
+}
+
+func logicalFixtureFingerprint(identity string, rows []logicalFixtureRow) []byte {
+	return append(append([]byte(identity), 0), logicalFixtureFingerprintHash(rows)...)
+}
+
+func logicalFixtureFingerprintHash(rows []logicalFixtureRow) []byte {
+	var canonical bytes.Buffer
+	for _, row := range rows {
+		fmt.Fprintf(&canonical, "%d:%s%d:%s", len(row.ID), row.ID, len(row.Value), row.Value)
+	}
+	return []byte(model.HashRecord(canonical.Bytes()))
 }
 
 func TestStreamingImportHonorsCancellation(t *testing.T) {
@@ -422,7 +483,7 @@ func TestStreamingImportHonorsCancellation(t *testing.T) {
 	source := Source{ID: "source-cancelled", Size: int64(len(syntheticLine)), Open: func(context.Context) (io.ReadCloser, error) {
 		return &syntheticRecordReader{remaining: 1}, nil
 	}}
-	err := adapter.Import(ctx, ImportRequest{Source: source}, sinkFunc(func(context.Context, RecordEnvelope) error {
+	err := adapter.runImport(ctx, source, nil, sinkFunc(func(context.Context, RecordEnvelope) error {
 		t.Fatal("sink called after cancellation")
 		return nil
 	}))
@@ -435,7 +496,7 @@ func TestStreamingImportStopsBeforeCompleteOnSinkError(t *testing.T) {
 	source := testSource([]byte(syntheticLine))
 	stop := errors.New("stop delivery")
 	sink := &lifecycleSink{acceptErr: stop}
-	err := streamSyntheticRecords(context.Background(), ImportRequest{Source: source}, sink)
+	err := streamSyntheticRecords(context.Background(), source, nil, sink)
 	if !errors.Is(err, stop) {
 		t.Fatalf("streamSyntheticRecords() error = %v, want sink error", err)
 	}
@@ -444,11 +505,10 @@ func TestStreamingImportStopsBeforeCompleteOnSinkError(t *testing.T) {
 	}
 }
 
-func streamSyntheticRecords(ctx context.Context, request ImportRequest, sink ImportSink) error {
-	if err := request.Validate(); err != nil {
+func streamSyntheticRecords(ctx context.Context, source Source, resume *ImportCheckpoint, sink ImportSink) error {
+	if err := source.Validate(); err != nil {
 		return err
 	}
-	source := request.Source
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -457,8 +517,8 @@ func streamSyntheticRecords(ctx context.Context, request ImportRequest, sink Imp
 		return fmt.Errorf("begin source %q session: %w", source.ID, err)
 	}
 	resumeOffset := int64(0)
-	if request.Resume != nil {
-		resumeOffset = request.Resume.ByteOffset
+	if resume != nil {
+		resumeOffset = checkpointByteOffset(*resume)
 	}
 	stream, err := source.OpenFrom(ctx, resumeOffset)
 	if err != nil {
@@ -467,14 +527,14 @@ func streamSyntheticRecords(ctx context.Context, request ImportRequest, sink Imp
 	defer stream.Close()
 	var sequence int64
 	var offset int64
-	if request.Resume != nil {
-		sequence = request.Resume.RecordSequence + 1
-		offset = request.Resume.ByteOffset
+	if resume != nil {
+		sequence = resume.RecordSequence + 1
+		offset = checkpointByteOffset(*resume)
 	}
 	reader := bufio.NewReader(stream)
 	completion := ImportCheckpoint{
-		SourceID: source.ID, RecordSequence: NoRecordSequence, PrefixHash: model.HashRecord(nil),
-		LastRecordHash: NoRecordHash, SourceSize: source.Size,
+		SourceID: source.ID, RecordSequence: NoRecordSequence, StateVersion: "fixture-stream-v1",
+		Cursor: []byte("offset:0"), Fingerprint: []byte(model.HashRecord(nil)),
 	}
 	for {
 		if err := ctx.Err(); err != nil {
@@ -573,10 +633,19 @@ func testEnvelopeForSource(source Source, sequence, offset int64, content []byte
 	return RecordEnvelope{
 		RawRecord: model.RawRecord{Ref: ref, Content: append([]byte(nil), content...)},
 		Checkpoint: ImportCheckpoint{
-			SourceID: source.ID, ByteOffset: offset + int64(len(content)), RecordSequence: sequence,
-			PrefixHash: fmt.Sprintf("sha256:prefix-%d", sequence), LastRecordHash: contentHash, SourceSize: source.Size,
+			SourceID: source.ID, RecordSequence: sequence, StateVersion: "fixture-stream-v1",
+			Cursor:      []byte(fmt.Sprintf("offset:%d", offset+int64(len(content)))),
+			Fingerprint: []byte(fmt.Sprintf("sha256:prefix-%d", sequence)),
 		},
 	}
+}
+
+func checkpointByteOffset(checkpoint ImportCheckpoint) int64 {
+	var offset int64
+	if _, err := fmt.Sscanf(string(checkpoint.Cursor), "offset:%d", &offset); err != nil {
+		panic(err)
+	}
+	return offset
 }
 
 func testUnknownEvent(t *testing.T, ref model.RawRecordRef, sequence int64) model.Event {

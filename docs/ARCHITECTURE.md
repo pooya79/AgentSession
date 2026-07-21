@@ -115,11 +115,10 @@ The importer records enough source identity and progress to distinguish an appen
 ```go
 type ImportCheckpoint struct {
 	SourceID       string
-	ByteOffset     int64
 	RecordSequence int64
-	PrefixHash     string
-	LastRecordHash string
-	SourceSize     int64
+	StateVersion   string
+	Cursor         []byte
+	Fingerprint    []byte
 }
 ```
 
@@ -200,22 +199,24 @@ Platform-specific discoverers may identify candidate type hints, but adapters re
 Each coding-agent format has an isolated adapter. An adapter owns probing, streaming parsing, source-specific identifiers, and normalization into canonical events.
 
 The importer owns the adapter contract it consumes. A source supplies stable
-identity and size metadata plus a function that opens a fresh read-only stream;
-discovery's source-kind hint remains advisory and is never used by shared
-import code to interpret a format.
+identity and a read-only opening capability. The selected adapter prepares one
+consistent view: an open stream or immutable file view for record logs, or a
+read transaction for a database. Discovery's source-kind hint remains advisory
+and is never used by shared import code to interpret a format.
 
 ```go
 type Adapter interface {
     Name() string
     Version() model.Version
     Probe(ctx context.Context, source Source) (ProbeResult, error)
-    Verify(ctx context.Context, source Source, checkpoint ImportCheckpoint) (CheckpointVerification, error)
-    Import(ctx context.Context, request ImportRequest, sink ImportSink) error
+    Prepare(ctx context.Context, source Source) (PreparedSource, error)
 }
 
-type ImportRequest struct {
-	Source Source
-	Resume *ImportCheckpoint
+type PreparedSource interface {
+    Verify(ctx context.Context, state SourceState) (SourceChange, error)
+    Import(ctx context.Context, resume *ImportCheckpoint, sink ImportSink) error
+    Reconcile(ctx context.Context, sink ImportSink) error
+    Close() error
 }
 
 type ImportSink interface {
@@ -243,14 +244,13 @@ This lifecycle supplies a canonical session even when every trustworthy record
 is malformed and produces no event. A sink error or context cancellation stops
 delivery immediately and prevents `Complete`.
 
-`ImportRequest.Resume` is nil for a first import and after truncation,
-replacement, or mutation before the committed cursor. It is non-nil only after
-orchestration has used adapter-aware fingerprint verification to establish that
-the records through the checkpoint are unchanged. The adapter then resumes
-after that record and uses the checkpoint's byte offset and record sequence as
-the absolute basis for subsequent raw-record and event identities. Structural
-request validation catches source-ID and size regressions but does not replace
-content verification.
+The opaque cursor and fingerprint are versioned by the adapter. A file adapter
+may encode a byte position and a streaming prefix digest; a database adapter
+may encode a stable logical row key and a digest of deterministic row
+serialization. Offset or sequence equality never proves continuity. The
+prepared view classifies unchanged input, append, truncation, replacement, and
+mutation before the cursor, then performs resume or reconciliation against the
+same view.
 
 Record diagnostics retain their envelope order as a zero-based per-record
 ordinal. The sink persists them incrementally in the same transaction as their
@@ -258,18 +258,18 @@ raw record, canonical events, and checkpoint. Their stable raw-record and
 ordinal identity makes retries idempotent without retaining diagnostics from
 the full source in memory.
 
-The position before any complete record uses sequence `-1`, byte offset zero,
-and the `none` last-record sentinel. This lets empty and partial-only sources
-retain a durable checkpoint. Adapters defer incomplete trailing records so a
-later append retries them from the last complete boundary. Complete malformed
-records are retained with diagnostics and do not prevent later records from
+The position before any complete record uses sequence `-1` and an adapter-owned
+initial cursor and fingerprint. This lets empty and partial-only sources retain
+a durable checkpoint. Adapters defer incomplete trailing records so a later
+append retries them from the last complete boundary. Complete malformed records
+are retained with diagnostics and do not prevent later records from
 being imported.
 
-An envelope checkpoint is tied to the record being delivered: its last-record
-hash matches the retained content hash, its sequence matches when present, and
-its byte offset is the exclusive end of the retained byte range when present.
-Batch checkpoints remain final-batch cursors, so records earlier in a durable
-batch may correctly lie before that checkpoint.
+An envelope checkpoint is tied to the record being delivered: its canonical
+record sequence matches when present, and its opaque cursor and fingerprint
+describe adapter progress after that record. Batch checkpoints remain
+final-batch cursors, so records earlier in a durable batch may correctly lie
+before that checkpoint.
 
 Unknown records become canonical `Unknown` events when they can be associated
 with a session. A malformed record whose boundary is still trustworthy is
@@ -310,14 +310,16 @@ Raw content is untrusted and must not be rendered as HTML or written to a termin
 
 The importer coordinates adapters, transactions, checkpoints, search indexing, and post-import projection work. It owns import lifecycle and progress reporting but delegates source parsing to adapters and persistence details to storage.
 
-The coordinator selects the strongest unambiguous probe result, compares its
-adapter and normalization identity with durable source state, and asks the
-adapter to verify the committed prefix. Verification failure stops safely and
-does not automatically reconcile the source. Records are buffered to configured
-count and byte limits, and each canonical batch is committed with its
-checkpoint. Cancellation preserves earlier batches and rolls back or discards
-only the current batch. Rebuildable projection work starts after completion and
-the final canonical commit; projection failure cannot invalidate that import.
+The coordinator selects the strongest unambiguous probe result and asks it to
+prepare one consistent read-only view. Unchanged and appended sources resume
+from verified adapter state. Truncation, replacement, and mutation automatically
+stream a complete replacement into persistent staging. Readers retain the old
+complete generation until one checkpoint-guarded transaction removes its
+AgentSession-owned canonical data and projections and promotes the staged
+generation. Cancellation or interruption leaves the old generation intact;
+abandoned staging is cleared by the next attempt. Rebuildable projection work
+starts only after successful promotion, and projection failure cannot invalidate
+canonical data.
 
 A central application-level import coordinator owns active work. It permits one active import per source, coalesces duplicate requests, and publishes one shared progress stream to both interfaces. An import is application work rather than request-scoped work: closing a TUI view or HTTP connection stops that observer but does not cancel the shared import. Process shutdown stops new requests, cancels active work, and lets the current transaction commit or roll back safely. Neither presentation layer implements a separate import path.
 
