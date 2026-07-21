@@ -1,0 +1,2 @@
+{"type":"user","sessionId":"partial-session","version":"4.2.0","uuid":"complete-user","message":{"role":"user","content":"complete"}}
+{"type":"assistant","sessionId":"partial-session","version":"4.2.0","uuid":"partial-assistant","message":{"role":"assistant","content":[{"type":"text","text":"later"}]
