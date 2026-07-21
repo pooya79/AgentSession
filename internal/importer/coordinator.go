@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"reflect"
 	"strings"
 
@@ -134,6 +136,12 @@ func (c *Coordinator) Import(ctx context.Context, source Source) (ImportResult, 
 		if state.Import.AdapterName != adapter.Name() || state.Import.AdapterVersion != adapter.Version() || state.Import.FormatVersion != probe.FormatVersion {
 			return result, fmt.Errorf("%w: source %q was imported by %s/%s format %s", ErrIncompatibleImport, source.ID, state.Import.AdapterName, state.Import.AdapterVersion, state.Import.FormatVersion)
 		}
+		snapshot, cleanup, snapshotErr := snapshotSource(ctx, source)
+		if snapshotErr != nil {
+			return result, fmt.Errorf("import source %q: snapshot for resume: %w", source.ID, snapshotErr)
+		}
+		defer cleanup()
+		source = snapshot
 		verification, verifyErr := adapter.Verify(ctx, source, state.Checkpoint)
 		if verifyErr != nil {
 			return result, fmt.Errorf("import source %q: verify checkpoint: %w", source.ID, verifyErr)
@@ -166,6 +174,77 @@ func (c *Coordinator) Import(ctx context.Context, source Source) (ImportResult, 
 		})
 	}
 	return result, nil
+}
+
+// snapshotSource freezes a source on disk so checkpoint verification and the
+// resumed read cannot observe different versions. Copying remains streaming;
+// large session files are never retained whole in memory.
+func snapshotSource(ctx context.Context, source Source) (Source, func(), error) {
+	stream, err := source.OpenFrom(ctx, 0)
+	if err != nil {
+		return Source{}, nil, fmt.Errorf("open: %w", err)
+	}
+	defer stream.Close()
+
+	file, err := os.CreateTemp("", "agentsession-import-snapshot-*")
+	if err != nil {
+		return Source{}, nil, fmt.Errorf("create temporary file: %w", err)
+	}
+	path := file.Name()
+	cleanup := func() {
+		_ = os.Remove(path)
+	}
+	fail := func(err error) (Source, func(), error) {
+		_ = file.Close()
+		cleanup()
+		return Source{}, nil, err
+	}
+
+	written, err := io.Copy(file, &contextReader{ctx: ctx, reader: io.LimitReader(stream, source.Size+1)})
+	if err != nil {
+		return fail(fmt.Errorf("copy: %w", err))
+	}
+	if written != source.Size {
+		return fail(fmt.Errorf("%w: metadata size %d, snapshot size %d", ErrSourceChanged, source.Size, written))
+	}
+	if err := file.Close(); err != nil {
+		cleanup()
+		return Source{}, nil, fmt.Errorf("close temporary file: %w", err)
+	}
+
+	openAt := func(ctx context.Context, offset int64) (io.ReadCloser, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if offset < 0 || offset > source.Size {
+			return nil, fmt.Errorf("source offset %d out of range", offset)
+		}
+		view, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := view.Seek(offset, io.SeekStart); err != nil {
+			_ = view.Close()
+			return nil, err
+		}
+		return view, nil
+	}
+	snapshot := source
+	snapshot.Open = nil
+	snapshot.OpenAt = openAt
+	return snapshot, cleanup, nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *contextReader) Read(buffer []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(buffer)
 }
 
 func (c *Coordinator) selectAdapter(ctx context.Context, source Source) (Adapter, ProbeResult, error) {
@@ -242,7 +321,7 @@ func (s *batchSink) Begin(ctx context.Context, session model.Session) error {
 			s.lastEventSequence = &sequence
 		}
 	}
-	s.initial, s.current, s.begun = session, session, true
+	s.initial, s.current, s.begun = cloneSession(session), cloneSession(session), true
 	s.result.SessionID = session.ID
 	return nil
 }
@@ -295,6 +374,7 @@ func (s *batchSink) Complete(ctx context.Context, session model.Session, checkpo
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	session = cloneSession(session)
 	if err := ValidateSessionTransition(s.initial, session); err != nil {
 		return err
 	}
@@ -400,11 +480,34 @@ func cloneRecordEnvelope(envelope RecordEnvelope) RecordEnvelope {
 	clone.Events = make([]model.Event, len(envelope.Events))
 	for i, event := range envelope.Events {
 		clone.Events[i] = event
+		if event.Timestamp != nil {
+			timestamp := *event.Timestamp
+			clone.Events[i].Timestamp = &timestamp
+		}
 		clone.Events[i].RawRecord = cloneRawRecordRef(event.RawRecord)
 		clone.Events[i].Data = cloneNormalizedData(event.Data)
 	}
 	clone.Diagnostics = make([]model.Diagnostic, len(envelope.Diagnostics))
 	for i, diagnostic := range envelope.Diagnostics {
+		clone.Diagnostics[i] = diagnostic
+		clone.Diagnostics[i].EventIDs = append([]model.EventID(nil), diagnostic.EventIDs...)
+		clone.Diagnostics[i].RawRecordIDs = append([]model.RawRecordID(nil), diagnostic.RawRecordIDs...)
+	}
+	return clone
+}
+
+func cloneSession(session model.Session) model.Session {
+	clone := session
+	if session.StartedAt != nil {
+		startedAt := *session.StartedAt
+		clone.StartedAt = &startedAt
+	}
+	if session.EndedAt != nil {
+		endedAt := *session.EndedAt
+		clone.EndedAt = &endedAt
+	}
+	clone.Diagnostics = make([]model.Diagnostic, len(session.Diagnostics))
+	for i, diagnostic := range session.Diagnostics {
 		clone.Diagnostics[i] = diagnostic
 		clone.Diagnostics[i].EventIDs = append([]model.EventID(nil), diagnostic.EventIDs...)
 		clone.Diagnostics[i].RawRecordIDs = append([]model.RawRecordID(nil), diagnostic.RawRecordIDs...)

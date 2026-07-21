@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pooya79/AgentSession/internal/model"
 )
@@ -19,6 +20,7 @@ type coordinatorFixture struct {
 	content     []byte
 	openedAt    []int64
 	verifyCalls int
+	afterVerify func()
 }
 
 func (f *coordinatorFixture) set(content string) {
@@ -49,15 +51,28 @@ func (*streamingFixtureAdapter) Version() model.Version { return "1" }
 func (*streamingFixtureAdapter) Probe(context.Context, Source) (ProbeResult, error) {
 	return ProbeResult{Confidence: ProbeCertain, FormatVersion: "1"}, nil
 }
-func (a *streamingFixtureAdapter) Verify(_ context.Context, _ Source, checkpoint ImportCheckpoint) (CheckpointVerification, error) {
-	a.fixture.mu.Lock()
-	defer a.fixture.mu.Unlock()
+func (a *streamingFixtureAdapter) Verify(ctx context.Context, source Source, checkpoint ImportCheckpoint) (CheckpointVerification, error) {
+	stream, err := source.OpenFrom(ctx, 0)
+	if err != nil {
+		return CheckpointChanged, err
+	}
+	prefix, err := io.ReadAll(io.LimitReader(stream, checkpoint.ByteOffset))
+	closeErr := stream.Close()
+	if err != nil {
+		return CheckpointChanged, err
+	}
+	if closeErr != nil {
+		return CheckpointChanged, closeErr
+	}
 	a.fixture.verifyCalls++
-	if checkpoint.ByteOffset > int64(len(a.fixture.content)) {
+	if int64(len(prefix)) != checkpoint.ByteOffset {
 		return CheckpointChanged, nil
 	}
-	if checkpoint.PrefixHash != model.HashRecord(a.fixture.content[:checkpoint.ByteOffset]) {
+	if checkpoint.PrefixHash != model.HashRecord(prefix) {
 		return CheckpointChanged, nil
+	}
+	if a.fixture.afterVerify != nil {
+		a.fixture.afterVerify()
 	}
 	return CheckpointVerified, nil
 }
@@ -76,6 +91,21 @@ func (a *streamingFixtureAdapter) Import(ctx context.Context, request ImportRequ
 		completion = *request.Resume
 		completion.SourceSize = request.Source.Size
 	}
+	prefixStream, err := request.Source.OpenFrom(ctx, 0)
+	if err != nil {
+		return err
+	}
+	prefix, err := io.ReadAll(io.LimitReader(prefixStream, offset))
+	closeErr := prefixStream.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if int64(len(prefix)) != offset {
+		return io.ErrUnexpectedEOF
+	}
 	stream, err := request.Source.OpenFrom(ctx, offset)
 	if err != nil {
 		return err
@@ -88,9 +118,7 @@ func (a *streamingFixtureAdapter) Import(ctx context.Context, request ImportRequ
 		}
 		record, readErr := reader.ReadBytes('\n')
 		if len(record) > 0 && record[len(record)-1] == '\n' {
-			a.fixture.mu.Lock()
-			prefix := append([]byte(nil), a.fixture.content[:offset+int64(len(record))]...)
-			a.fixture.mu.Unlock()
+			prefix = append(prefix, record...)
 			envelope := testEnvelopeForSource(request.Source, sequence, offset, record)
 			envelope.Checkpoint.PrefixHash = model.HashRecord(prefix)
 			line := string(bytes.TrimSpace(record))
@@ -229,8 +257,8 @@ func TestCoordinatorFirstImportAppendUnchangedMalformedUnknownAndPartial(t *test
 	fixture.mu.Lock()
 	lastOpen := fixture.openedAt[len(fixture.openedAt)-1]
 	fixture.mu.Unlock()
-	if lastOpen != wantOffset {
-		t.Fatalf("append opened at %d, want committed offset %d", lastOpen, wantOffset)
+	if lastOpen != 0 {
+		t.Fatalf("append snapshot opened original source at %d, want 0", lastOpen)
 	}
 
 	checkpoint := store.state.Checkpoint
@@ -282,6 +310,75 @@ func TestCoordinatorChangedSourceStopsWithoutMutation(t *testing.T) {
 	}
 	if store.commits != commits || store.state.Checkpoint != checkpoint {
 		t.Fatal("changed source mutated durable state")
+	}
+}
+
+func TestCoordinatorResumeUsesVerifiedSourceSnapshot(t *testing.T) {
+	fixture := &coordinatorFixture{}
+	fixture.set("one\n")
+	store := newMemoryImportStore()
+	adapter := &streamingFixtureAdapter{fixture: fixture}
+	coordinator, _ := NewCoordinator(store, []Adapter{adapter}, nil, Options{})
+	if _, err := coordinator.Import(context.Background(), fixture.source()); err != nil {
+		t.Fatal(err)
+	}
+
+	fixture.set("one\ntwo\n")
+	source := fixture.source()
+	fixture.afterVerify = func() {
+		fixture.set("one\nbad\n")
+		fixture.afterVerify = nil
+	}
+	result, err := coordinator.Import(context.Background(), source)
+	if err != nil {
+		t.Fatalf("resumed Import() error = %v", err)
+	}
+	if result.RecordsCommitted != 1 || len(store.events) != 2 || len(store.diagnostics) != 0 {
+		t.Fatalf("resumed snapshot result=%#v events=%d diagnostics=%d", result, len(store.events), len(store.diagnostics))
+	}
+	wantRecordID := testEnvelopeForSource(source, 1, int64(len("one\n")), []byte("two\n")).RawRecord.Ref.ID
+	if _, ok := store.raw[wantRecordID]; !ok {
+		t.Fatalf("resumed import did not retain verified snapshot record %q", wantRecordID)
+	}
+}
+
+func TestBatchSinkRetainsImmutableInitialSession(t *testing.T) {
+	source := testSource(nil)
+	session := testSession(source)
+	session.Diagnostics = []model.Diagnostic{{
+		Code: "source.partial", Severity: model.SeverityWarning, Message: "original",
+		EventIDs: []model.EventID{"event-1"}, RawRecordIDs: []model.RawRecordID{"record-1"},
+	}}
+	sink := &batchSink{source: source, result: &ImportResult{}, options: Options{}.withDefaults()}
+	if err := sink.Begin(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	session.Diagnostics[0].Message = "changed"
+	session.Diagnostics[0].EventIDs[0] = "event-2"
+	session.Diagnostics[0].RawRecordIDs[0] = "record-2"
+
+	checkpoint := ImportCheckpoint{
+		SourceID: source.ID, RecordSequence: NoRecordSequence, PrefixHash: model.HashRecord(nil),
+		LastRecordHash: NoRecordHash, SourceSize: source.Size,
+	}
+	if err := sink.Complete(context.Background(), session, checkpoint); err == nil {
+		t.Fatal("Complete() accepted an adapter mutation of the initial session")
+	}
+}
+
+func TestCloneRecordEnvelopeOwnsEventTimestamp(t *testing.T) {
+	source := testSource([]byte("one\n"))
+	envelope := testEnvelopeForSource(source, 0, 0, []byte("one\n"))
+	event := testUnknownEventForSource(envelope.RawRecord.Ref, 0)
+	event.SessionID = testSession(source).ID
+	timestamp := time.Unix(100, 0).UTC()
+	event.Timestamp = &timestamp
+	envelope.Events = []model.Event{event}
+
+	clone := cloneRecordEnvelope(envelope)
+	timestamp = time.Unix(200, 0).UTC()
+	if got := clone.Events[0].Timestamp; got == nil || !got.Equal(time.Unix(100, 0).UTC()) {
+		t.Fatalf("cloned timestamp = %v, want original value", got)
 	}
 }
 
