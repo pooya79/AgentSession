@@ -1,0 +1,4 @@
+{"type":"user","sessionId":"edge-session","version":"3.0.0","uuid":"edge-user","timestamp":"not-a-time","message":{"role":"user","content":"hello"}}
+{"type":"assistant","sessionId":"edge-session","version":"3.0.0","uuid":"broken"
+{"type":"future-record","sessionId":"edge-session","version":"3.0.0","uuid":"future-uuid","payload":{"secret_shape":"retained"}}
+{"type":"assistant","sessionId":"edge-session","version":"3.0.0","uuid":"sidechain-uuid","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"branch work"}]}}

@@ -10,6 +10,10 @@ The project is currently an early runnable scaffold. Read-only session source di
   current ordinal-bearing history. Imports stream complete records, retain raw
   bytes and unknown variants, defer incomplete trailing records, and verify
   checkpoints before append or reconciliation.
+- Claude Code JSONL session files. Imports preserve mixed message and tool
+  content in source order, retain snapshots, sidechains, malformed records,
+  and unknown variants, and use the same verified append and reconciliation
+  guarantees.
 
 Discovery identifies candidates but does not yet expose a user-facing import
 command; application-level import composition remains under development.
