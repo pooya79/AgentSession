@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; the explicit recovery decision is superseded by ADR-004.
 
 ## Context
 

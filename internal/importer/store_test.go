@@ -151,11 +151,10 @@ func validBatchForTest(sequence int64) ImportBatch {
 		}},
 		Checkpoint: ImportCheckpoint{
 			SourceID:       "source-1",
-			ByteOffset:     10,
 			RecordSequence: sequence,
-			PrefixHash:     "prefix",
-			LastRecordHash: "record",
-			SourceSize:     10,
+			StateVersion:   "fixture-v1",
+			Cursor:         []byte("cursor"),
+			Fingerprint:    []byte("fingerprint"),
 		},
 	}
 }

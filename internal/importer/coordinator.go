@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"reflect"
 	"strings"
 
@@ -73,6 +71,8 @@ type ImportResult struct {
 	RecordsCommitted int64
 	BatchesCommitted int64
 	CanonicalChanged bool
+	Change           SourceChange
+	Reconciled       bool
 	ProjectionError  error
 }
 
@@ -111,8 +111,8 @@ func NewCoordinator(store ImportStore, adapters []Adapter, projector Projector, 
 	return &Coordinator{store: store, adapters: append([]Adapter(nil), adapters...), projector: projector, options: options}, nil
 }
 
-func (c *Coordinator) Import(ctx context.Context, source Source) (ImportResult, error) {
-	result := ImportResult{SourceID: source.ID}
+func (c *Coordinator) Import(ctx context.Context, source Source) (result ImportResult, err error) {
+	result.SourceID = source.ID
 	if err := source.Validate(); err != nil {
 		return result, fmt.Errorf("import source: %w", err)
 	}
@@ -120,7 +120,7 @@ func (c *Coordinator) Import(ctx context.Context, source Source) (ImportResult, 
 		return result, err
 	}
 
-	adapter, probe, err := c.selectAdapter(ctx, source)
+	adapter, _, err := c.selectAdapter(ctx, source)
 	if err != nil {
 		return result, err
 	}
@@ -128,123 +128,101 @@ func (c *Coordinator) Import(ctx context.Context, source Source) (ImportResult, 
 	if err != nil {
 		return result, fmt.Errorf("import source %q: load durable state: %w", source.ID, err)
 	}
-	var resume *ImportCheckpoint
-	if found {
-		if source.Size < state.Checkpoint.SourceSize {
-			return result, fmt.Errorf("%w: source %q size %d is behind committed size %d", ErrSourceChanged, source.ID, source.Size, state.Checkpoint.SourceSize)
-		}
-		if state.Import.AdapterName != adapter.Name() || state.Import.AdapterVersion != adapter.Version() || state.Import.FormatVersion != probe.FormatVersion {
-			return result, fmt.Errorf("%w: source %q was imported by %s/%s format %s", ErrIncompatibleImport, source.ID, state.Import.AdapterName, state.Import.AdapterVersion, state.Import.FormatVersion)
-		}
-		snapshot, cleanup, snapshotErr := snapshotSource(ctx, source)
-		if snapshotErr != nil {
-			return result, fmt.Errorf("import source %q: snapshot for resume: %w", source.ID, snapshotErr)
-		}
-		defer cleanup()
-		source = snapshot
-		verification, verifyErr := adapter.Verify(ctx, source, state.Checkpoint)
-		if verifyErr != nil {
-			return result, fmt.Errorf("import source %q: verify checkpoint: %w", source.ID, verifyErr)
-		}
-		if verification != CheckpointVerified {
-			return result, fmt.Errorf("%w: source %q", ErrSourceChanged, source.ID)
-		}
-		checkpoint := state.Checkpoint
-		resume = &checkpoint
+	prepared, err := adapter.Prepare(ctx, source)
+	if err != nil {
+		return result, fmt.Errorf("import source %q with adapter %q: prepare read-only view: %w", source.ID, adapter.Name(), err)
 	}
+	defer func() {
+		if closeErr := prepared.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("import source %q with adapter %q: close prepared view: %w", source.ID, adapter.Name(), closeErr))
+		}
+	}()
 
-	sink := &batchSink{
-		store: c.store, options: c.options, source: source,
-		state: state, hasState: found, result: &result,
+	change := SourceNew
+	if found {
+		change, err = prepared.Verify(ctx, cloneSourceState(state))
+		if err != nil {
+			return result, fmt.Errorf("import source %q with adapter %q: verify durable state: %w", source.ID, adapter.Name(), err)
+		}
+		if !change.valid() || change == SourceNew {
+			return result, fmt.Errorf("import source %q with adapter %q: invalid verification classification %q", source.ID, adapter.Name(), change)
+		}
 	}
-	request := ImportRequest{Source: source, Resume: resume}
-	if err := request.Validate(); err != nil {
-		return result, fmt.Errorf("import source %q: validate request: %w", source.ID, err)
+	result.Change = change
+	if change.requiresReconciliation() {
+		if err := c.reconcile(ctx, source, prepared, state, &result); err != nil {
+			return result, fmt.Errorf("import source %q with adapter %q: reconcile %s: %w", source.ID, adapter.Name(), change, err)
+		}
+	} else {
+		var resume *ImportCheckpoint
+		if found {
+			checkpoint := cloneCheckpoint(state.Checkpoint)
+			resume = &checkpoint
+		}
+		sink := &batchSink{
+			store: c.store, options: c.options, source: source,
+			state: state, hasState: found, result: &result,
+		}
+		if err := prepared.Import(ctx, resume, sink); err != nil {
+			return result, fmt.Errorf("import source %q with adapter %q: %w", source.ID, adapter.Name(), err)
+		}
+		if !sink.completed {
+			return result, fmt.Errorf("import source %q with adapter %q: adapter returned without completion", source.ID, adapter.Name())
+		}
+		result.CanonicalChanged = result.BatchesCommitted > 0
 	}
-	if err := adapter.Import(ctx, request, sink); err != nil {
-		return result, fmt.Errorf("import source %q with adapter %q: %w", source.ID, adapter.Name(), err)
-	}
-	if !sink.completed {
-		return result, fmt.Errorf("import source %q with adapter %q: adapter returned without completion", source.ID, adapter.Name())
-	}
-	result.CanonicalChanged = result.BatchesCommitted > 0
 	if c.projector != nil {
 		result.ProjectionError = c.projector.Project(ctx, ProjectionRequest{
-			SourceID: source.ID, SessionID: result.SessionID, Checkpoint: result.Checkpoint,
+			SourceID: source.ID, SessionID: result.SessionID, Checkpoint: cloneCheckpoint(result.Checkpoint),
 		})
 	}
 	return result, nil
 }
 
-// snapshotSource freezes a source on disk so checkpoint verification and the
-// resumed read cannot observe different versions. Copying remains streaming;
-// large session files are never retained whole in memory.
-func snapshotSource(ctx context.Context, source Source) (Source, func(), error) {
-	stream, err := source.OpenFrom(ctx, 0)
+func (c *Coordinator) reconcile(ctx context.Context, source Source, prepared PreparedSource, state SourceState, result *ImportResult) (err error) {
+	reconciliation, err := c.store.BeginReconciliation(ctx, source.ID, cloneCheckpoint(state.Checkpoint))
 	if err != nil {
-		return Source{}, nil, fmt.Errorf("open: %w", err)
+		return fmt.Errorf("begin staged replacement: %w", err)
 	}
-	defer stream.Close()
+	finalized := false
+	defer func() {
+		if finalized {
+			return
+		}
+		if abortErr := reconciliation.Abort(context.WithoutCancel(ctx)); abortErr != nil {
+			err = errors.Join(err, fmt.Errorf("abort staged replacement: %w", abortErr))
+		}
+	}()
 
-	file, err := os.CreateTemp("", "agentsession-import-snapshot-*")
-	if err != nil {
-		return Source{}, nil, fmt.Errorf("create temporary file: %w", err)
+	stagedResult := ImportResult{SourceID: source.ID, Change: result.Change}
+	sink := &batchSink{store: stagedCommitter{reconciliation}, options: c.options, source: source, result: &stagedResult}
+	if err := prepared.Reconcile(ctx, sink); err != nil {
+		return err
 	}
-	path := file.Name()
-	cleanup := func() {
-		_ = os.Remove(path)
+	if !sink.completed {
+		return fmt.Errorf("adapter returned without reconciliation completion")
 	}
-	fail := func(err error) (Source, func(), error) {
-		_ = file.Close()
-		cleanup()
-		return Source{}, nil, err
+	if err := reconciliation.Finalize(ctx); err != nil {
+		return fmt.Errorf("promote staged replacement: %w", err)
 	}
-
-	written, err := io.Copy(file, &contextReader{ctx: ctx, reader: io.LimitReader(stream, source.Size+1)})
-	if err != nil {
-		return fail(fmt.Errorf("copy: %w", err))
-	}
-	if written != source.Size {
-		return fail(fmt.Errorf("%w: metadata size %d, snapshot size %d", ErrSourceChanged, source.Size, written))
-	}
-	if err := file.Close(); err != nil {
-		cleanup()
-		return Source{}, nil, fmt.Errorf("close temporary file: %w", err)
-	}
-
-	openAt := func(ctx context.Context, offset int64) (io.ReadCloser, error) {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if offset < 0 || offset > source.Size {
-			return nil, fmt.Errorf("source offset %d out of range", offset)
-		}
-		view, err := os.Open(path)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := view.Seek(offset, io.SeekStart); err != nil {
-			_ = view.Close()
-			return nil, err
-		}
-		return view, nil
-	}
-	snapshot := source
-	snapshot.Open = nil
-	snapshot.OpenAt = openAt
-	return snapshot, cleanup, nil
+	finalized = true
+	result.SessionID = stagedResult.SessionID
+	result.Checkpoint = cloneCheckpoint(stagedResult.Checkpoint)
+	result.RecordsCommitted = stagedResult.RecordsCommitted
+	result.BatchesCommitted = stagedResult.BatchesCommitted
+	result.CanonicalChanged = true
+	result.Reconciled = true
+	return nil
 }
 
-type contextReader struct {
-	ctx    context.Context
-	reader io.Reader
+type batchCommitter interface {
+	CommitBatch(context.Context, ImportBatch) error
 }
 
-func (r *contextReader) Read(buffer []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return r.reader.Read(buffer)
+type stagedCommitter struct{ Reconciliation }
+
+func (s stagedCommitter) CommitBatch(ctx context.Context, batch ImportBatch) error {
+	return s.StageBatch(ctx, batch)
 }
 
 func (c *Coordinator) selectAdapter(ctx context.Context, source Source) (Adapter, ProbeResult, error) {
@@ -279,7 +257,7 @@ func (c *Coordinator) selectAdapter(ctx context.Context, source Source) (Adapter
 }
 
 type batchSink struct {
-	store    ImportStore
+	store    batchCommitter
 	options  Options
 	source   Source
 	state    SourceState
@@ -315,7 +293,7 @@ func (s *batchSink) Begin(ctx context.Context, session model.Session) error {
 		if session.ID != s.state.SessionID || session.Import != s.state.Import {
 			return fmt.Errorf("%w: source %q session or normalization identity changed", ErrIncompatibleImport, s.source.ID)
 		}
-		s.lastCheckpoint = s.state.Checkpoint
+		s.lastCheckpoint = cloneCheckpoint(s.state.Checkpoint)
 		if s.state.LastEventSequence != nil {
 			sequence := *s.state.LastEventSequence
 			s.lastEventSequence = &sequence
@@ -355,9 +333,9 @@ func (s *batchSink) Accept(ctx context.Context, envelope RecordEnvelope) error {
 	s.batch.RawRecords = append(s.batch.RawRecords, owned.RawRecord)
 	s.batch.Events = append(s.batch.Events, owned.Events...)
 	s.batch.RecordDiagnostics = append(s.batch.RecordDiagnostics, owned.RecordDiagnostics()...)
-	s.batch.Checkpoint = envelope.Checkpoint
+	s.batch.Checkpoint = cloneCheckpoint(envelope.Checkpoint)
 	s.batchBytes += size
-	s.lastCheckpoint = envelope.Checkpoint
+	s.lastCheckpoint = cloneCheckpoint(envelope.Checkpoint)
 	if len(envelope.Events) > 0 {
 		sequence := envelope.Events[len(envelope.Events)-1].Sequence
 		s.lastEventSequence = &sequence
@@ -381,46 +359,40 @@ func (s *batchSink) Complete(ctx context.Context, session model.Session, checkpo
 	if err := checkpoint.Validate(); err != nil {
 		return fmt.Errorf("validate completion checkpoint: %w", err)
 	}
-	if checkpoint.SourceID != s.source.ID || checkpoint.SourceSize != s.source.Size {
-		return fmt.Errorf("completion checkpoint does not describe source %q size %d", s.source.ID, s.source.Size)
+	if checkpoint.SourceID != s.source.ID {
+		return fmt.Errorf("completion checkpoint does not describe source %q", s.source.ID)
 	}
 	if s.deliveredRecords > 0 {
-		if checkpoint != s.lastCheckpoint {
+		if !CheckpointEqual(checkpoint, s.lastCheckpoint) {
 			return fmt.Errorf("%w: completion checkpoint differs from last delivered record", ErrInvalidProgress)
 		}
 	} else if s.hasState {
-		previous := s.state.Checkpoint
-		if checkpoint.RecordSequence != previous.RecordSequence || checkpoint.ByteOffset != previous.ByteOffset ||
-			checkpoint.PrefixHash != previous.PrefixHash || checkpoint.LastRecordHash != previous.LastRecordHash ||
-			checkpoint.SourceSize < previous.SourceSize {
+		if !CheckpointEqual(checkpoint, s.state.Checkpoint) {
 			return fmt.Errorf("%w: completion checkpoint changed without a delivered record", ErrInvalidProgress)
 		}
 	}
-	if len(s.batch.RawRecords) == 0 && s.hasState && checkpoint == s.state.Checkpoint && reflect.DeepEqual(session, s.state.Session) {
+	if len(s.batch.RawRecords) == 0 && s.hasState && CheckpointEqual(checkpoint, s.state.Checkpoint) && reflect.DeepEqual(session, s.state.Session) {
 		s.current = session
 		s.completed = true
-		s.result.Checkpoint = checkpoint
+		s.result.Checkpoint = cloneCheckpoint(checkpoint)
 		return nil
 	}
-	s.batch.Checkpoint = checkpoint
-	s.lastCheckpoint = checkpoint
+	s.batch.Checkpoint = cloneCheckpoint(checkpoint)
+	s.lastCheckpoint = cloneCheckpoint(checkpoint)
 	s.current = session
 	if err := s.flush(ctx, session); err != nil {
 		return err
 	}
 	s.completed = true
-	s.result.Checkpoint = checkpoint
+	s.result.Checkpoint = cloneCheckpoint(checkpoint)
 	return nil
 }
 
 func (s *batchSink) validateProgress(envelope RecordEnvelope) error {
 	checkpoint := envelope.Checkpoint
-	if checkpoint.SourceSize != s.source.Size {
-		return fmt.Errorf("%w: record checkpoint source size %d does not match %d", ErrInvalidProgress, checkpoint.SourceSize, s.source.Size)
-	}
 	if s.hasState || s.deliveredRecords > 0 {
-		if checkpoint.RecordSequence <= s.lastCheckpoint.RecordSequence || checkpoint.ByteOffset < s.lastCheckpoint.ByteOffset {
-			return fmt.Errorf("%w: checkpoint (%d,%d) does not advance beyond (%d,%d)", ErrInvalidProgress, checkpoint.ByteOffset, checkpoint.RecordSequence, s.lastCheckpoint.ByteOffset, s.lastCheckpoint.RecordSequence)
+		if checkpoint.RecordSequence <= s.lastCheckpoint.RecordSequence {
+			return fmt.Errorf("%w: checkpoint sequence %d does not advance beyond %d", ErrInvalidProgress, checkpoint.RecordSequence, s.lastCheckpoint.RecordSequence)
 		}
 	}
 	for _, event := range envelope.Events {
@@ -511,6 +483,17 @@ func cloneSession(session model.Session) model.Session {
 		clone.Diagnostics[i] = diagnostic
 		clone.Diagnostics[i].EventIDs = append([]model.EventID(nil), diagnostic.EventIDs...)
 		clone.Diagnostics[i].RawRecordIDs = append([]model.RawRecordID(nil), diagnostic.RawRecordIDs...)
+	}
+	return clone
+}
+
+func cloneSourceState(state SourceState) SourceState {
+	clone := state
+	clone.Session = cloneSession(state.Session)
+	clone.Checkpoint = cloneCheckpoint(state.Checkpoint)
+	if state.LastEventSequence != nil {
+		sequence := *state.LastEventSequence
+		clone.LastEventSequence = &sequence
 	}
 	return clone
 }

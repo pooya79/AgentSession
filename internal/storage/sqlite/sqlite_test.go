@@ -33,6 +33,7 @@ func TestOpenMigratesFreshDatabaseAndReopenIsIdempotent(t *testing.T) {
 		{version: 3, name: "0003_full_retention.sql"},
 		{version: 4, name: "0004_record_diagnostics.sql"},
 		{version: 5, name: "0005_zero_record_checkpoints.sql"},
+		{version: 6, name: "0006_adapter_checkpoints_and_reconciliation.sql"},
 	}
 	assertMigrationHistory(t, db, wantMigrations)
 	if err := db.Close(); err != nil {
@@ -59,6 +60,63 @@ func TestOpenMigratesFreshDatabaseAndReopenIsIdempotent(t *testing.T) {
 	}
 	if tableCount != 1 {
 		t.Fatalf("schema_migrations table count = %d, want 1", tableCount)
+	}
+}
+
+func TestAdapterCheckpointMigrationPreservesLegacyState(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agentsession.db")
+	dsn, err := dataSourceName(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	all, err := fs.Sub(embeddedMigrations, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := fstest.MapFS{}
+	entries, err := fs.ReadDir(all, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() > "0005_zero_record_checkpoints.sql" {
+			continue
+		}
+		content, err := fs.ReadFile(all, entry.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy[entry.Name()] = &fstest.MapFile{Data: content}
+	}
+	if err := runMigrations(ctx, db, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO import_checkpoints (
+			source_id, byte_offset, record_sequence, prefix_hash, last_record_hash, source_size
+		) VALUES ('source-legacy', 7, 2, 'prefix', 'record', 9)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := runMigrations(ctx, db, all); err != nil {
+		t.Fatal(err)
+	}
+	var version string
+	var cursor, fingerprint []byte
+	if err := db.QueryRowContext(ctx, `
+		SELECT state_version, cursor, fingerprint FROM import_checkpoints WHERE source_id = 'source-legacy'
+	`).Scan(&version, &cursor, &fingerprint); err != nil {
+		t.Fatal(err)
+	}
+	if version != "legacy-stream-v1" || string(cursor) != "offset=7;size=9" || string(fingerprint) != "prefix\x00record" {
+		t.Fatalf("migrated checkpoint = (%q, %q, %q)", version, cursor, fingerprint)
 	}
 }
 

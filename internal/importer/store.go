@@ -2,6 +2,7 @@
 package importer
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -23,6 +24,9 @@ var (
 	// ErrCheckpointRegression means an ordinary import attempted to move a
 	// verified source cursor behind its committed position.
 	ErrCheckpointRegression = errors.New("import checkpoint would regress")
+	// ErrCheckpointConflict means reconciliation's expected live generation
+	// changed before its staged replacement could be promoted.
+	ErrCheckpointConflict = errors.New("import checkpoint changed during reconciliation")
 	// ErrSourceChanged means the committed prefix could not be verified.
 	ErrSourceChanged = errors.New("import source changed before committed checkpoint")
 	// ErrIncompatibleImport means persisted canonical data was produced by a
@@ -34,19 +38,17 @@ const (
 	// NoRecordSequence represents a checkpoint before the first complete
 	// record. It is also used for empty and deferred-partial sources.
 	NoRecordSequence int64 = -1
-	// NoRecordHash is the last-record sentinel paired with NoRecordSequence.
-	NoRecordHash = "none"
 )
 
-// ImportCheckpoint identifies verified source progress. The hashes make the
-// cursor meaningful only for the source content that was inspected.
+// ImportCheckpoint identifies verified source progress. Cursor and Fingerprint
+// are opaque, versioned adapter state; shared import code never interprets
+// their source-specific encoding.
 type ImportCheckpoint struct {
 	SourceID       model.SourceID
-	ByteOffset     int64
 	RecordSequence int64
-	PrefixHash     string
-	LastRecordHash string
-	SourceSize     int64
+	StateVersion   model.Version
+	Cursor         []byte
+	Fingerprint    []byte
 }
 
 // Validate checks the source-independent checkpoint invariants.
@@ -54,35 +56,33 @@ func (c ImportCheckpoint) Validate() error {
 	if strings.TrimSpace(string(c.SourceID)) == "" {
 		return fmt.Errorf("checkpoint source ID is required")
 	}
-	if c.ByteOffset < 0 {
-		return fmt.Errorf("checkpoint byte offset must not be negative")
-	}
 	if c.RecordSequence < NoRecordSequence {
 		return fmt.Errorf("checkpoint record sequence must not be less than %d", NoRecordSequence)
 	}
-	if c.SourceSize < 0 {
-		return fmt.Errorf("checkpoint source size must not be negative")
+	if strings.TrimSpace(string(c.StateVersion)) == "" {
+		return fmt.Errorf("checkpoint state version is required")
 	}
-	if c.ByteOffset > c.SourceSize {
-		return fmt.Errorf("checkpoint byte offset %d exceeds source size %d", c.ByteOffset, c.SourceSize)
+	if len(c.Cursor) == 0 {
+		return fmt.Errorf("checkpoint adapter cursor is required")
 	}
-	if strings.TrimSpace(c.PrefixHash) == "" {
-		return fmt.Errorf("checkpoint prefix hash is required")
-	}
-	if strings.TrimSpace(c.LastRecordHash) == "" {
-		return fmt.Errorf("checkpoint last record hash is required")
-	}
-	if c.RecordSequence == NoRecordSequence {
-		if c.ByteOffset != 0 {
-			return fmt.Errorf("zero-record checkpoint byte offset must be zero")
-		}
-		if c.LastRecordHash != NoRecordHash {
-			return fmt.Errorf("zero-record checkpoint last record hash must be %q", NoRecordHash)
-		}
-	} else if c.LastRecordHash == NoRecordHash {
-		return fmt.Errorf("record checkpoint must not use the no-record hash")
+	if len(c.Fingerprint) == 0 {
+		return fmt.Errorf("checkpoint adapter fingerprint is required")
 	}
 	return nil
+}
+
+func cloneCheckpoint(checkpoint ImportCheckpoint) ImportCheckpoint {
+	clone := checkpoint
+	clone.Cursor = append([]byte(nil), checkpoint.Cursor...)
+	clone.Fingerprint = append([]byte(nil), checkpoint.Fingerprint...)
+	return clone
+}
+
+// CheckpointEqual compares adapter-owned checkpoint bytes by value.
+func CheckpointEqual(left, right ImportCheckpoint) bool {
+	return left.SourceID == right.SourceID && left.RecordSequence == right.RecordSequence &&
+		left.StateVersion == right.StateVersion && bytes.Equal(left.Cursor, right.Cursor) &&
+		bytes.Equal(left.Fingerprint, right.Fingerprint)
 }
 
 // SourceState is the durable import identity used to decide whether a source
@@ -193,15 +193,6 @@ func validateRawRecordPosition(ref model.RawRecordRef, checkpoint ImportCheckpoi
 	if sequence := ref.RecordSequence; sequence != nil && *sequence > checkpoint.RecordSequence {
 		return fmt.Errorf("raw record sequence %d exceeds checkpoint sequence %d", *sequence, checkpoint.RecordSequence)
 	}
-	if byteRange := ref.ByteRange; byteRange != nil {
-		end, err := byteRange.End()
-		if err != nil {
-			return fmt.Errorf("raw byte range: %w", err)
-		}
-		if end > checkpoint.ByteOffset {
-			return fmt.Errorf("raw byte range ends at %d beyond checkpoint offset %d", end, checkpoint.ByteOffset)
-		}
-	}
 	return nil
 }
 
@@ -222,10 +213,15 @@ func rawRecordRefEqual(left, right model.RawRecordRef) bool {
 // ImportStore is the persistence boundary consumed by import orchestration.
 type ImportStore interface {
 	CommitBatch(ctx context.Context, batch ImportBatch) error
-	// ReconcileSource replaces all previously imported data for a source with
-	// the supplied first batch. Callers must verify truncation, replacement, or
-	// a required re-normalization before choosing this destructive index update.
-	ReconcileSource(ctx context.Context, batch ImportBatch) error
+	BeginReconciliation(ctx context.Context, sourceID model.SourceID, expected ImportCheckpoint) (Reconciliation, error)
 	Checkpoint(ctx context.Context, sourceID model.SourceID) (ImportCheckpoint, bool, error)
 	SourceState(ctx context.Context, sourceID model.SourceID) (SourceState, bool, error)
+}
+
+// Reconciliation stages a complete replacement generation outside the live
+// canonical tables and promotes it atomically after adapter completion.
+type Reconciliation interface {
+	StageBatch(context.Context, ImportBatch) error
+	Finalize(context.Context) error
+	Abort(context.Context) error
 }

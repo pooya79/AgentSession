@@ -16,11 +16,13 @@ import (
 )
 
 type coordinatorFixture struct {
-	mu          sync.Mutex
-	content     []byte
-	openedAt    []int64
-	verifyCalls int
-	afterVerify func()
+	mu                 sync.Mutex
+	content            []byte
+	openedAt           []int64
+	verifyCalls        int
+	afterVerify        func()
+	identity           string
+	reconcileStopAfter int
 }
 
 func (f *coordinatorFixture) set(content string) {
@@ -29,8 +31,18 @@ func (f *coordinatorFixture) set(content string) {
 	f.content = []byte(content)
 }
 
+func (f *coordinatorFixture) replace(identity, content string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.identity = identity
+	f.content = []byte(content)
+}
+
 func (f *coordinatorFixture) source() Source {
 	f.mu.Lock()
+	if f.identity == "" {
+		f.identity = "fixture-source-1"
+	}
 	size := int64(len(f.content))
 	f.mu.Unlock()
 	return Source{ID: "source-coordinator", Size: size, Hint: "fixture", OpenAt: func(_ context.Context, offset int64) (io.ReadCloser, error) {
@@ -51,67 +63,93 @@ func (*streamingFixtureAdapter) Version() model.Version { return "1" }
 func (*streamingFixtureAdapter) Probe(context.Context, Source) (ProbeResult, error) {
 	return ProbeResult{Confidence: ProbeCertain, FormatVersion: "1"}, nil
 }
-func (a *streamingFixtureAdapter) Verify(ctx context.Context, source Source, checkpoint ImportCheckpoint) (CheckpointVerification, error) {
+func (a *streamingFixtureAdapter) Prepare(ctx context.Context, source Source) (PreparedSource, error) {
 	stream, err := source.OpenFrom(ctx, 0)
 	if err != nil {
-		return CheckpointChanged, err
+		return nil, err
 	}
-	prefix, err := io.ReadAll(io.LimitReader(stream, checkpoint.ByteOffset))
+	content, err := io.ReadAll(stream)
 	closeErr := stream.Close()
 	if err != nil {
-		return CheckpointChanged, err
+		return nil, err
 	}
 	if closeErr != nil {
-		return CheckpointChanged, closeErr
+		return nil, closeErr
 	}
-	a.fixture.verifyCalls++
-	if int64(len(prefix)) != checkpoint.ByteOffset {
-		return CheckpointChanged, nil
-	}
-	if checkpoint.PrefixHash != model.HashRecord(prefix) {
-		return CheckpointChanged, nil
-	}
-	if a.fixture.afterVerify != nil {
-		a.fixture.afterVerify()
-	}
-	return CheckpointVerified, nil
+	a.fixture.mu.Lock()
+	identity := a.fixture.identity
+	a.fixture.mu.Unlock()
+	return &streamingFixtureView{adapter: a, source: source, content: content, identity: identity}, nil
 }
-func (a *streamingFixtureAdapter) Import(ctx context.Context, request ImportRequest, sink ImportSink) error {
+
+type streamingFixtureView struct {
+	adapter  *streamingFixtureAdapter
+	source   Source
+	content  []byte
+	identity string
+}
+
+func (v *streamingFixtureView) Verify(_ context.Context, state SourceState) (SourceChange, error) {
+	checkpoint := state.Checkpoint
+	if checkpoint.StateVersion != "fixture-stream-v1" {
+		return SourceReplaced, nil
+	}
+	offset := checkpointByteOffset(checkpoint)
+	identity, hash, ok := bytes.Cut(checkpoint.Fingerprint, []byte{0})
+	if !ok || string(identity) != v.identity {
+		return SourceReplaced, nil
+	}
+	if offset > int64(len(v.content)) {
+		return SourceTruncated, nil
+	}
+	change := SourceUnchanged
+	if string(hash) != model.HashRecord(v.content[:offset]) {
+		change = SourceMutated
+	} else if offset < int64(len(v.content)) {
+		change = SourceAppend
+	}
+	v.adapter.fixture.mu.Lock()
+	v.adapter.fixture.verifyCalls++
+	afterVerify := v.adapter.fixture.afterVerify
+	v.adapter.fixture.mu.Unlock()
+	if afterVerify != nil {
+		afterVerify()
+	}
+	return change, nil
+}
+
+func (v *streamingFixtureView) Import(ctx context.Context, resume *ImportCheckpoint, sink ImportSink) error {
+	return v.stream(ctx, resume, sink, false)
+}
+
+func (v *streamingFixtureView) Reconcile(ctx context.Context, sink ImportSink) error {
+	return v.stream(ctx, nil, sink, true)
+}
+
+func (*streamingFixtureView) Close() error { return nil }
+
+func (v *streamingFixtureView) stream(ctx context.Context, resume *ImportCheckpoint, sink ImportSink, reconciling bool) error {
+	a := v.adapter
+	requestSource := v.source
 	session := model.Session{ID: "session-coordinator", Import: model.ImportMetadata{
-		SourceID: request.Source.ID, AdapterName: a.Name(), AdapterVersion: a.Version(),
+		SourceID: requestSource.ID, AdapterName: a.Name(), AdapterVersion: a.Version(),
 		FormatVersion: "1", ModelVersion: "1", NormalizationVersion: "1",
 	}}
 	if err := sink.Begin(ctx, session); err != nil {
 		return err
 	}
 	offset, sequence := int64(0), int64(0)
-	completion := ImportCheckpoint{SourceID: request.Source.ID, RecordSequence: NoRecordSequence, PrefixHash: model.HashRecord(nil), LastRecordHash: NoRecordHash, SourceSize: request.Source.Size}
-	if request.Resume != nil {
-		offset, sequence = request.Resume.ByteOffset, request.Resume.RecordSequence+1
-		completion = *request.Resume
-		completion.SourceSize = request.Source.Size
+	completion := fixtureCheckpoint(requestSource.ID, v.identity, NoRecordSequence, 0, nil)
+	if resume != nil {
+		offset, sequence = checkpointByteOffset(*resume), resume.RecordSequence+1
+		completion = cloneCheckpoint(*resume)
 	}
-	prefixStream, err := request.Source.OpenFrom(ctx, 0)
-	if err != nil {
-		return err
+	if offset > int64(len(v.content)) {
+		return ErrSourceChanged
 	}
-	prefix, err := io.ReadAll(io.LimitReader(prefixStream, offset))
-	closeErr := prefixStream.Close()
-	if err != nil {
-		return err
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if int64(len(prefix)) != offset {
-		return io.ErrUnexpectedEOF
-	}
-	stream, err := request.Source.OpenFrom(ctx, offset)
-	if err != nil {
-		return err
-	}
-	defer stream.Close()
-	reader := bufio.NewReader(stream)
+	prefix := append([]byte(nil), v.content[:offset]...)
+	reader := bufio.NewReader(bytes.NewReader(v.content[offset:]))
+	delivered := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -119,8 +157,8 @@ func (a *streamingFixtureAdapter) Import(ctx context.Context, request ImportRequ
 		record, readErr := reader.ReadBytes('\n')
 		if len(record) > 0 && record[len(record)-1] == '\n' {
 			prefix = append(prefix, record...)
-			envelope := testEnvelopeForSource(request.Source, sequence, offset, record)
-			envelope.Checkpoint.PrefixHash = model.HashRecord(prefix)
+			envelope := testEnvelopeForSource(requestSource, sequence, offset, record)
+			envelope.Checkpoint = fixtureCheckpoint(requestSource.ID, v.identity, sequence, offset+int64(len(record)), prefix)
 			line := string(bytes.TrimSpace(record))
 			switch line {
 			case "bad":
@@ -136,6 +174,10 @@ func (a *streamingFixtureAdapter) Import(ctx context.Context, request ImportRequ
 			if err := sink.Accept(ctx, envelope); err != nil {
 				return err
 			}
+			delivered++
+			if reconciling && v.adapter.fixture.reconcileStopAfter > 0 && delivered == v.adapter.fixture.reconcileStopAfter {
+				return context.Canceled
+			}
 			completion = envelope.Checkpoint
 			offset += int64(len(record))
 			sequence++
@@ -146,6 +188,14 @@ func (a *streamingFixtureAdapter) Import(ctx context.Context, request ImportRequ
 			}
 			return readErr
 		}
+	}
+}
+
+func fixtureCheckpoint(sourceID model.SourceID, identity string, sequence, offset int64, prefix []byte) ImportCheckpoint {
+	return ImportCheckpoint{
+		SourceID: sourceID, RecordSequence: sequence, StateVersion: "fixture-stream-v1",
+		Cursor:      []byte(fmt.Sprintf("offset:%d", offset)),
+		Fingerprint: append(append([]byte(identity), 0), []byte(model.HashRecord(prefix))...),
 	}
 }
 
@@ -192,7 +242,7 @@ func (s *memoryImportStore) CommitBatch(ctx context.Context, batch ImportBatch) 
 		s.events[event.ID] = event
 	}
 	s.diagnostics = append(s.diagnostics, batch.RecordDiagnostics...)
-	s.state = SourceState{SessionID: batch.Session.ID, Import: batch.Session.Import, Session: batch.Session, Checkpoint: batch.Checkpoint}
+	s.state = SourceState{SessionID: batch.Session.ID, Import: batch.Session.Import, Session: batch.Session, Checkpoint: cloneCheckpoint(batch.Checkpoint)}
 	if len(s.events) > 0 {
 		last := int64(-1)
 		for _, event := range s.events {
@@ -205,11 +255,51 @@ func (s *memoryImportStore) CommitBatch(ctx context.Context, batch ImportBatch) 
 	s.hasState = true
 	return nil
 }
-func (s *memoryImportStore) ReconcileSource(context.Context, ImportBatch) error {
-	return errors.New("unexpected reconcile")
+func (s *memoryImportStore) BeginReconciliation(_ context.Context, sourceID model.SourceID, expected ImportCheckpoint) (Reconciliation, error) {
+	if !s.hasState || sourceID != s.state.Checkpoint.SourceID || !CheckpointEqual(expected, s.state.Checkpoint) {
+		return nil, ErrCheckpointConflict
+	}
+	return &memoryReconciliation{store: s, sourceID: sourceID}, nil
+}
+
+type memoryReconciliation struct {
+	store    *memoryImportStore
+	sourceID model.SourceID
+	batches  []ImportBatch
+	aborted  bool
+}
+
+func (r *memoryReconciliation) StageBatch(_ context.Context, batch ImportBatch) error {
+	if r.aborted {
+		return errors.New("reconciliation aborted")
+	}
+	r.batches = append(r.batches, batch)
+	return nil
+}
+
+func (r *memoryReconciliation) Finalize(ctx context.Context) error {
+	if r.aborted || len(r.batches) == 0 {
+		return errors.New("reconciliation is incomplete")
+	}
+	r.store.raw = map[model.RawRecordID]model.RawRecord{}
+	r.store.events = map[model.EventID]model.Event{}
+	r.store.diagnostics = nil
+	r.store.hasState = false
+	for _, batch := range r.batches {
+		if err := r.store.CommitBatch(ctx, batch); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *memoryReconciliation) Abort(context.Context) error {
+	r.aborted = true
+	r.batches = nil
+	return nil
 }
 func (s *memoryImportStore) Checkpoint(context.Context, model.SourceID) (ImportCheckpoint, bool, error) {
-	return s.state.Checkpoint, s.hasState, nil
+	return cloneCheckpoint(s.state.Checkpoint), s.hasState, nil
 }
 func (s *memoryImportStore) SourceState(context.Context, model.SourceID) (SourceState, bool, error) {
 	return s.state, s.hasState, nil
@@ -242,8 +332,8 @@ func TestCoordinatorFirstImportAppendUnchangedMalformedUnknownAndPartial(t *test
 		t.Fatalf("first import result/state = %#v, raw %d events %d diagnostics %d", first, len(store.raw), len(store.events), len(store.diagnostics))
 	}
 	wantOffset := int64(len("one\nbad\nfuture\n"))
-	if first.Checkpoint.ByteOffset != wantOffset {
-		t.Fatalf("checkpoint offset = %d, want %d", first.Checkpoint.ByteOffset, wantOffset)
+	if got := checkpointByteOffset(first.Checkpoint); got != wantOffset {
+		t.Fatalf("checkpoint offset = %d, want %d", got, wantOffset)
 	}
 
 	fixture.set("one\nbad\nfuture\npartial\n")
@@ -266,7 +356,7 @@ func TestCoordinatorFirstImportAppendUnchangedMalformedUnknownAndPartial(t *test
 	if err != nil {
 		t.Fatalf("unchanged Import() error = %v", err)
 	}
-	if third.RecordsCommitted != 0 || store.state.Checkpoint != checkpoint || len(store.raw) != 4 || len(store.events) != 3 {
+	if third.RecordsCommitted != 0 || !CheckpointEqual(store.state.Checkpoint, checkpoint) || len(store.raw) != 4 || len(store.events) != 3 {
 		t.Fatalf("unchanged result/state changed: %#v", third)
 	}
 	if projectionCalls != 3 {
@@ -286,7 +376,7 @@ func TestCoordinatorEmptySourceUsesZeroRecordCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Import() error = %v", err)
 	}
-	if result.Checkpoint.RecordSequence != NoRecordSequence || result.Checkpoint.ByteOffset != 0 || result.Checkpoint.LastRecordHash != NoRecordHash {
+	if result.Checkpoint.RecordSequence != NoRecordSequence || checkpointByteOffset(result.Checkpoint) != 0 {
 		t.Fatalf("empty checkpoint = %#v", result.Checkpoint)
 	}
 	if len(store.raw) != 0 || store.commits != 1 {
@@ -294,7 +384,7 @@ func TestCoordinatorEmptySourceUsesZeroRecordCheckpoint(t *testing.T) {
 	}
 }
 
-func TestCoordinatorChangedSourceStopsWithoutMutation(t *testing.T) {
+func TestCoordinatorChangedSourceReconciles(t *testing.T) {
 	fixture := &coordinatorFixture{}
 	fixture.set("one\n")
 	store := newMemoryImportStore()
@@ -302,14 +392,82 @@ func TestCoordinatorChangedSourceStopsWithoutMutation(t *testing.T) {
 	if _, err := coordinator.Import(context.Background(), fixture.source()); err != nil {
 		t.Fatal(err)
 	}
-	commits, checkpoint := store.commits, store.state.Checkpoint
 	fixture.set("changed\n")
-	_, err := coordinator.Import(context.Background(), fixture.source())
-	if !errors.Is(err, ErrSourceChanged) {
-		t.Fatalf("Import() error = %v, want ErrSourceChanged", err)
+	result, err := coordinator.Import(context.Background(), fixture.source())
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
 	}
-	if store.commits != commits || store.state.Checkpoint != checkpoint {
-		t.Fatal("changed source mutated durable state")
+	if result.Change != SourceMutated || !result.Reconciled || len(store.raw) != 1 || len(store.events) != 1 {
+		t.Fatalf("reconciled result=%#v raw=%d events=%d", result, len(store.raw), len(store.events))
+	}
+}
+
+func TestCoordinatorClassifiesEverySourceChangeMode(t *testing.T) {
+	tests := []struct {
+		name       string
+		change     SourceChange
+		mutate     func(*coordinatorFixture)
+		reconciled bool
+		wantRaw    int
+		wantEvents int
+	}{
+		{name: "unchanged", change: SourceUnchanged, mutate: func(*coordinatorFixture) {}, wantRaw: 2, wantEvents: 2},
+		{name: "append", change: SourceAppend, mutate: func(f *coordinatorFixture) { f.set("one\ntwo\nthree\n") }, wantRaw: 3, wantEvents: 3},
+		{name: "truncation", change: SourceTruncated, mutate: func(f *coordinatorFixture) { f.set("one\n") }, reconciled: true, wantRaw: 1, wantEvents: 1},
+		{name: "mutation", change: SourceMutated, mutate: func(f *coordinatorFixture) { f.set("one\nbad\n") }, reconciled: true, wantRaw: 2, wantEvents: 1},
+		{name: "replacement", change: SourceReplaced, mutate: func(f *coordinatorFixture) { f.replace("fixture-source-2", "new\n") }, reconciled: true, wantRaw: 1, wantEvents: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := &coordinatorFixture{}
+			fixture.set("one\ntwo\n")
+			store := newMemoryImportStore()
+			coordinator, err := NewCoordinator(store, []Adapter{&streamingFixtureAdapter{fixture}}, nil, Options{BatchRecords: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := coordinator.Import(context.Background(), fixture.source()); err != nil {
+				t.Fatal(err)
+			}
+			tt.mutate(fixture)
+			result, err := coordinator.Import(context.Background(), fixture.source())
+			if err != nil {
+				t.Fatalf("Import() error = %v", err)
+			}
+			if result.Change != tt.change || result.Reconciled != tt.reconciled {
+				t.Fatalf("classification = (%q, reconciled %v), want (%q, %v)", result.Change, result.Reconciled, tt.change, tt.reconciled)
+			}
+			if len(store.raw) != tt.wantRaw || len(store.events) != tt.wantEvents {
+				t.Fatalf("canonical evidence raw=%d events=%d, want %d and %d", len(store.raw), len(store.events), tt.wantRaw, tt.wantEvents)
+			}
+		})
+	}
+}
+
+func TestCoordinatorInterruptionDuringRecoveryKeepsOldGeneration(t *testing.T) {
+	fixture := &coordinatorFixture{}
+	fixture.set("one\ntwo\nthree\n")
+	store := newMemoryImportStore()
+	coordinator, err := NewCoordinator(store, []Adapter{&streamingFixtureAdapter{fixture}}, nil, Options{BatchRecords: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coordinator.Import(context.Background(), fixture.source()); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := cloneCheckpoint(store.state.Checkpoint)
+	fixture.set("changed\ntwo\nthree\n")
+	fixture.reconcileStopAfter = 2
+	if _, err := coordinator.Import(context.Background(), fixture.source()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted reconciliation error = %v, want context.Canceled", err)
+	}
+	if !CheckpointEqual(store.state.Checkpoint, checkpoint) || len(store.raw) != 3 || len(store.events) != 3 {
+		t.Fatalf("interrupted reconciliation exposed partial state: checkpoint=%#v raw=%d events=%d", store.state.Checkpoint, len(store.raw), len(store.events))
+	}
+	fixture.reconcileStopAfter = 0
+	result, err := coordinator.Import(context.Background(), fixture.source())
+	if err != nil || !result.Reconciled || result.Change != SourceMutated {
+		t.Fatalf("reconciliation retry = (%#v, %v)", result, err)
 	}
 }
 
@@ -358,8 +516,8 @@ func TestBatchSinkRetainsImmutableInitialSession(t *testing.T) {
 	session.Diagnostics[0].RawRecordIDs[0] = "record-2"
 
 	checkpoint := ImportCheckpoint{
-		SourceID: source.ID, RecordSequence: NoRecordSequence, PrefixHash: model.HashRecord(nil),
-		LastRecordHash: NoRecordHash, SourceSize: source.Size,
+		SourceID: source.ID, RecordSequence: NoRecordSequence, StateVersion: "fixture-stream-v1",
+		Cursor: []byte("offset:0"), Fingerprint: []byte(model.HashRecord(nil)),
 	}
 	if err := sink.Complete(context.Background(), session, checkpoint); err == nil {
 		t.Fatal("Complete() accepted an adapter mutation of the initial session")

@@ -114,53 +114,42 @@ type Adapter interface {
 	Name() string
 	Version() model.Version
 	Probe(context.Context, Source) (ProbeResult, error)
-	Verify(context.Context, Source, ImportCheckpoint) (CheckpointVerification, error)
-	Import(context.Context, ImportRequest, ImportSink) error
+	Prepare(context.Context, Source) (PreparedSource, error)
 }
 
-// CheckpointVerification is the adapter-owned verdict for the committed
-// source prefix. Shared orchestration never interprets source fingerprints.
-type CheckpointVerification uint8
+// SourceChange is an adapter-owned classification of the current source view
+// relative to durable canonical evidence.
+type SourceChange string
 
 const (
-	CheckpointChanged CheckpointVerification = iota
-	CheckpointVerified
+	SourceNew       SourceChange = "new"
+	SourceUnchanged SourceChange = "unchanged"
+	SourceAppend    SourceChange = "append"
+	SourceTruncated SourceChange = "truncation"
+	SourceReplaced  SourceChange = "replacement"
+	SourceMutated   SourceChange = "pre_checkpoint_mutation"
 )
 
-// ImportRequest supplies an adapter with the current source and, for an
-// incremental append, the last checkpoint that import orchestration verified
-// against that source. Resume must be nil for a first import or whenever the
-// source was truncated, replaced, or changed before the committed cursor.
-//
-// A non-nil Resume lets an adapter preserve absolute byte offsets and record
-// sequences while starting after already committed records. It is not itself
-// proof that the source is unchanged: callers must perform the adapter-aware
-// fingerprint verification before setting it.
-type ImportRequest struct {
-	Source Source
-	Resume *ImportCheckpoint
+func (c SourceChange) valid() bool {
+	switch c {
+	case SourceNew, SourceUnchanged, SourceAppend, SourceTruncated, SourceReplaced, SourceMutated:
+		return true
+	default:
+		return false
+	}
 }
 
-// Validate checks source-neutral request invariants. It catches structurally
-// impossible resume attempts, but cannot replace adapter-aware fingerprint
-// verification of the source content.
-func (r ImportRequest) Validate() error {
-	if err := r.Source.Validate(); err != nil {
-		return fmt.Errorf("validate source: %w", err)
-	}
-	if r.Resume == nil {
-		return nil
-	}
-	if err := r.Resume.Validate(); err != nil {
-		return fmt.Errorf("validate resume checkpoint: %w", err)
-	}
-	if r.Resume.SourceID != r.Source.ID {
-		return fmt.Errorf("resume checkpoint source %q does not match import source %q", r.Resume.SourceID, r.Source.ID)
-	}
-	if r.Resume.SourceSize > r.Source.Size {
-		return fmt.Errorf("resume checkpoint source size %d exceeds current source size %d", r.Resume.SourceSize, r.Source.Size)
-	}
-	return nil
+func (c SourceChange) requiresReconciliation() bool {
+	return c == SourceTruncated || c == SourceReplaced || c == SourceMutated
+}
+
+// PreparedSource owns one consistent, read-only adapter view. Verification
+// and the selected import path must operate on this same view.
+type PreparedSource interface {
+	Verify(context.Context, SourceState) (SourceChange, error)
+	Import(context.Context, *ImportCheckpoint, ImportSink) error
+	Reconcile(context.Context, ImportSink) error
+	Close() error
 }
 
 // ImportSink consumes one canonical session lifecycle. Begin establishes the
@@ -329,20 +318,8 @@ func validateEnvelopeCheckpoint(ref model.RawRecordRef, checkpoint ImportCheckpo
 	if ref.RecordSequence == nil && ref.ByteRange == nil {
 		return fmt.Errorf("delivered raw record requires a record sequence or byte range")
 	}
-	if checkpoint.LastRecordHash != ref.ContentHash {
-		return fmt.Errorf("checkpoint last record hash %q does not match delivered record hash %q", checkpoint.LastRecordHash, ref.ContentHash)
-	}
 	if sequence := ref.RecordSequence; sequence != nil && checkpoint.RecordSequence != *sequence {
 		return fmt.Errorf("checkpoint sequence %d does not match delivered record sequence %d", checkpoint.RecordSequence, *sequence)
-	}
-	if byteRange := ref.ByteRange; byteRange != nil {
-		end, err := byteRange.End()
-		if err != nil {
-			return fmt.Errorf("delivered raw byte range: %w", err)
-		}
-		if checkpoint.ByteOffset != end {
-			return fmt.Errorf("checkpoint byte offset %d does not match delivered raw byte range end %d", checkpoint.ByteOffset, end)
-		}
 	}
 	return nil
 }
