@@ -167,7 +167,9 @@ type ImportSink interface {
 }
 
 // RecordEnvelope keeps a retained source record, its canonical interpretation,
-// recoverable diagnostics, and post-record checkpoint progress together.
+// recoverable diagnostics, and post-record checkpoint progress together. A
+// source metadata record may intentionally have neither events nor diagnostics;
+// retaining it still advances the verified source checkpoint.
 type RecordEnvelope struct {
 	RawRecord   model.RawRecord
 	Events      []model.Event
@@ -210,9 +212,6 @@ func (e RecordEnvelope) Validate() error {
 	}
 	if err := validateEnvelopeCheckpoint(e.RawRecord.Ref, e.Checkpoint); err != nil {
 		return err
-	}
-	if len(e.Events) == 0 && len(e.Diagnostics) == 0 {
-		return fmt.Errorf("record envelope requires an event or diagnostic")
 	}
 	if err := model.ValidateEventOrder(e.Events); err != nil {
 		return fmt.Errorf("validate event order: %w", err)

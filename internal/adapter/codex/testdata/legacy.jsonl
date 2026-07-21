@@ -1,0 +1,6 @@
+{"timestamp":"2025-01-02T03:04:05Z","type":"session_meta","payload":{"id":"01940000-0000-7000-8000-000000000001","timestamp":"2025-01-02T03:04:05Z","cwd":"/workspace/example","originator":"codex_cli_rs","cli_version":"0.42.0","git":{"commit_hash":"sanitized"}}}
+{"timestamp":"2025-01-02T03:04:06Z","type":"event_msg","payload":{"type":"user_message","message":"Please inspect the fixture."}}
+{"timestamp":"2025-01-02T03:04:06Z","type":"response_item","payload":{"type":"message","id":"msg_duplicate","role":"user","content":[{"type":"input_text","text":"Please inspect the fixture."}]}}
+{"timestamp":"2025-01-02T03:04:07Z","type":"response_item","payload":{"type":"function_call","id":"fc_global_1","name":"shell","arguments":"{\"cmd\":\"go test ./...\"}","call_id":"call_1"}}
+{"timestamp":"2025-01-02T03:04:08Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"ok"}}
+{"timestamp":"2025-01-02T03:04:09Z","type":"event_msg","payload":{"type":"agent_message","message":"The fixture passes."}}
