@@ -242,7 +242,7 @@ func (p *prepared) consumePrefix(ctx context.Context, target int64) error {
 	}
 	p.spool = spool
 	remaining := target
-	if len(p.first) > 0 {
+	if remaining > 0 && len(p.first) > 0 {
 		if int64(len(p.first)) > remaining {
 			return fmt.Errorf("checkpoint offset %d splits the first JSONL record", target)
 		}

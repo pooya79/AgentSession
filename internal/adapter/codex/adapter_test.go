@@ -3,6 +3,7 @@ package codex
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -212,6 +213,40 @@ func TestPartialTailIsDeferredThenImportedAfterAppend(t *testing.T) {
 	}
 	if second.records[0].RawRecord.Ref.ByteRange.Offset != int64(len(complete)) {
 		t.Fatalf("appended record offset = %d", second.records[0].RawRecord.Ref.ByteRange.Offset)
+	}
+}
+
+func TestPartialFirstRecordResumesFromZeroOffsetAfterAppend(t *testing.T) {
+	partial := []byte("{\"timestamp\":\"2025-01-01T00:00:01Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"later\"")
+	first, _ := importSource(t, bytesSource("partial-first", partial), nil, nil)
+	if len(first.records) != 0 || first.checkpoint.RecordSequence != -1 {
+		t.Fatalf("first import records/checkpoint = %d/%d, want 0/-1", len(first.records), first.checkpoint.RecordSequence)
+	}
+
+	state := sourceState(first)
+	appended := append(append([]byte(nil), partial...), []byte("}}\n")...)
+	second, change := importSource(t, bytesSource("partial-first", appended), &state.Checkpoint, &state)
+	if change != importer.SourceAppend || len(second.records) != 1 || len(second.records[0].Events) != 1 {
+		t.Fatalf("append change/records/events = %q/%d/%d", change, len(second.records), len(events(second.records)))
+	}
+	if second.records[0].RawRecord.Ref.ByteRange.Offset != 0 {
+		t.Fatalf("completed first record offset = %d, want 0", second.records[0].RawRecord.Ref.ByteRange.Offset)
+	}
+}
+
+func TestToolOutputContentBlocksAreFlattened(t *testing.T) {
+	raw := json.RawMessage(`{"type":"custom_tool_call_output","call_id":"call-1","output":[{"type":"input_text","text":"first line\nsecond line"},{"type":"input_text","text":"third line"}]}`)
+	kind, _, searchable, data, _, recognized := normalizeResponseItem(raw, false, "session")
+	if !recognized || kind != model.EventKindToolResult {
+		t.Fatalf("normalized result = recognized %t, kind %q", recognized, kind)
+	}
+	want := "first line\nsecond line\nthird line"
+	if searchable != want {
+		t.Fatalf("searchable text = %q, want %q", searchable, want)
+	}
+	result := data.(model.ToolResultData)
+	if result.Output != want {
+		t.Fatalf("tool output = %q, want %q", result.Output, want)
 	}
 }
 

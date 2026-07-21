@@ -57,7 +57,7 @@ func normalizeResponseItem(raw json.RawMessage, ordinalHistory bool, sessionID s
 	case "function_call_output", "custom_tool_call_output":
 		callID := rawString(item["call_id"])
 		name := rawString(item["name"])
-		output := rawText(item["output"])
+		output := contentText(item["output"])
 		return model.EventKindToolResult, "Tool result", output, model.ToolResultData{CallID: callID, ToolName: name, Output: output}, native, true
 	case "local_shell_call":
 		callID := rawString(item["call_id"])
