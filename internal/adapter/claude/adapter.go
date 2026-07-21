@@ -75,7 +75,7 @@ func (a *Adapter) Probe(ctx context.Context, source importer.Source) (importer.P
 			continue
 		}
 		valid = true
-		if knownTopLevel(record.Type) {
+		if knownTopLevel(record.Type) || record.SessionID != "" || hasJSONField(trimLineEnding(line), "isSidechain") {
 			recognized = true
 		}
 		if value := strings.TrimSpace(record.Version); value != "" {
@@ -442,11 +442,20 @@ func compositeFormat(cli string) model.Version {
 
 func knownTopLevel(kind string) bool {
 	switch kind {
-	case "user", "assistant", "summary", "file-history-snapshot":
+	case "user", "assistant", "system", "summary", "file-history-snapshot", "progress", "queue-operation":
 		return true
 	default:
 		return false
 	}
+}
+
+func hasJSONField(data []byte, name string) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil {
+		return false
+	}
+	_, ok := fields[name]
+	return ok
 }
 
 func looksClaudeLike(line []byte) bool {

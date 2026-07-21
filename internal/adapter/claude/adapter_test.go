@@ -134,6 +134,40 @@ func TestProbeAndPrepareInspectEightCompleteRecords(t *testing.T) {
 	}
 }
 
+func TestProbeTreatsClaudeStructuralRecordsAsCertain(t *testing.T) {
+	tests := map[string]string{
+		"system variant":          `{"type":"system"}`,
+		"progress variant":        `{"type":"progress"}`,
+		"queue operation variant": `{"type":"queue-operation"}`,
+		"session ID":              `{"type":"future-record","sessionId":"claude-session"}`,
+		"sidechain field":         `{"type":"future-record","isSidechain":false}`,
+	}
+	for name, record := range tests {
+		t.Run(name, func(t *testing.T) {
+			probe, err := New().Probe(context.Background(), bytesSource(name, []byte(record+"\n")))
+			if err != nil || probe.Confidence != importer.ProbeCertain {
+				t.Fatalf("Probe() = %#v, %v", probe, err)
+			}
+		})
+	}
+}
+
+func TestNullMessagesAreNormalizedAsUnknown(t *testing.T) {
+	tests := map[string]string{
+		"message": `{"type":"user","message":null}`,
+		"content": `{"type":"assistant","message":{"role":"assistant","content":null}}`,
+	}
+	for name, record := range tests {
+		t.Run(name, func(t *testing.T) {
+			sink, _ := importSource(t, bytesSource(name, []byte(record+"\n")), nil, nil)
+			got := events(sink.records)
+			if len(got) != 1 || got[0].Kind != model.EventKindUnknown {
+				t.Fatalf("events = %#v, want one unknown event", got)
+			}
+		})
+	}
+}
+
 func TestMainThreadNormalizationRetainsRecordsAndUsesIndependentSequences(t *testing.T) {
 	sink, _ := importSource(t, fixtureSource(t, "main.jsonl"), nil, nil)
 	got := events(sink.records)

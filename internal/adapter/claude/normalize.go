@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 
@@ -32,6 +33,9 @@ func normalizeRecord(record wireRecord) []eventDraft {
 }
 
 func normalizeMessage(record wireRecord) []eventDraft {
+	if isJSONNull(record.Message) {
+		return []eventDraft{unknownDraft(record.Type+":message", "Unsupported Claude message")}
+	}
 	var message struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
@@ -43,7 +47,9 @@ func normalizeMessage(record wireRecord) []eventDraft {
 	role := messageRole(message.Role, record.Type)
 	var result []eventDraft
 	var text string
-	if json.Unmarshal(message.Content, &text) == nil {
+	if isJSONNull(message.Content) {
+		result = append(result, unknownDraft(record.Type+":content", "Unsupported Claude message content"))
+	} else if json.Unmarshal(message.Content, &text) == nil {
 		result = append(result, messageDraft(role, text))
 	} else {
 		var blocks []json.RawMessage
@@ -61,6 +67,10 @@ func normalizeMessage(record wireRecord) []eventDraft {
 		}
 	}
 	return result
+}
+
+func isJSONNull(raw json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
 
 func normalizeBlock(raw json.RawMessage, role model.MessageRole) eventDraft {
