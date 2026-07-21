@@ -178,7 +178,6 @@ func TestRecordEnvelopeRejectsUnrelatedOrChangedEvidence(t *testing.T) {
 		name   string
 		mutate func(*RecordEnvelope)
 	}{
-		{name: "silent record", mutate: func(e *RecordEnvelope) {}},
 		{name: "changed content", mutate: func(e *RecordEnvelope) {
 			e.Diagnostics = []model.Diagnostic{{Code: "record.bad", Severity: model.SeverityWarning, Message: "bad"}}
 			e.RawRecord.Content = []byte("changed")
@@ -195,6 +194,13 @@ func TestRecordEnvelopeRejectsUnrelatedOrChangedEvidence(t *testing.T) {
 				t.Fatal("Validate() error = nil, want envelope validation error")
 			}
 		})
+	}
+}
+
+func TestRecordEnvelopePermitsRetainedMetadataWithoutTimelineEvidence(t *testing.T) {
+	envelope := testEnvelope(t, 0, []byte("metadata\n"))
+	if err := envelope.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }
 

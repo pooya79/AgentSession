@@ -2,7 +2,17 @@
 
 AgentSession is a lightweight, local-first explorer for coding-agent sessions. It turns local records from coding agents into repository-aware evidence about messages, commands, file changes, tests, failures, and outcomes.
 
-The project is currently an early runnable scaffold. Read-only session source discovery, authoritative import storage, and verified, bounded import orchestration are implemented; concrete source adapters, search, and analysis are still under development.
+The project is currently an early runnable scaffold. Read-only session source discovery, authoritative import storage, verified bounded import orchestration, and a Codex CLI rollout adapter are implemented; search and analysis are still under development.
+
+## Supported session sources
+
+- Codex CLI rollout JSONL files, including legacy event-based history and
+  current ordinal-bearing history. Imports stream complete records, retain raw
+  bytes and unknown variants, defer incomplete trailing records, and verify
+  checkpoints before append or reconciliation.
+
+Discovery identifies candidates but does not yet expose a user-facing import
+command; application-level import composition remains under development.
 
 ## Session source discovery
 
