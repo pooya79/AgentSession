@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -628,14 +629,25 @@ func TestCoordinatorProjectionFailureIsSeparateFromCanonicalSuccess(t *testing.T
 	fixture := &coordinatorFixture{}
 	fixture.set("one\n")
 	store := newMemoryImportStore()
-	projectionErr := errors.New("projection unavailable")
+	projectionErr := errors.New("secret=raw-token path=/private/session.jsonl")
 	coordinator, _ := NewCoordinator(store, []Adapter{&streamingFixtureAdapter{fixture}}, projectorFunc(func(context.Context, ProjectionRequest) error { return projectionErr }), Options{})
-	result, err := coordinator.Import(context.Background(), fixture.source())
+	var progress []Progress
+	results, err := coordinator.ImportAllObserved(context.Background(), fixture.source(), func(update Progress) {
+		progress = append(progress, update)
+	})
 	if err != nil {
 		t.Fatalf("Import() canonical error = %v", err)
 	}
+	result := results[0]
 	if !errors.Is(result.ProjectionError, projectionErr) || len(store.raw) != 1 {
 		t.Fatalf("result=%#v raw=%d", result, len(store.raw))
+	}
+	for _, update := range progress {
+		for _, diagnostic := range update.Diagnostics {
+			if strings.Contains(diagnostic.Message, "raw-token") || strings.Contains(diagnostic.Message, "/private") {
+				t.Fatalf("projection progress leaked raw error: %#v", diagnostic)
+			}
+		}
 	}
 }
 

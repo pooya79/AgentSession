@@ -35,6 +35,7 @@ func TestOpenMigratesFreshDatabaseAndReopenIsIdempotent(t *testing.T) {
 		{version: 5, name: "0005_zero_record_checkpoints.sql"},
 		{version: 6, name: "0006_adapter_checkpoints_and_reconciliation.sql"},
 		{version: 7, name: "0007_container_membership.sql"},
+		{version: 8, name: "0008_projection_lifecycle.sql"},
 	}
 	assertMigrationHistory(t, db, wantMigrations)
 	if err := db.Close(); err != nil {
@@ -118,6 +119,69 @@ func TestAdapterCheckpointMigrationPreservesLegacyState(t *testing.T) {
 	}
 	if version != "legacy-stream-v1" || string(cursor) != "offset=7;size=9" || string(fingerprint) != "prefix\x00record" {
 		t.Fatalf("migrated checkpoint = (%q, %q, %q)", version, cursor, fingerprint)
+	}
+}
+
+func TestProjectionMigrationCreatesPendingStatesForExistingSessions(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agentsession.db")
+	dsn, err := dataSourceName(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	all, err := fs.Sub(embeddedMigrations, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := fstest.MapFS{}
+	entries, err := fs.ReadDir(all, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() >= "0008_projection_lifecycle.sql" {
+			continue
+		}
+		content, err := fs.ReadFile(all, entry.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy[entry.Name()] = &fstest.MapFile{Data: content}
+	}
+	if err := runMigrations(ctx, db, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO sessions (
+			id, title, summary, source_id, adapter_name, adapter_version,
+			format_version, model_version, normalization_version
+		) VALUES ('existing-session', 'title', 'summary', 'source', 'adapter', '1', '1', '1', '1')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := runMigrations(ctx, db, all); err != nil {
+		t.Fatal(err)
+	}
+	var revision, states, pending int
+	if err := db.QueryRowContext(ctx, `SELECT canonical_revision FROM sessions WHERE id = 'existing-session'`).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*), SUM(status = 'pending') FROM session_projection_states WHERE session_id = 'existing-session'
+	`).Scan(&states, &pending); err != nil {
+		t.Fatal(err)
+	}
+	if revision != 0 || states != 5 || pending != 5 {
+		t.Fatalf("upgraded projection state = revision %d, states %d, pending %d", revision, states, pending)
+	}
+	if err := runMigrations(ctx, db, all); err != nil {
+		t.Fatalf("idempotent migration run: %v", err)
 	}
 }
 
