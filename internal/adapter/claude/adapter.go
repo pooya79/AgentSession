@@ -51,6 +51,9 @@ func (a *Adapter) Probe(ctx context.Context, source importer.Source) (importer.P
 	defer stream.Close()
 
 	reader := bufio.NewReaderSize(stream, readBuffer)
+	if header, _ := reader.Peek(len("SQLite format 3\x00")); bytes.Equal(header, []byte("SQLite format 3\x00")) {
+		return importer.ProbeResult{Confidence: importer.ProbeUnsupported}, nil
+	}
 	recognized, valid, possibleMalformed := false, false, false
 	cliVersion := "unknown"
 	var diagnostics []model.Diagnostic

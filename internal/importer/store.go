@@ -218,6 +218,13 @@ type ImportStore interface {
 	SourceState(ctx context.Context, sourceID model.SourceID) (SourceState, bool, error)
 }
 
+// ContainerMembershipStore atomically publishes the successful logical-source
+// inventory for a physical container and removes canonical data for members
+// that disappeared. Implementations only modify AgentSession-owned data.
+type ContainerMembershipStore interface {
+	SyncContainerMembers(context.Context, model.SourceID, []model.SourceID) error
+}
+
 // Reconciliation stages a complete replacement generation outside the live
 // canonical tables and promotes it atomically after adapter completion.
 type Reconciliation interface {

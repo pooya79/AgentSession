@@ -28,6 +28,7 @@ type ImportStore struct {
 }
 
 var _ importer.ImportStore = (*ImportStore)(nil)
+var _ importer.ContainerMembershipStore = (*ImportStore)(nil)
 var _ storagecontract.SessionReader = (*ImportStore)(nil)
 var _ storagecontract.SessionDeleter = (*ImportStore)(nil)
 
@@ -46,6 +47,75 @@ func NewImportStore(db *sql.DB) (*ImportStore, error) {
 		return nil, errors.New("sqlite import store: database is nil")
 	}
 	return &ImportStore{db: db}, nil
+}
+
+// SyncContainerMembers transactionally replaces a physical container's
+// logical-source inventory and removes only AgentSession-owned imports for
+// children that are no longer present.
+func (s *ImportStore) SyncContainerMembers(ctx context.Context, containerID model.SourceID, members []model.SourceID) (err error) {
+	if strings.TrimSpace(string(containerID)) == "" {
+		return errors.New("sqlite import store: synchronize container: container source ID is required")
+	}
+	wanted := make(map[model.SourceID]struct{}, len(members))
+	for i, member := range members {
+		if strings.TrimSpace(string(member)) == "" {
+			return fmt.Errorf("sqlite import store: synchronize container %q: member %d is empty", containerID, i)
+		}
+		if member == containerID {
+			return fmt.Errorf("sqlite import store: synchronize container %q: container cannot be its own member", containerID)
+		}
+		if _, exists := wanted[member]; exists {
+			return fmt.Errorf("sqlite import store: synchronize container %q: duplicate member %q", containerID, member)
+		}
+		wanted[member] = struct{}{}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("sqlite import store: synchronize container %q: begin transaction: %w", containerID, err)
+	}
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			err = errors.Join(err, rollbackErr)
+		}
+	}()
+	rows, err := tx.QueryContext(ctx, `SELECT child_source_id FROM container_memberships WHERE container_source_id = ?`, containerID)
+	if err != nil {
+		return fmt.Errorf("sqlite import store: synchronize container %q: read prior inventory: %w", containerID, err)
+	}
+	var stale []model.SourceID
+	for rows.Next() {
+		var child model.SourceID
+		if err := rows.Scan(&child); err != nil {
+			rows.Close()
+			return fmt.Errorf("sqlite import store: synchronize container %q: scan prior inventory: %w", containerID, err)
+		}
+		if _, exists := wanted[child]; !exists {
+			stale = append(stale, child)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("sqlite import store: synchronize container %q: close prior inventory: %w", containerID, err)
+	}
+	for _, child := range stale {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM reconciliation_runs WHERE source_id = ?`, child); err != nil {
+			return fmt.Errorf("sqlite import store: synchronize container %q: remove stale reconciliation for %q: %w", containerID, child, err)
+		}
+		if err := deleteSourceImport(ctx, tx, child); err != nil {
+			return fmt.Errorf("sqlite import store: synchronize container %q: remove stale member %q: %w", containerID, child, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM container_memberships WHERE container_source_id = ?`, containerID); err != nil {
+		return fmt.Errorf("sqlite import store: synchronize container %q: replace inventory: %w", containerID, err)
+	}
+	for _, member := range members {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO container_memberships (container_source_id, child_source_id) VALUES (?, ?)`, containerID, member); err != nil {
+			return fmt.Errorf("sqlite import store: synchronize container %q: add member %q: %w", containerID, member, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("sqlite import store: synchronize container %q: commit: %w", containerID, err)
+	}
+	return nil
 }
 
 // CommitBatch atomically persists a canonical batch and its checkpoint.

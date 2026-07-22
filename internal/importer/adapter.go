@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/pooya79/AgentSession/internal/model"
@@ -30,6 +32,9 @@ type Source struct {
 	// OpenAt is optional for compatibility with non-seekable sources. When it
 	// is absent, OpenFrom falls back to opening at zero and discarding bytes.
 	OpenAt SourceOffsetOpener
+	// LocalPath is an optional, validated absolute path capability for adapters
+	// that must open a local database through its native read-only driver.
+	LocalPath string
 }
 
 // Validate checks the source metadata without opening the source.
@@ -40,8 +45,13 @@ func (s Source) Validate() error {
 	if s.Size < 0 {
 		return fmt.Errorf("source size must not be negative")
 	}
-	if s.Open == nil && s.OpenAt == nil {
-		return fmt.Errorf("source opener or offset opener is required")
+	if s.LocalPath != "" {
+		if strings.IndexByte(s.LocalPath, 0) >= 0 || !filepath.IsAbs(s.LocalPath) || filepath.Clean(s.LocalPath) != s.LocalPath {
+			return fmt.Errorf("source local path must be a clean absolute path")
+		}
+	}
+	if s.Open == nil && s.OpenAt == nil && s.LocalPath == "" {
+		return fmt.Errorf("source opener, offset opener, or local path is required")
 	}
 	return nil
 }
@@ -56,7 +66,21 @@ func (s Source) OpenFrom(ctx context.Context, offset int64) (io.ReadCloser, erro
 		return s.OpenAt(ctx, offset)
 	}
 	if s.Open == nil {
-		return nil, fmt.Errorf("source opener is required")
+		if s.LocalPath == "" {
+			return nil, fmt.Errorf("source opener is required")
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		file, err := os.Open(s.LocalPath)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := file.Seek(offset, io.SeekStart); err != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("position local source at offset %d: %w", offset, err)
+		}
+		return file, nil
 	}
 	stream, err := s.Open(ctx)
 	if err != nil {
@@ -114,7 +138,29 @@ type Adapter interface {
 	Name() string
 	Version() model.Version
 	Probe(context.Context, Source) (ProbeResult, error)
+}
+
+// StreamAdapter prepares one canonical session from a byte stream.
+type StreamAdapter interface {
+	Adapter
 	Prepare(context.Context, Source) (PreparedSource, error)
+}
+
+// ContainerAdapter expands one physical local source into logical child
+// sources while retaining one consistent read-only snapshot.
+type ContainerAdapter interface {
+	Adapter
+	PrepareContainer(context.Context, Source) (PreparedContainer, error)
+}
+
+type PreparedChild struct {
+	Source   Source
+	Prepared PreparedSource
+}
+
+type PreparedContainer interface {
+	Children(context.Context) ([]PreparedChild, error)
+	Close() error
 }
 
 // SourceChange is an adapter-owned classification of the current source view
