@@ -135,20 +135,12 @@ func writeImportResult(w io.Writer, result app.BatchImportResult) {
 	}
 	importedSessions, completedSources, failedSources, unchangedSessions := 0, 0, 0, 0
 	for _, progress := range result.Imports {
-		if progress.Failure != nil {
-			failedSources++
-			writeTerminalText(w, fmt.Sprintf("Source %s failed to import.\n", progress.SourceID))
-			continue
-		}
-		completedSources++
 		importedSessions += int(progress.ImportResultsObserved)
+		unchangedSessions += int(progress.UnchangedResultsObserved)
 		for _, summary := range progress.ImportedSessions {
 			status := string(summary.Change)
 			if summary.Change == "" {
 				status = "imported"
-			}
-			if summary.Change == "unchanged" {
-				unchangedSessions++
 			}
 			warning := ""
 			if summary.ProjectionWarning {
@@ -165,6 +157,12 @@ func writeImportResult(w io.Writer, result app.BatchImportResult) {
 		}
 		if progress.DiagnosticsOmitted > 0 {
 			writeTerminalText(w, fmt.Sprintf("Source %s: %d earlier diagnostic(s) omitted.\n", progress.SourceID, progress.DiagnosticsOmitted))
+		}
+		if progress.Failure != nil {
+			failedSources++
+			writeTerminalText(w, fmt.Sprintf("Source %s failed to import.\n", progress.SourceID))
+		} else {
+			completedSources++
 		}
 	}
 	if len(result.Discovery.Sources) == 0 {

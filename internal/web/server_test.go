@@ -106,6 +106,15 @@ func TestImportProgressHandlerStreamsTerminalFailure(t *testing.T) {
 	}
 }
 
+func TestImportProgressJSONIncludesAggregateUnchangedCount(t *testing.T) {
+	payload := importProgressJSON(app.ImportProgress{
+		ImportResultsObserved: 100, UnchangedResultsObserved: 100, ImportResultsOmitted: 36,
+	})
+	if payload.ImportResultsObserved != 100 || payload.UnchangedResultsObserved != 100 || payload.ImportResultsOmitted != 36 {
+		t.Fatalf("aggregate result counts = %#v", payload)
+	}
+}
+
 func TestImportProgressHandlerDisconnectDoesNotCancelImport(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})

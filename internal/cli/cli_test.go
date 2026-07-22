@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pooya79/AgentSession/internal/app"
 	"github.com/pooya79/AgentSession/internal/buildinfo"
+	"github.com/pooya79/AgentSession/internal/importer"
 )
 
 func TestHelpListsImplementedCommands(t *testing.T) {
@@ -123,5 +125,38 @@ func TestWriteErrorSanitizesDiagnostic(t *testing.T) {
 	WriteError(&output, errors.New("source \x1b]52;c;c2VjcmV0\x07failed\u202e"))
 	if got, want := output.String(), "error: source failed<U+202E>\n"; got != want {
 		t.Fatalf("diagnostic = %q, want %q", got, want)
+	}
+}
+
+func TestWriteImportResultReportsCommittedSessionsFromFailedSource(t *testing.T) {
+	var output bytes.Buffer
+	writeImportResult(&output, app.BatchImportResult{Imports: []app.ImportProgress{{
+		SourceID: "container", Failure: errors.New("close prepared source"), ImportResultsObserved: 1,
+		ImportedSessions: []app.ImportedSessionSummary{{
+			SourceID: "logical", SessionID: "session-1", Change: importer.SourceNew, RecordsCommitted: 2, BatchesCommitted: 1,
+		}},
+	}}})
+
+	got := output.String()
+	for _, want := range []string{
+		"Session session-1 (source logical): new, 2 record(s), 1 batch(es).",
+		"Source container failed to import.",
+		"Imported 1 session(s) from 0 source(s); 0 unchanged; 1 source failure(s).",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output does not contain %q: %q", want, got)
+		}
+	}
+}
+
+func TestWriteImportResultUsesAggregateUnchangedCount(t *testing.T) {
+	var output bytes.Buffer
+	writeImportResult(&output, app.BatchImportResult{Imports: []app.ImportProgress{{
+		SourceID: "container", ImportResultsObserved: 100, UnchangedResultsObserved: 100, ImportResultsOmitted: 36,
+		ImportedSessions: []app.ImportedSessionSummary{{SourceID: "logical-100", SessionID: "session-100", Change: importer.SourceUnchanged}},
+	}}})
+
+	if got := output.String(); !strings.Contains(got, "Imported 100 session(s) from 1 source(s); 100 unchanged; 0 source failure(s).") {
+		t.Fatalf("output = %q", got)
 	}
 }

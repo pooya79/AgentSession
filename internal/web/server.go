@@ -83,22 +83,23 @@ func NewImportProgressHandler(provider ImportSubscriptionProvider) http.Handler 
 }
 
 type importProgressPayload struct {
-	RunID                 uint64                   `json:"run_id"`
-	SourceID              model.SourceID           `json:"source"`
-	ActiveSourceID        model.SourceID           `json:"active_source"`
-	Phase                 app.ImportPhase          `json:"phase"`
-	RecordsProcessed      int64                    `json:"records_processed"`
-	EventsProcessed       int64                    `json:"events_processed"`
-	RecordsCommitted      int64                    `json:"records_committed"`
-	BatchesCommitted      int64                    `json:"batches_committed"`
-	DiagnosticsObserved   int64                    `json:"diagnostics_observed"`
-	DiagnosticsOmitted    int64                    `json:"diagnostics_omitted"`
-	RecentDiagnostics     []diagnosticPayload      `json:"recent_diagnostics,omitempty"`
-	ImportedSessions      []importedSessionPayload `json:"imported_sessions,omitempty"`
-	ImportResultsObserved int64                    `json:"import_results_observed"`
-	ImportResultsOmitted  int64                    `json:"import_results_omitted"`
-	Complete              bool                     `json:"complete"`
-	Failure               string                   `json:"failure,omitempty"`
+	RunID                    uint64                   `json:"run_id"`
+	SourceID                 model.SourceID           `json:"source"`
+	ActiveSourceID           model.SourceID           `json:"active_source"`
+	Phase                    app.ImportPhase          `json:"phase"`
+	RecordsProcessed         int64                    `json:"records_processed"`
+	EventsProcessed          int64                    `json:"events_processed"`
+	RecordsCommitted         int64                    `json:"records_committed"`
+	BatchesCommitted         int64                    `json:"batches_committed"`
+	DiagnosticsObserved      int64                    `json:"diagnostics_observed"`
+	DiagnosticsOmitted       int64                    `json:"diagnostics_omitted"`
+	RecentDiagnostics        []diagnosticPayload      `json:"recent_diagnostics,omitempty"`
+	ImportedSessions         []importedSessionPayload `json:"imported_sessions,omitempty"`
+	ImportResultsObserved    int64                    `json:"import_results_observed"`
+	UnchangedResultsObserved int64                    `json:"unchanged_results_observed"`
+	ImportResultsOmitted     int64                    `json:"import_results_omitted"`
+	Complete                 bool                     `json:"complete"`
+	Failure                  string                   `json:"failure,omitempty"`
 }
 
 type importedSessionPayload struct {
@@ -126,7 +127,8 @@ func importProgressJSON(progress app.ImportProgress) importProgressPayload {
 		Phase: progress.Phase, RecordsProcessed: progress.RecordsProcessed, EventsProcessed: progress.EventsProcessed,
 		RecordsCommitted: progress.RecordsCommitted, BatchesCommitted: progress.BatchesCommitted,
 		DiagnosticsObserved: progress.DiagnosticsObserved, DiagnosticsOmitted: progress.DiagnosticsOmitted,
-		ImportResultsObserved: progress.ImportResultsObserved, ImportResultsOmitted: progress.ImportResultsOmitted, Complete: progress.Complete,
+		ImportResultsObserved: progress.ImportResultsObserved, UnchangedResultsObserved: progress.UnchangedResultsObserved,
+		ImportResultsOmitted: progress.ImportResultsOmitted, Complete: progress.Complete,
 	}
 	for _, diagnostic := range progress.RecentDiagnostics {
 		payload.RecentDiagnostics = append(payload.RecentDiagnostics, diagnosticPayload{

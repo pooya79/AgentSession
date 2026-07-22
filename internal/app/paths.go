@@ -141,7 +141,11 @@ func platformClean(goos, value string) string {
 		return filepath.Clean(value)
 	}
 	value = strings.ReplaceAll(value, `\`, "/")
+	unc := strings.HasPrefix(value, "//")
 	cleaned := path.Clean(value)
+	if unc && !strings.HasPrefix(cleaned, "//") {
+		cleaned = "/" + cleaned
+	}
 	return strings.ReplaceAll(cleaned, "/", `\`)
 }
 
@@ -153,7 +157,12 @@ func platformJoin(goos string, elements ...string) string {
 	for i, element := range elements {
 		parts[i] = strings.ReplaceAll(element, `\`, "/")
 	}
-	return strings.ReplaceAll(path.Join(parts...), "/", `\`)
+	unc := len(parts) > 0 && strings.HasPrefix(parts[0], "//")
+	joined := path.Join(parts...)
+	if unc && !strings.HasPrefix(joined, "//") {
+		joined = "/" + joined
+	}
+	return strings.ReplaceAll(joined, "/", `\`)
 }
 
 func platformAbs(goos, value string) bool {

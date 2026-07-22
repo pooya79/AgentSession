@@ -42,22 +42,23 @@ const (
 
 // ImportProgress is an immutable cumulative snapshot of one application job.
 type ImportProgress struct {
-	RunID                 uint64
-	SourceID              model.SourceID
-	ActiveSourceID        model.SourceID
-	Phase                 ImportPhase
-	RecordsProcessed      int64
-	EventsProcessed       int64
-	RecordsCommitted      int64
-	BatchesCommitted      int64
-	DiagnosticsObserved   int64
-	DiagnosticsOmitted    int64
-	RecentDiagnostics     []model.Diagnostic
-	ImportedSessions      []ImportedSessionSummary
-	ImportResultsObserved int64
-	ImportResultsOmitted  int64
-	Complete              bool
-	Failure               error
+	RunID                    uint64
+	SourceID                 model.SourceID
+	ActiveSourceID           model.SourceID
+	Phase                    ImportPhase
+	RecordsProcessed         int64
+	EventsProcessed          int64
+	RecordsCommitted         int64
+	BatchesCommitted         int64
+	DiagnosticsObserved      int64
+	DiagnosticsOmitted       int64
+	RecentDiagnostics        []model.Diagnostic
+	ImportedSessions         []ImportedSessionSummary
+	ImportResultsObserved    int64
+	UnchangedResultsObserved int64
+	ImportResultsOmitted     int64
+	Complete                 bool
+	Failure                  error
 }
 
 // ImportedSessionSummary is the presentation-safe result of importing one
@@ -285,6 +286,11 @@ func (j *importJob) finish(results []importer.ImportResult, err error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	j.latest.ImportResultsObserved = int64(len(results))
+	for _, result := range results {
+		if result.Change == importer.SourceUnchanged {
+			j.latest.UnchangedResultsObserved++
+		}
+	}
 	start := 0
 	if len(results) > j.resultLimit {
 		start = len(results) - j.resultLimit

@@ -26,6 +26,14 @@ func TestResolveRuntimePaths(t *testing.T) {
 			want: RuntimePaths{DataDir: `C:\Users\test\AppData\Local\AgentSession`, ConfigDir: `C:\Users\test\AppData\Roaming\AgentSession`, DatabasePath: `C:\Users\test\AppData\Local\AgentSession\agentsession.db`},
 		},
 		{
+			name: "windows UNC appdata", inputs: PathInputs{GOOS: "windows", WorkingDir: `\\server\work`, LookupEnv: mapLookup(map[string]string{"LOCALAPPDATA": `\\server\profiles\local`, "APPDATA": `\\server\profiles\roaming`})},
+			want: RuntimePaths{DataDir: `\\server\profiles\local\AgentSession`, ConfigDir: `\\server\profiles\roaming\AgentSession`, DatabasePath: `\\server\profiles\local\AgentSession\agentsession.db`},
+		},
+		{
+			name: "windows UNC overrides", inputs: PathInputs{GOOS: "windows", WorkingDir: `C:\work`}, options: PathOptions{DataDir: `\\storage\state\.\data`, ConfigDir: `\\storage\state\config\..\settings`},
+			want: RuntimePaths{DataDir: `\\storage\state\data`, ConfigDir: `\\storage\state\settings`, DatabasePath: `\\storage\state\data\agentsession.db`},
+		},
+		{
 			name: "relative overrides", inputs: PathInputs{GOOS: "linux", WorkingDir: "/work"}, options: PathOptions{DataDir: "state", ConfigDir: "settings"},
 			want: RuntimePaths{DataDir: "/work/state", ConfigDir: "/work/settings", DatabasePath: "/work/state/agentsession.db"},
 		},

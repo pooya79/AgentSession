@@ -169,7 +169,7 @@ func TestImportManagerBoundsRecentDiagnosticsAndPreservesFailure(t *testing.T) {
 func TestImportManagerBoundsSafeResultSummaries(t *testing.T) {
 	manager, err := NewImportManager(func(_ context.Context, source importer.Source, _ importer.ProgressObserver) ([]importer.ImportResult, error) {
 		return []importer.ImportResult{
-			{SourceID: "logical-1", SessionID: "session-1", Checkpoint: importer.ImportCheckpoint{Cursor: []byte("secret")}},
+			{SourceID: "logical-1", SessionID: "session-1", Change: importer.SourceUnchanged, Checkpoint: importer.ImportCheckpoint{Cursor: []byte("secret")}},
 			{SourceID: "logical-2", SessionID: "session-2", Change: importer.SourceUnchanged},
 		}, nil
 	}, ImportManagerOptions{ImportResults: 1})
@@ -183,6 +183,9 @@ func TestImportManagerBoundsSafeResultSummaries(t *testing.T) {
 	terminal := terminalProgress(t, subscription)
 	if terminal.ImportResultsOmitted != 1 || len(terminal.ImportedSessions) != 1 || terminal.ImportedSessions[0].SessionID != "session-2" {
 		t.Fatalf("result summaries = %#v", terminal)
+	}
+	if terminal.ImportResultsObserved != 2 || terminal.UnchangedResultsObserved != 2 {
+		t.Fatalf("aggregate result counts = %#v", terminal)
 	}
 }
 
