@@ -2,7 +2,11 @@
 
 AgentSession is a lightweight, local-first explorer for coding-agent sessions. It turns local records from coding agents into repository-aware evidence about messages, commands, file changes, tests, failures, and outcomes.
 
-The project is currently an early runnable scaffold. Read-only session source discovery, authoritative import storage, verified bounded import orchestration, and adapters for Codex CLI, Claude Code, and OpenCode are implemented; search and analysis are still under development.
+The project provides a first local web workflow for discovering, importing,
+and browsing normalized session evidence. Read-only source discovery,
+authoritative import storage, verified bounded import orchestration, and
+adapters for Codex CLI, Claude Code, and OpenCode are implemented; search and
+analysis are still under development.
 
 ## Supported session sources
 
@@ -58,6 +62,21 @@ The web server listens on `127.0.0.1:8080` by default. Use `--addr` to select an
 
 ```bash
 go run ./cmd/agentsession web --addr 127.0.0.1:9000
+```
+
+The source and session panels load from the shared application services. Select
+one or more discovered sources to import them, then open an imported session to
+browse its paginated event summaries. Normalized payloads are fetched only when
+an event detail is opened; retained raw records are not exposed by the web UI.
+
+The web command accepts the same repeatable, typed source flags as the import
+command. Explicit paths supplement default discovery locations:
+
+```bash
+go run ./cmd/agentsession web \
+  --codex ./saved-codex-sessions \
+  --claude ./claude-session.jsonl \
+  --opencode ./opencode.db
 ```
 
 Discover the standard source locations and import every candidate:

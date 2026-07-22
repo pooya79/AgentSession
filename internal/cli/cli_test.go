@@ -33,6 +33,31 @@ func TestHelpListsImplementedCommands(t *testing.T) {
 	}
 }
 
+func TestWebHelpListsRepeatableSourceFlags(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if err := Execute(context.Background(), []string{"web", "--help"}, &stdout, &stderr, buildinfo.Info{}); err != nil {
+		t.Fatalf("Execute(web --help) error = %v", err)
+	}
+	output := stdout.String()
+	for _, flag := range []string{"--codex", "--claude", "--opencode", "repeatable"} {
+		if !strings.Contains(output, flag) {
+			t.Errorf("web help does not contain %q: %q", flag, output)
+		}
+	}
+}
+
+func TestWebSourceFlagsConfigureDiscoveryPaths(t *testing.T) {
+	options := &rootOptions{}
+	command := newWebCommand(options)
+	if err := command.Flags().Parse([]string{"--codex", "one", "--codex", "two", "--claude", "three", "--opencode", "four"}); err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	paths := configuredPaths(*options)
+	if len(paths) != 4 || paths[0].Path != "one" || paths[1].Path != "two" || paths[2].Path != "three" || paths[3].Path != "four" {
+		t.Fatalf("configured paths = %#v", paths)
+	}
+}
+
 func TestVersionCommands(t *testing.T) {
 	info := buildinfo.Info{Version: "v0.1.0", Commit: "abc123", Date: "2026-07-15"}
 	want := info.String() + "\n"

@@ -50,7 +50,7 @@ func TestHandler(t *testing.T) {
 		{name: "method", method: http.MethodPost, path: "/", status: http.StatusMethodNotAllowed, contentType: "text/plain", body: "Method Not Allowed"},
 	}
 
-	handler := NewHandler()
+	handler := NewHandler(nil)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
@@ -103,6 +103,65 @@ func TestImportProgressHandlerStreamsTerminalFailure(t *testing.T) {
 	}
 	if strings.Contains(body, "\ndata: failed") {
 		t.Fatalf("failure introduced an SSE data line: %q", body)
+	}
+}
+
+type observedRecorder struct {
+	*httptest.ResponseRecorder
+	flushed chan struct{}
+}
+
+func (r *observedRecorder) Flush() {
+	r.ResponseRecorder.Flush()
+	r.flushed <- struct{}{}
+}
+
+func TestImportProgressHandlerStreamsInitialProgressDiagnosticAndCompletion(t *testing.T) {
+	allowProgress := make(chan struct{})
+	progressSent := make(chan struct{})
+	allowCompletion := make(chan struct{})
+	manager, err := app.NewImportManager(func(_ context.Context, source importer.Source, observe importer.ProgressObserver) ([]importer.ImportResult, error) {
+		<-allowProgress
+		observe(importer.Progress{
+			SourceID: source.ID, ActiveSourceID: source.ID, Phase: importer.PhaseImporting,
+			RecordsProcessed: 2, EventsProcessed: 1, DiagnosticsObserved: 1,
+			Diagnostics: []model.Diagnostic{{Code: "partial", Severity: model.SeverityWarning, Message: "retained <unknown>"}},
+		})
+		close(progressSent)
+		<-allowCompletion
+		return []importer.ImportResult{{SourceID: source.ID, SessionID: "session-1", Change: importer.SourceNew}}, nil
+	}, app.ImportManagerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := testImportSource("snapshots")
+	handler := NewImportProgressHandler(func(*http.Request) (*app.ImportSubscription, error) {
+		subscription, _, err := manager.Request(source)
+		return subscription, err
+	})
+	recorder := &observedRecorder{ResponseRecorder: httptest.NewRecorder(), flushed: make(chan struct{}, 4)}
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/progress", nil))
+		close(done)
+	}()
+
+	<-recorder.flushed
+	close(allowProgress)
+	<-progressSent
+	<-recorder.flushed
+	close(allowCompletion)
+	<-recorder.flushed
+	<-done
+
+	body := recorder.Body.String()
+	for _, fragment := range []string{
+		`"phase":"queued"`, `"phase":"importing"`, `"records_processed":2`,
+		`"code":"partial"`, `retained \u003cunknown\u003e`, "event: completion", `"phase":"completed"`,
+	} {
+		if !strings.Contains(body, fragment) {
+			t.Errorf("SSE body = %q, want %q", body, fragment)
+		}
 	}
 }
 

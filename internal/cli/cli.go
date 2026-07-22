@@ -71,6 +71,7 @@ func newWebCommand(options *rootOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", addr, "listen address")
+	bindSourceFlags(cmd, options)
 	return cmd
 }
 
@@ -87,10 +88,14 @@ func newImportCommand(options *rootOptions) *cobra.Command {
 			})
 		},
 	}
+	bindSourceFlags(cmd, options)
+	return cmd
+}
+
+func bindSourceFlags(cmd *cobra.Command, options *rootOptions) {
 	cmd.Flags().StringArrayVar(&options.codex, "codex", nil, "Codex session file or directory (repeatable)")
 	cmd.Flags().StringArrayVar(&options.claude, "claude", nil, "Claude session file or directory (repeatable)")
 	cmd.Flags().StringArrayVar(&options.opencode, "opencode", nil, "OpenCode database file or directory (repeatable)")
-	return cmd
 }
 
 func withRuntime(ctx context.Context, options rootOptions, run func(*app.Runtime) error) (err error) {
