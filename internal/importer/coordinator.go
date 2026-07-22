@@ -310,7 +310,11 @@ func (c *Coordinator) reconcile(ctx context.Context, source Source, prepared Pre
 	}()
 
 	stagedResult := ImportResult{SourceID: source.ID, Change: result.Change}
-	sink := &batchSink{store: stagedCommitter{reconciliation}, options: c.options, source: source, result: &stagedResult, progress: progress, workPhase: PhaseReconciling}
+	sink := &batchSink{
+		store: stagedCommitter{reconciliation}, options: c.options, source: source,
+		result: &stagedResult, progress: progress, workPhase: PhaseReconciling,
+		deferCommitProgress: true,
+	}
 	if err := prepared.Reconcile(ctx, sink); err != nil {
 		return err
 	}
@@ -321,7 +325,7 @@ func (c *Coordinator) reconcile(ctx context.Context, source Source, prepared Pre
 	if err := reconciliation.Finalize(ctx); err != nil {
 		return fmt.Errorf("promote staged replacement: %w", err)
 	}
-	progress.publish(PhaseReconciling, nil)
+	progress.committed(stagedResult.RecordsCommitted, stagedResult.BatchesCommitted, PhaseReconciling)
 	finalized = true
 	result.SessionID = stagedResult.SessionID
 	result.Checkpoint = cloneCheckpoint(stagedResult.Checkpoint)
@@ -374,14 +378,15 @@ func (c *Coordinator) selectAdapter(ctx context.Context, source Source) (Adapter
 }
 
 type batchSink struct {
-	store     batchCommitter
-	options   Options
-	source    Source
-	state     SourceState
-	hasState  bool
-	result    *ImportResult
-	progress  *progressTracker
-	workPhase ProgressPhase
+	store               batchCommitter
+	options             Options
+	source              Source
+	state               SourceState
+	hasState            bool
+	result              *ImportResult
+	progress            *progressTracker
+	workPhase           ProgressPhase
+	deferCommitProgress bool
 
 	initial           model.Session
 	current           model.Session
@@ -542,7 +547,9 @@ func (s *batchSink) flush(ctx context.Context, session model.Session) error {
 	committedRecords := s.batchRecords
 	s.result.BatchesCommitted++
 	s.result.RecordsCommitted += s.batchRecords
-	s.progress.committed(committedRecords, s.workPhase)
+	if !s.deferCommitProgress {
+		s.progress.committed(committedRecords, 1, s.workPhase)
+	}
 	s.batch = ImportBatch{}
 	s.batchBytes = 0
 	s.batchRecords = 0

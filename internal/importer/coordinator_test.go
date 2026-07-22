@@ -209,6 +209,7 @@ type memoryImportStore struct {
 	commits      int
 	maxRecords   int
 	beforeCommit func(int, context.Context) error
+	finalizeErr  error
 }
 
 func newMemoryImportStore() *memoryImportStore {
@@ -280,6 +281,9 @@ func (r *memoryReconciliation) StageBatch(_ context.Context, batch ImportBatch) 
 func (r *memoryReconciliation) Finalize(ctx context.Context) error {
 	if r.aborted || len(r.batches) == 0 {
 		return errors.New("reconciliation is incomplete")
+	}
+	if r.store.finalizeErr != nil {
+		return r.store.finalizeErr
 	}
 	r.store.raw = map[model.RawRecordID]model.RawRecord{}
 	r.store.events = map[model.EventID]model.Event{}
@@ -468,6 +472,37 @@ func TestCoordinatorInterruptionDuringRecoveryKeepsOldGeneration(t *testing.T) {
 	result, err := coordinator.Import(context.Background(), fixture.source())
 	if err != nil || !result.Reconciled || result.Change != SourceMutated {
 		t.Fatalf("reconciliation retry = (%#v, %v)", result, err)
+	}
+}
+
+func TestCoordinatorFailedReconciliationPromotionDoesNotPublishCommittedCounts(t *testing.T) {
+	fixture := &coordinatorFixture{}
+	fixture.set("one\ntwo\n")
+	store := newMemoryImportStore()
+	coordinator, err := NewCoordinator(store, []Adapter{&streamingFixtureAdapter{fixture}}, nil, Options{BatchRecords: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coordinator.Import(context.Background(), fixture.source()); err != nil {
+		t.Fatal(err)
+	}
+
+	fixture.set("changed\ntwo\n")
+	store.finalizeErr = ErrCheckpointConflict
+	var progress []Progress
+	_, err = coordinator.ImportAllObserved(context.Background(), fixture.source(), func(update Progress) {
+		progress = append(progress, update)
+	})
+	if !errors.Is(err, ErrCheckpointConflict) {
+		t.Fatalf("ImportAllObserved() error = %v, want ErrCheckpointConflict", err)
+	}
+	if len(progress) == 0 {
+		t.Fatal("ImportAllObserved() emitted no progress")
+	}
+	for _, update := range progress {
+		if update.RecordsCommitted != 0 || update.BatchesCommitted != 0 {
+			t.Fatalf("failed promotion published committed counts: %#v", update)
+		}
 	}
 }
 

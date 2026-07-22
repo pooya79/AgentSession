@@ -89,13 +89,13 @@ func (t *progressTracker) processed(envelope RecordEnvelope, phase ProgressPhase
 	}
 }
 
-func (t *progressTracker) committed(records int64, nextPhase ProgressPhase) {
+func (t *progressTracker) committed(records, batches int64, nextPhase ProgressPhase) {
 	if t == nil || t.observer == nil {
 		return
 	}
 	t.mu.Lock()
 	t.progress.RecordsCommitted += records
-	t.progress.BatchesCommitted++
+	t.progress.BatchesCommitted += batches
 	t.progress.Phase = nextPhase
 	t.progress.Diagnostics = nil
 	snapshot := cloneProgress(t.progress)
