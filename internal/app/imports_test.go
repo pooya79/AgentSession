@@ -166,6 +166,26 @@ func TestImportManagerBoundsRecentDiagnosticsAndPreservesFailure(t *testing.T) {
 	}
 }
 
+func TestImportManagerBoundsSafeResultSummaries(t *testing.T) {
+	manager, err := NewImportManager(func(_ context.Context, source importer.Source, _ importer.ProgressObserver) ([]importer.ImportResult, error) {
+		return []importer.ImportResult{
+			{SourceID: "logical-1", SessionID: "session-1", Checkpoint: importer.ImportCheckpoint{Cursor: []byte("secret")}},
+			{SourceID: "logical-2", SessionID: "session-2", Change: importer.SourceUnchanged},
+		}, nil
+	}, ImportManagerOptions{ImportResults: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscription, _, err := manager.Request(managedSource("container"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal := terminalProgress(t, subscription)
+	if terminal.ImportResultsOmitted != 1 || len(terminal.ImportedSessions) != 1 || terminal.ImportedSessions[0].SessionID != "session-2" {
+		t.Fatalf("result summaries = %#v", terminal)
+	}
+}
+
 func TestImportManagerShutdownRejectsWorkAndWaitsForSettlement(t *testing.T) {
 	started := make(chan struct{})
 	canceled := make(chan struct{})

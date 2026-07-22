@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,12 +20,12 @@ func TestHelpListsImplementedCommands(t *testing.T) {
 	}
 
 	output := stdout.String()
-	for _, command := range []string{"web", "version"} {
+	for _, command := range []string{"import", "web", "version"} {
 		if !strings.Contains(output, command) {
 			t.Errorf("help output does not contain %q", command)
 		}
 	}
-	for _, command := range []string{"scan", "import", "doctor", "export"} {
+	for _, command := range []string{"scan", "doctor", "export"} {
 		if strings.Contains(output, command) {
 			t.Errorf("help output unexpectedly contains %q", command)
 		}
@@ -45,6 +47,66 @@ func TestVersionCommands(t *testing.T) {
 				t.Errorf("output = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestHelpAndVersionDoNotCreateDatabase(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "state")
+	for _, args := range [][]string{{"--data-dir", dataDir, "--help"}, {"--data-dir", dataDir, "version"}} {
+		var stdout, stderr bytes.Buffer
+		if err := Execute(context.Background(), args, &stdout, &stderr, buildinfo.Info{}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(dataDir); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%v created data directory: %v", args, err)
+		}
+	}
+}
+
+func TestImportWithNoSourcesSucceeds(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "missing-claude"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "missing-data"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config-home"))
+	var stdout, stderr bytes.Buffer
+	err := Execute(context.Background(), []string{"--data-dir", filepath.Join(root, "state"), "import"}, &stdout, &stderr, buildinfo.Info{})
+	if err != nil {
+		t.Fatalf("Execute(import) error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "No session sources were found.") {
+		t.Fatalf("output = %q", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "state", "agentsession.db")); err != nil {
+		t.Fatalf("database not created: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "config-home", "agentsession")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("config directory was created: %v", err)
+	}
+}
+
+func TestImportFailureDoesNotEchoRawFixtureText(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "missing-claude"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "missing-data"))
+	fixture := filepath.Join(root, "malicious.jsonl")
+	secret := "RAW_SECRET_SHOULD_NOT_BE_PRINTED"
+	if err := os.WriteFile(fixture, []byte(secret+"\x1b]52;c;c2VjcmV0\x07\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := Execute(context.Background(), []string{"--data-dir", filepath.Join(root, "state"), "import", "--codex", fixture}, &stdout, &stderr, buildinfo.Info{})
+	if err == nil {
+		t.Fatal("Execute(import) error = nil, want unsupported source failure")
+	}
+	if strings.Contains(stdout.String(), secret) || strings.Contains(err.Error(), secret) {
+		t.Fatalf("raw fixture text escaped boundary: output=%q error=%v", stdout.String(), err)
+	}
+	if !strings.Contains(stdout.String(), "failed to import") {
+		t.Fatalf("output = %q", stdout.String())
 	}
 }
 

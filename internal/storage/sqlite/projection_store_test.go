@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pooya79/AgentSession/internal/app"
 	"github.com/pooya79/AgentSession/internal/importer"
 	"github.com/pooya79/AgentSession/internal/model"
 	"github.com/pooya79/AgentSession/internal/projection"
@@ -175,7 +174,6 @@ func TestProjectionManagerSanitizesFailuresAndCoalescesWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := app.NewProjectionService(manager)
 	errorsOut := make(chan error, 2)
 	go func() { errorsOut <- manager.Retry(ctx, batch.Session.ID) }()
 	<-started
@@ -183,7 +181,7 @@ func TestProjectionManagerSanitizesFailuresAndCoalescesWork(t *testing.T) {
 	go func() {
 		close(joining)
 		kind := projection.KindSearch
-		errorsOut <- service.Rebuild(ctx, batch.Session.ID, &kind)
+		errorsOut <- manager.Rebuild(ctx, batch.Session.ID, &kind)
 	}()
 	<-joining
 	time.Sleep(10 * time.Millisecond)
@@ -215,7 +213,7 @@ func TestProjectionManagerSanitizesFailuresAndCoalescesWork(t *testing.T) {
 		t.Fatalf("canonical checkpoint after projection failure = (%#v, %v, %v)", checkpoint, found, err)
 	}
 	kind := projection.KindSearch
-	if err := service.Rebuild(ctx, batch.Session.ID, &kind); err != nil {
+	if err := manager.Rebuild(ctx, batch.Session.ID, &kind); err != nil {
 		t.Fatalf("forced Rebuild() error = %v", err)
 	}
 	if state := projectionState(t, store, batch.Session.ID, kind); !state.Usable() || calls.Load() != 3 {

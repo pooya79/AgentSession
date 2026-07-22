@@ -19,8 +19,9 @@ The project is currently an early runnable scaffold. Read-only session source di
   into one stable logical source per OpenCode session. Complete typed rows,
   including unknown columns and exact TEXT/BLOB values, are retained.
 
-Discovery identifies candidates but does not yet expose a user-facing import
-command; application-level import composition remains under development.
+The application composes discovery and all adapters behind one shared runtime.
+Canonical imports are stored locally in SQLite and can be started explicitly
+from the command line.
 
 ## Session source discovery
 
@@ -59,6 +60,28 @@ The web server listens on `127.0.0.1:8080` by default. Use `--addr` to select an
 go run ./cmd/agentsession web --addr 127.0.0.1:9000
 ```
 
+Discover the standard source locations and import every candidate:
+
+```bash
+go run ./cmd/agentsession import
+```
+
+Additional source files or directories can be supplied with repeatable typed
+flags. They supplement the standard locations and overlapping candidates are
+deduplicated:
+
+```bash
+go run ./cmd/agentsession import \
+  --codex ./saved-codex-sessions \
+  --claude ./claude-session.jsonl \
+  --opencode ./opencode.db
+```
+
+By default, the index is stored in the platform application-data directory as
+`agentsession.db`. Global `--data-dir` and `--config-dir` flags override the
+resolved directories; relative overrides are resolved from the working
+directory. Help and version commands do not create either directory.
+
 Print build information:
 
 ```bash
@@ -80,7 +103,7 @@ make web       # run the web interface
 
 ## Planned architecture
 
-AgentSession is designed as a modular Go monolith. Source-specific adapters will stream records into a canonical event model, followed by deterministic analysis and SQLite-backed search. The TUI and web interface will share the same application services.
+AgentSession is designed as a modular Go monolith. Source-specific adapters stream records into a canonical event model, followed by deterministic analysis and SQLite-backed search. The TUI, web interface, and import command share the same application runtime and services.
 
 See [the architecture guide](docs/ARCHITECTURE.md) for the target system design, [ADR-001](docs/decisions/001-modular-go-application.md) for the decision behind it, and [AGENTS.md](AGENTS.md) for contribution guidance.
 
