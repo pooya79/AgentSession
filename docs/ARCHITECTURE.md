@@ -209,7 +209,16 @@ type Adapter interface {
     Name() string
     Version() model.Version
     Probe(ctx context.Context, source Source) (ProbeResult, error)
+}
+
+type StreamAdapter interface {
+    Adapter
     Prepare(ctx context.Context, source Source) (PreparedSource, error)
+}
+
+type ContainerAdapter interface {
+    Adapter
+    PrepareContainer(ctx context.Context, source Source) (PreparedContainer, error)
 }
 
 type PreparedSource interface {
@@ -251,6 +260,14 @@ serialization. Offset or sequence equality never proves continuity. The
 prepared view classifies unchanged input, append, truncation, replacement, and
 mutation before the cursor, then performs resume or reconciliation against the
 same view.
+
+A physical database may be a container rather than a canonical session. A
+container adapter holds one read-only snapshot and enumerates deterministic
+logical child sources, each with the ordinary `PreparedSource` lifecycle.
+The coordinator returns one result per child. Only after every child succeeds
+does storage publish the new container inventory and transactionally delete
+AgentSession-owned data for logical children that disappeared. See
+[ADR-006](decisions/006-container-logical-sources.md).
 
 Record diagnostics retain their envelope order as a zero-based per-record
 ordinal. The sink persists them incrementally in the same transaction as their

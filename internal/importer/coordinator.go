@@ -106,6 +106,11 @@ func NewCoordinator(store ImportStore, adapters []Adapter, projector Projector, 
 		if _, exists := seen[identity]; exists {
 			return nil, fmt.Errorf("import coordinator: duplicate adapter %q version %q", adapter.Name(), adapter.Version())
 		}
+		_, stream := adapter.(StreamAdapter)
+		_, container := adapter.(ContainerAdapter)
+		if !stream && !container {
+			return nil, fmt.Errorf("import coordinator: adapter %q version %q has no preparation capability", adapter.Name(), adapter.Version())
+		}
 		seen[identity] = struct{}{}
 	}
 	return &Coordinator{store: store, adapters: append([]Adapter(nil), adapters...), projector: projector, options: options}, nil
@@ -124,11 +129,11 @@ func (c *Coordinator) Import(ctx context.Context, source Source) (result ImportR
 	if err != nil {
 		return result, err
 	}
-	state, found, err := c.store.SourceState(ctx, source.ID)
-	if err != nil {
-		return result, fmt.Errorf("import source %q: load durable state: %w", source.ID, err)
+	streamAdapter, ok := adapter.(StreamAdapter)
+	if !ok {
+		return result, fmt.Errorf("import source %q with adapter %q: container source requires ImportAll", source.ID, adapter.Name())
 	}
-	prepared, err := adapter.Prepare(ctx, source)
+	prepared, err := streamAdapter.Prepare(ctx, source)
 	if err != nil {
 		return result, fmt.Errorf("import source %q with adapter %q: prepare read-only view: %w", source.ID, adapter.Name(), err)
 	}
@@ -137,7 +142,85 @@ func (c *Coordinator) Import(ctx context.Context, source Source) (result ImportR
 			err = errors.Join(err, fmt.Errorf("import source %q with adapter %q: close prepared view: %w", source.ID, adapter.Name(), closeErr))
 		}
 	}()
+	return c.importPrepared(ctx, source, adapter, prepared)
+}
 
+// ImportAll imports either one stream source or every logical child in a
+// container snapshot. Container membership is published only after all child
+// imports have completed successfully.
+func (c *Coordinator) ImportAll(ctx context.Context, source Source) (results []ImportResult, err error) {
+	if err := source.Validate(); err != nil {
+		return nil, fmt.Errorf("import source: %w", err)
+	}
+	adapter, _, err := c.selectAdapter(ctx, source)
+	if err != nil {
+		return nil, err
+	}
+	if containerAdapter, ok := adapter.(ContainerAdapter); ok {
+		membershipStore, ok := c.store.(ContainerMembershipStore)
+		if !ok {
+			return nil, fmt.Errorf("import source %q with adapter %q: store does not support container membership", source.ID, adapter.Name())
+		}
+		container, err := containerAdapter.PrepareContainer(ctx, source)
+		if err != nil {
+			return nil, fmt.Errorf("import source %q with adapter %q: prepare read-only container: %w", source.ID, adapter.Name(), err)
+		}
+		defer func() {
+			if closeErr := container.Close(); closeErr != nil {
+				err = errors.Join(err, fmt.Errorf("import source %q with adapter %q: close prepared container: %w", source.ID, adapter.Name(), closeErr))
+			}
+		}()
+		children, err := container.Children(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("import source %q with adapter %q: enumerate logical sources: %w", source.ID, adapter.Name(), err)
+		}
+		members := make([]model.SourceID, 0, len(children))
+		results = make([]ImportResult, 0, len(children))
+		for i, child := range children {
+			if child.Prepared == nil {
+				return nil, fmt.Errorf("import source %q with adapter %q: logical source %d has no prepared view", source.ID, adapter.Name(), i)
+			}
+			if err := child.Source.Validate(); err != nil {
+				return nil, fmt.Errorf("import source %q with adapter %q: logical source %d: %w", source.ID, adapter.Name(), i, err)
+			}
+			result, err := c.importPrepared(ctx, child.Source, adapter, child.Prepared)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, result)
+			members = append(members, child.Source.ID)
+		}
+		if err := membershipStore.SyncContainerMembers(ctx, source.ID, members); err != nil {
+			return nil, fmt.Errorf("import source %q with adapter %q: synchronize logical-source inventory: %w", source.ID, adapter.Name(), err)
+		}
+		return results, nil
+	}
+	streamAdapter, ok := adapter.(StreamAdapter)
+	if !ok {
+		return nil, fmt.Errorf("import source %q with adapter %q: adapter has no preparation capability", source.ID, adapter.Name())
+	}
+	prepared, err := streamAdapter.Prepare(ctx, source)
+	if err != nil {
+		return nil, fmt.Errorf("import source %q with adapter %q: prepare read-only view: %w", source.ID, adapter.Name(), err)
+	}
+	defer func() {
+		if closeErr := prepared.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("import source %q with adapter %q: close prepared view: %w", source.ID, adapter.Name(), closeErr))
+		}
+	}()
+	result, err := c.importPrepared(ctx, source, adapter, prepared)
+	if err != nil {
+		return nil, err
+	}
+	return []ImportResult{result}, nil
+}
+
+func (c *Coordinator) importPrepared(ctx context.Context, source Source, adapter Adapter, prepared PreparedSource) (result ImportResult, err error) {
+	result.SourceID = source.ID
+	state, found, err := c.store.SourceState(ctx, source.ID)
+	if err != nil {
+		return result, fmt.Errorf("import source %q: load durable state: %w", source.ID, err)
+	}
 	change := SourceNew
 	if found {
 		change, err = prepared.Verify(ctx, cloneSourceState(state))
@@ -478,11 +561,13 @@ func cloneSession(session model.Session) model.Session {
 		endedAt := *session.EndedAt
 		clone.EndedAt = &endedAt
 	}
-	clone.Diagnostics = make([]model.Diagnostic, len(session.Diagnostics))
-	for i, diagnostic := range session.Diagnostics {
-		clone.Diagnostics[i] = diagnostic
-		clone.Diagnostics[i].EventIDs = append([]model.EventID(nil), diagnostic.EventIDs...)
-		clone.Diagnostics[i].RawRecordIDs = append([]model.RawRecordID(nil), diagnostic.RawRecordIDs...)
+	if session.Diagnostics != nil {
+		clone.Diagnostics = make([]model.Diagnostic, len(session.Diagnostics))
+		for i, diagnostic := range session.Diagnostics {
+			clone.Diagnostics[i] = diagnostic
+			clone.Diagnostics[i].EventIDs = append([]model.EventID(nil), diagnostic.EventIDs...)
+			clone.Diagnostics[i].RawRecordIDs = append([]model.RawRecordID(nil), diagnostic.RawRecordIDs...)
+		}
 	}
 	return clone
 }

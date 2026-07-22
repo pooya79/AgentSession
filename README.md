@@ -2,7 +2,7 @@
 
 AgentSession is a lightweight, local-first explorer for coding-agent sessions. It turns local records from coding agents into repository-aware evidence about messages, commands, file changes, tests, failures, and outcomes.
 
-The project is currently an early runnable scaffold. Read-only session source discovery, authoritative import storage, verified bounded import orchestration, and a Codex CLI rollout adapter are implemented; search and analysis are still under development.
+The project is currently an early runnable scaffold. Read-only session source discovery, authoritative import storage, verified bounded import orchestration, and adapters for Codex CLI, Claude Code, and OpenCode are implemented; search and analysis are still under development.
 
 ## Supported session sources
 
@@ -14,6 +14,10 @@ The project is currently an early runnable scaffold. Read-only session source di
   content in source order, retain snapshots, sidechains, malformed records,
   and unknown variants, and use the same verified append and reconciliation
   guarantees.
+- OpenCode SQLite databases using the current `session`/`message`/`part`
+  schema. Each database is read through one query-only snapshot and expands
+  into one stable logical source per OpenCode session. Complete typed rows,
+  including unknown columns and exact TEXT/BLOB values, are retained.
 
 Discovery identifies candidates but does not yet expose a user-facing import
 command; application-level import composition remains under development.
