@@ -1,29 +1,221 @@
 package web
 
+import (
+	"github.com/pooya79/AgentSession/internal/app"
+	"github.com/pooya79/AgentSession/internal/model"
+)
+
 // sourceText is the mandatory escaped-text boundary for untrusted web content.
 templ sourceText(content string) {
 	{ content }
 }
 
-templ indexPage() {
+templ document(title string) {
 	<!DOCTYPE html>
 	<html lang="en">
 		<head>
 			<meta charset="utf-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
-			<title>AgentSession</title>
+			<meta name="htmx-config" content="{&quot;includeIndicatorStyles&quot;:false}"/>
+			<title>{ title }</title>
 			<link rel="stylesheet" href="/assets/styles.css"/>
+			<script src="/assets/htmx.min.js" defer></script>
+			<script src="/assets/imports.js" defer></script>
 		</head>
 		<body>
-			<main>
-				<p class="eyebrow">Local-first session evidence</p>
-				<h1>AgentSession</h1>
-				<p class="lede">Understand what your coding agent actually did.</p>
-				<section aria-labelledby="empty-title">
-					<h2 id="empty-title">No sessions indexed yet</h2>
-					<p>Discovery and importing are coming next. AgentSession will keep source sessions read-only and analysis on this machine.</p>
-				</section>
-			</main>
+			{ children... }
 		</body>
 	</html>
+}
+
+templ indexPage() {
+	@document("AgentSession") {
+		<header class="site-header">
+			<a class="brand" href="/">AgentSession</a>
+			<span>Local session evidence</span>
+		</header>
+		<main>
+			<section class="hero">
+				<p class="eyebrow">Read-only discovery and import</p>
+				<h1>Understand what your coding agent actually did.</h1>
+				<p class="lede">Choose local session sources, import them into AgentSession’s private index, and inspect the normalized evidence.</p>
+			</section>
+			<div class="workspace">
+				<section aria-labelledby="sources-title">
+					<h2 id="sources-title">Session sources</h2>
+					<div id="sources-panel" hx-get="/fragments/sources" hx-trigger="load" hx-swap="innerHTML">
+						<p class="muted" role="status">Discovering local sources…</p>
+					</div>
+				</section>
+				<section aria-labelledby="sessions-title">
+					<div class="section-heading">
+						<h2 id="sessions-title">Imported sessions</h2>
+						<button class="quiet" type="button" hx-get="/fragments/sessions" hx-target="#sessions-panel" hx-swap="innerHTML">Refresh</button>
+					</div>
+					<div id="sessions-panel" hx-get="/fragments/sessions" hx-trigger="load" hx-swap="innerHTML">
+						<p class="muted" role="status">Loading imported sessions…</p>
+					</div>
+				</section>
+			</div>
+		</main>
+	}
+}
+
+templ sourcesFragment(discovery app.SourceDiscovery) {
+	<div class={ "fragment-state state-" + string(discovery.State) }>
+		if discovery.State == app.EvidenceUnavailable {
+			<p class="notice warning" role="status">Source discovery is unavailable. Review the diagnostics below.</p>
+		} else if len(discovery.Sources) == 0 {
+			<p class="notice" role="status">No supported session sources were found in the default or configured locations.</p>
+		} else {
+			<form id="import-form">
+				<div class="source-list">
+					for _, source := range discovery.Sources {
+						<label class="source-row">
+							<input type="checkbox" name="source" value={ string(source.ID) }/>
+							<span class="source-copy">
+								<strong>{ source.Kind }</strong>
+								<code>{ source.Path }</code>
+								<small>{ source.Origin }</small>
+							</span>
+							<span class="source-status" data-import-status={ string(source.ID) } aria-live="polite">Ready</span>
+						</label>
+					}
+				</div>
+				<div class="actions">
+					<button type="submit">Import selected</button>
+					<span class="muted">Up to two imports run at once.</span>
+				</div>
+			</form>
+		}
+		if len(discovery.Diagnostics) > 0 {
+			<div class="diagnostics" aria-label="Discovery diagnostics">
+				<h3>Discovery diagnostics</h3>
+				<ul>
+					for _, diagnostic := range discovery.Diagnostics {
+						<li>
+							<strong>{ string(diagnostic.Severity) }: { diagnostic.Code }</strong>
+							<span>{ diagnostic.Message }</span>
+							if diagnostic.Path != "" {
+								<code>{ diagnostic.Path }</code>
+							}
+						</li>
+					}
+				</ul>
+			</div>
+		}
+	</div>
+}
+
+templ sessionsFragment(page app.SessionPage, first bool) {
+	if first && len(page.Sessions) == 0 {
+		<p class="notice" role="status">No sessions have been imported yet.</p>
+	} else {
+		<div class="session-list">
+			for _, session := range page.Sessions {
+				<a class={ "session-card state-" + string(session.State) } href={ templ.URL(timelineURL(session.ID)) }>
+					<span class="session-title">{ sessionTitle(session) }</span>
+					if session.Summary != "" {
+						<span class="session-summary">{ session.Summary }</span>
+					}
+					<span class="metadata">
+						{ formatTime(session.StartedAt) } · { formatCount(session.EventCount, "event") } · { string(session.State) }
+					</span>
+				</a>
+			}
+		</div>
+		if page.NextCursor != "" {
+			<button class="load-more" hx-get={ sessionsFragmentURL(page.NextCursor) } hx-target="this" hx-swap="outerHTML">Load more sessions</button>
+		}
+	}
+}
+
+templ timelinePage(sessionID model.SessionID, page app.TimelinePage) {
+	@document("Timeline · AgentSession") {
+		<header class="site-header">
+			<a class="brand" href="/">AgentSession</a>
+			<a href="/">All sessions</a>
+		</header>
+		<main>
+			<section class="timeline-heading">
+				<p class="eyebrow">Session timeline</p>
+				<h1 class="session-id">{ string(sessionID) }</h1>
+				<p class="muted">Normalized summaries are loaded first. Open an event to fetch its normalized payload.</p>
+			</section>
+			<section aria-label="Session events">
+				@timelineEvidenceState(page)
+				<div class="timeline">
+					@timelineFragment(sessionID, page)
+				</div>
+			</section>
+		</main>
+	}
+}
+
+templ timelineEvidenceState(page app.TimelinePage) {
+	if page.State == app.EvidenceUnavailable {
+		<p class="notice warning">Timeline evidence is unavailable. Diagnostics were retained, but no normalized events are available.</p>
+	} else if page.State == app.EvidencePartial {
+		<p class="notice warning">This timeline contains partial evidence. Review the diagnostics before drawing conclusions.</p>
+	}
+	@diagnosticSynopsis(page.Diagnostics)
+}
+
+templ timelineFragment(sessionID model.SessionID, page app.TimelinePage) {
+	if len(page.Events) == 0 && page.NextCursor == "" {
+		<p class="notice">No normalized events are available for this session.</p>
+	} else {
+		for _, event := range page.Events {
+			<article class="event" data-kind={ string(event.Kind) }>
+				<div class="event-marker" aria-hidden="true"></div>
+				<div class="event-card">
+					<div class="event-heading">
+						<span class="event-kind">{ string(event.Kind) }</span>
+						<span class="metadata">#{ strconvFormatInt(event.Sequence) } · { formatTime(event.Timestamp) }</span>
+					</div>
+					<p>{ event.Summary }</p>
+					<button class="quiet" type="button" hx-get={ eventFragmentURL(sessionID, event.ID) } hx-target="next .event-detail" hx-swap="innerHTML">Load event detail</button>
+					<div class="event-detail" aria-live="polite"></div>
+				</div>
+			</article>
+		}
+		if page.NextCursor != "" {
+			<button class="load-more" hx-get={ timelineFragmentURL(sessionID, page.NextCursor) } hx-target="this" hx-swap="outerHTML">Load more events</button>
+		}
+	}
+}
+
+templ eventFragment(detail app.EventDetail, payload string) {
+	<div class={ "detail-panel state-" + string(detail.State) }>
+		if detail.State == app.EvidenceUnavailable || detail.Payload == nil {
+			<p class="notice warning">The normalized payload is unavailable. This is not evidence of success.</p>
+		} else {
+			<h3>Normalized payload</h3>
+			<pre>{ payload }</pre>
+		}
+		@diagnosticSynopsis(detail.Diagnostics)
+	</div>
+}
+
+templ diagnosticSynopsis(synopsis app.DiagnosticSynopsis) {
+	if synopsis.Total > 0 {
+		<div class="diagnostics">
+			<h3>{ formatCount(synopsis.Total, "diagnostic") }</h3>
+			<ul>
+				for _, diagnostic := range synopsis.Diagnostics {
+					@diagnosticItem(diagnostic)
+				}
+			</ul>
+			if synopsis.Omitted > 0 {
+				<p class="muted">{ formatCount(synopsis.Omitted, "additional diagnostic") } omitted.</p>
+			}
+		</div>
+	}
+}
+
+templ diagnosticItem(diagnostic model.Diagnostic) {
+	<li>
+		<strong>{ string(diagnostic.Severity) }: { diagnostic.Code }</strong>
+		<span>{ diagnostic.Message }</span>
+	</li>
 }
