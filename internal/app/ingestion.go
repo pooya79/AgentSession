@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/pooya79/AgentSession/internal/model"
@@ -78,7 +79,7 @@ func (r *Runtime) StartImport(ctx context.Context, sourceID model.SourceID) (Imp
 	}
 	subscription, joined, err := r.RequestImport(sourceID)
 	if err != nil {
-		if _, found := r.DiscoveredSource(sourceID); !found {
+		if errors.Is(err, ErrSourceNotFound) {
 			return ImportStart{State: EvidenceNotFound}, nil
 		}
 		return ImportStart{}, fmt.Errorf("start import for source %q: %w", sourceID, err)

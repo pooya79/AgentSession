@@ -312,7 +312,7 @@ func (j *importJob) finish(results []importer.ImportResult, err error) {
 	}
 	for _, result := range results[start:] {
 		j.latest.ImportedSessions = append(j.latest.ImportedSessions, ImportedSessionSummary{
-			SourceID: result.SourceID, SessionID: result.SessionID, Change: SourceChange(result.Change),
+			SourceID: result.SourceID, SessionID: result.SessionID, Change: applicationSourceChange(result.Change),
 			RecordsCommitted: result.RecordsCommitted, BatchesCommitted: result.BatchesCommitted,
 			CanonicalChanged: result.CanonicalChanged, Reconciled: result.Reconciled,
 			ProjectionWarning: result.ProjectionError != nil,
@@ -330,6 +330,19 @@ func (j *importJob) finish(results []importer.ImportResult, err error) {
 	for subscription, updates := range j.subscribers {
 		close(updates)
 		delete(j.subscribers, subscription)
+	}
+}
+
+func applicationSourceChange(change importer.SourceChange) SourceChange {
+	switch change {
+	case importer.SourceTruncated:
+		return SourceTruncated
+	case importer.SourceReplaced:
+		return SourceReplaced
+	case importer.SourceMutated:
+		return SourceMutated
+	default:
+		return SourceChange(change)
 	}
 }
 

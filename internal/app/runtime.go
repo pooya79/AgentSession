@@ -55,6 +55,10 @@ type BatchImportError struct {
 	ImportFailures    int
 }
 
+// ErrSourceNotFound means an import ID is absent from the latest successful
+// discovery catalog.
+var ErrSourceNotFound = errors.New("discovered source was not found")
+
 func (e *BatchImportError) Error() string {
 	return fmt.Sprintf("import completed with %d discovery failure(s) and %d source failure(s)", e.DiscoveryFailures, e.ImportFailures)
 }
@@ -240,7 +244,7 @@ func (r *Runtime) RequestImport(sourceID model.SourceID) (*ImportSubscription, b
 	discovered, ok := r.catalog[sourceID]
 	r.mu.RUnlock()
 	if !ok {
-		return nil, false, fmt.Errorf("request import: discovered source %q was not found", sourceID)
+		return nil, false, fmt.Errorf("request import for source %q: %w", sourceID, ErrSourceNotFound)
 	}
 	source, err := importerSource(discovered)
 	if err != nil {

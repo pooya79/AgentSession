@@ -14,6 +14,15 @@ import (
 
 var _ storagecontract.ExplorationReader = (*ImportStore)(nil)
 
+// Session timestamps are stored as UTC RFC3339Nano text, whose optional
+// fractional component is not lexically sortable. This expression pads that
+// component so both ordering and keyset comparisons are chronological.
+const sessionStartSortKey = `CASE
+	WHEN s.started_at IS NULL THEN NULL
+	WHEN instr(s.started_at, '.') = 0 THEN substr(s.started_at, 1, 19) || '.000000000Z'
+	ELSE substr(s.started_at, 1, 20) || substr(substr(s.started_at, 21, length(s.started_at) - 21) || '000000000', 1, 9) || 'Z'
+END`
+
 func (s *ImportStore) ListSessions(ctx context.Context, after *storagecontract.SessionCursor, limit int) ([]storagecontract.SessionSummary, bool, error) {
 	if limit <= 0 {
 		return nil, false, errors.New("sqlite exploration: list sessions: limit must be positive")
@@ -27,12 +36,12 @@ func (s *ImportStore) ListSessions(ctx context.Context, after *storagecontract.S
 			query += ` WHERE s.started_at IS NULL AND s.id > ?`
 			args = append(args, after.ID)
 		} else {
-			encoded := after.StartedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
-			query += ` WHERE s.started_at IS NULL OR s.started_at < ? OR (s.started_at = ? AND s.id > ?)`
+			encoded := after.StartedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")
+			query += ` WHERE s.started_at IS NULL OR ` + sessionStartSortKey + ` < ? OR (` + sessionStartSortKey + ` = ? AND s.id > ?)`
 			args = append(args, encoded, encoded, after.ID)
 		}
 	}
-	query += ` GROUP BY s.id ORDER BY s.started_at DESC NULLS LAST, s.id ASC LIMIT ?`
+	query += ` GROUP BY s.id ORDER BY ` + sessionStartSortKey + ` DESC NULLS LAST, s.id ASC LIMIT ?`
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

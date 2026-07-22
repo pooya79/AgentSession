@@ -230,6 +230,9 @@ func TestRuntimeTimedOutShutdownRemainsRetryable(t *testing.T) {
 	if _, err := runtime.Discover(context.Background()); !errors.Is(err, ErrShuttingDown) {
 		t.Fatalf("Discover during shutdown = %v", err)
 	}
+	if start, err := runtime.StartImport(context.Background(), "unknown-during-shutdown"); !errors.Is(err, ErrShuttingDown) || start.State == EvidenceNotFound {
+		t.Fatalf("StartImport(unknown) during shutdown = (%#v, %v), want shutdown error", start, err)
+	}
 	close(settle)
 	if err := runtime.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
