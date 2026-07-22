@@ -165,7 +165,11 @@ SQLite queries                  FTS5 queries
              presentation rendering
 ```
 
-Presentation packages request repositories, sessions, timeline summaries, event details, file impact, commands, findings, and search results through application services. Timeline lists return lightweight records such as:
+Presentation packages request imported sessions, timeline summaries, and event
+details through the shared application `Explorer`; discovery and import
+progress use the shared `Ingestion` boundary. The first exploration path does
+not depend on search, Git, analysis, or exports. Timeline lists return bounded
+pages of lightweight records such as:
 
 ```go
 type EventSummary struct {
@@ -176,7 +180,14 @@ type EventSummary struct {
 }
 ```
 
-Large command output, tool output, patches, normalized payloads, and retained raw data are fetched only when an event detail view requires them. Presentation code does not interpret raw source records, calculate outcomes, or issue Git commands.
+Session pages use opaque recent-first keyset cursors. Timeline cursors advance
+by preserved source sequence. Large command output, tool output, patches, and
+other normalized payloads are fetched only when an event detail request opts
+in. Retained raw data is not exposed by this service. Complete, partial,
+unavailable, and not-found states preserve the distinction between clean empty
+evidence, recoverable diagnostics, absent usable evidence, and missing IDs.
+Presentation code does not interpret raw source records, calculate outcomes,
+or issue Git commands. See [ADR-010](decisions/010-bounded-evidence-exploration-services.md).
 
 ## Components and ownership
 

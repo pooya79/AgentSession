@@ -189,6 +189,25 @@ func TestImportManagerBoundsSafeResultSummaries(t *testing.T) {
 	}
 }
 
+func TestImportManagerMapsImporterSourceChangesToApplicationValues(t *testing.T) {
+	tests := []struct {
+		importer importer.SourceChange
+		want     SourceChange
+	}{
+		{importer.SourceNew, SourceNew},
+		{importer.SourceUnchanged, SourceUnchanged},
+		{importer.SourceAppend, SourceAppend},
+		{importer.SourceTruncated, SourceTruncated},
+		{importer.SourceReplaced, SourceReplaced},
+		{importer.SourceMutated, SourceMutated},
+	}
+	for _, test := range tests {
+		if got := applicationSourceChange(test.importer); got != test.want {
+			t.Errorf("applicationSourceChange(%q) = %q, want %q", test.importer, got, test.want)
+		}
+	}
+}
+
 func TestImportManagerShutdownRejectsWorkAndWaitsForSettlement(t *testing.T) {
 	started := make(chan struct{})
 	canceled := make(chan struct{})

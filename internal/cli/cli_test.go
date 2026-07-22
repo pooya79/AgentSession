@@ -11,7 +11,6 @@ import (
 
 	"github.com/pooya79/AgentSession/internal/app"
 	"github.com/pooya79/AgentSession/internal/buildinfo"
-	"github.com/pooya79/AgentSession/internal/importer"
 )
 
 func TestHelpListsImplementedCommands(t *testing.T) {
@@ -133,7 +132,7 @@ func TestWriteImportResultReportsCommittedSessionsFromFailedSource(t *testing.T)
 	writeImportResult(&output, app.BatchImportResult{Imports: []app.ImportProgress{{
 		SourceID: "container", Failure: errors.New("close prepared source"), ImportResultsObserved: 1,
 		ImportedSessions: []app.ImportedSessionSummary{{
-			SourceID: "logical", SessionID: "session-1", Change: importer.SourceNew, RecordsCommitted: 2, BatchesCommitted: 1,
+			SourceID: "logical", SessionID: "session-1", Change: app.SourceNew, RecordsCommitted: 2, BatchesCommitted: 1,
 		}},
 	}}})
 
@@ -153,7 +152,7 @@ func TestWriteImportResultUsesAggregateUnchangedCount(t *testing.T) {
 	var output bytes.Buffer
 	writeImportResult(&output, app.BatchImportResult{Imports: []app.ImportProgress{{
 		SourceID: "container", ImportResultsObserved: 100, UnchangedResultsObserved: 100, ImportResultsOmitted: 36,
-		ImportedSessions: []app.ImportedSessionSummary{{SourceID: "logical-100", SessionID: "session-100", Change: importer.SourceUnchanged}},
+		ImportedSessions: []app.ImportedSessionSummary{{SourceID: "logical-100", SessionID: "session-100", Change: app.SourceUnchanged}},
 	}}})
 
 	if got := output.String(); !strings.Contains(got, "Imported 100 session(s) from 1 source(s); 100 unchanged; 0 source failure(s).") {

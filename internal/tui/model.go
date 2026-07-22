@@ -85,14 +85,12 @@ func terminalView(content string) tea.View {
 	return tea.NewView(sanitization.Terminal(content))
 }
 
-// Run opens the interactive terminal interface.
-
 // Run opens the interactive terminal interface using application-owned
-// services. Navigation does not yet consume the runtime, but accepting it here
+// services. Navigation does not yet consume them, but accepting the boundary here
 // keeps infrastructure composition out of the presentation layer.
-func Run(runtime *app.Runtime) error {
-	if runtime == nil {
-		return fmt.Errorf("tui: runtime is required")
+func Run(services app.Services) error {
+	if services == nil {
+		return fmt.Errorf("tui: application services are required")
 	}
 	_, err := tea.NewProgram(New()).Run()
 	return err

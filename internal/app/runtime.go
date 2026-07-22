@@ -55,6 +55,10 @@ type BatchImportError struct {
 	ImportFailures    int
 }
 
+// ErrSourceNotFound means an import ID is absent from the latest successful
+// discovery catalog.
+var ErrSourceNotFound = errors.New("discovered source was not found")
+
 func (e *BatchImportError) Error() string {
 	return fmt.Sprintf("import completed with %d discovery failure(s) and %d source failure(s)", e.DiscoveryFailures, e.ImportFailures)
 }
@@ -66,6 +70,7 @@ type Runtime struct {
 	discoverer  *discovery.Discoverer
 	store       *sqlitestore.ImportStore
 	imports     *ImportManager
+	explorer    Explorer
 	projections *ProjectionService
 
 	mu       sync.RWMutex
@@ -129,6 +134,12 @@ func OpenRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("open runtime: %w", err)
 	}
+	explorer, err := NewExplorer(store)
+	if err != nil {
+		_ = manager.Shutdown(context.Background())
+		_ = db.Close()
+		return nil, fmt.Errorf("open runtime: %w", err)
+	}
 
 	var discoverer *discovery.Discoverer
 	if config.DiscoveryInputs != nil {
@@ -144,7 +155,7 @@ func OpenRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		return nil, fmt.Errorf("open runtime: %w", err)
 	}
 	return &Runtime{
-		paths: paths, db: db, discoverer: discoverer, store: store, imports: manager,
+		paths: paths, db: db, discoverer: discoverer, store: store, imports: manager, explorer: explorer,
 		projections: NewProjectionService(projectionManager), catalog: make(map[model.SourceID]discovery.Source),
 	}, nil
 }
@@ -167,6 +178,19 @@ func (r *Runtime) Reader() storage.SessionReader            { return r.store }
 func (r *Runtime) AuthoritativeReader() AuthoritativeReader { return r.store }
 func (r *Runtime) ProjectionService() *ProjectionService    { return r.projections }
 func (r *Runtime) Projections() *ProjectionService          { return r.projections }
+func (r *Runtime) Explorer() Explorer                       { return r.explorer }
+
+func (r *Runtime) ListSessions(ctx context.Context, request ListSessionsRequest) (SessionPage, error) {
+	return r.explorer.ListSessions(ctx, request)
+}
+
+func (r *Runtime) Timeline(ctx context.Context, request TimelineRequest) (TimelinePage, error) {
+	return r.explorer.Timeline(ctx, request)
+}
+
+func (r *Runtime) EventDetail(ctx context.Context, request EventDetailRequest) (EventDetail, error) {
+	return r.explorer.EventDetail(ctx, request)
+}
 
 // Discover refreshes the runtime source catalog.
 func (r *Runtime) Discover(ctx context.Context) (discovery.Result, error) {
@@ -220,7 +244,7 @@ func (r *Runtime) RequestImport(sourceID model.SourceID) (*ImportSubscription, b
 	discovered, ok := r.catalog[sourceID]
 	r.mu.RUnlock()
 	if !ok {
-		return nil, false, fmt.Errorf("request import: discovered source %q was not found", sourceID)
+		return nil, false, fmt.Errorf("request import for source %q: %w", sourceID, ErrSourceNotFound)
 	}
 	source, err := importerSource(discovered)
 	if err != nil {

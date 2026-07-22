@@ -36,6 +36,7 @@ func TestOpenMigratesFreshDatabaseAndReopenIsIdempotent(t *testing.T) {
 		{version: 6, name: "0006_adapter_checkpoints_and_reconciliation.sql"},
 		{version: 7, name: "0007_container_membership.sql"},
 		{version: 8, name: "0008_projection_lifecycle.sql"},
+		{version: 9, name: "0009_exploration_indexes.sql"},
 	}
 	assertMigrationHistory(t, db, wantMigrations)
 	if err := db.Close(); err != nil {

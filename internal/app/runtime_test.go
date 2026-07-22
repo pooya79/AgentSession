@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -40,6 +41,22 @@ func TestRuntimeImportsAllAdaptersIdempotently(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "config")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("config directory was created: %v", err)
 	}
+	discoveredView, err := runtime.DiscoverSources(context.Background())
+	if err != nil || discoveredView.State != EvidenceComplete || len(discoveredView.Sources) != 3 {
+		t.Fatalf("DiscoverSources() = (%#v, %v), want three app-owned summaries", discoveredView, err)
+	}
+	missingStart, err := runtime.StartImport(context.Background(), "missing-source")
+	if err != nil || missingStart.State != EvidenceNotFound {
+		t.Fatalf("StartImport(missing) = (%#v, %v), want not-found", missingStart, err)
+	}
+	started, err := runtime.StartImport(context.Background(), discoveredView.Sources[0].ID)
+	if err != nil || started.State != EvidenceComplete || started.Subscription == nil {
+		t.Fatalf("StartImport() = (%#v, %v)", started, err)
+	}
+	if terminal := terminalProgress(t, started.Subscription); !terminal.Complete || terminal.Failure != nil {
+		t.Fatalf("StartImport terminal progress = %#v", terminal)
+	}
+	started.Subscription.Close()
 
 	first, err := runtime.DiscoverAndImport(context.Background())
 	if err != nil {
@@ -72,6 +89,55 @@ func TestRuntimeImportsAllAdaptersIdempotently(t *testing.T) {
 	}
 	if len(sessionIDs) < 4 {
 		t.Fatalf("imported %d logical sessions, want Codex, Claude, and multiple OpenCode", len(sessionIDs))
+	}
+	var listed []model.SessionID
+	cursor := ""
+	for {
+		page, err := runtime.ListSessions(context.Background(), ListSessionsRequest{Cursor: cursor, Limit: 2})
+		if err != nil {
+			t.Fatalf("list imported sessions: %v", err)
+		}
+		if len(page.Sessions) > 2 {
+			t.Fatalf("session page is unbounded: %d items", len(page.Sessions))
+		}
+		for _, session := range page.Sessions {
+			listed = append(listed, session.ID)
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	if len(listed) != len(sessionIDs) {
+		t.Fatalf("paginated session count = %d, want %d", len(listed), len(sessionIDs))
+	}
+	repeatedPage, err := runtime.ListSessions(context.Background(), ListSessionsRequest{Limit: MaximumPageSize})
+	if err != nil {
+		t.Fatalf("repeat session listing: %v", err)
+	}
+	repeatedIDs := make([]model.SessionID, 0, len(repeatedPage.Sessions))
+	for _, session := range repeatedPage.Sessions {
+		repeatedIDs = append(repeatedIDs, session.ID)
+	}
+	if !slices.Equal(listed, repeatedIDs) {
+		t.Fatalf("session listing is not deterministic: paged=%v repeated=%v", listed, repeatedIDs)
+	}
+	timeline, err := runtime.Timeline(context.Background(), TimelineRequest{SessionID: sessionIDs[0], Limit: 1})
+	if err != nil || len(timeline.Events) != 1 {
+		t.Fatalf("first timeline page = (%#v, %v)", timeline, err)
+	}
+	detail, err := runtime.EventDetail(context.Background(), EventDetailRequest{SessionID: sessionIDs[0], EventID: timeline.Events[0].ID})
+	if err != nil || detail.Payload != nil {
+		t.Fatalf("payload-excluded detail = (%#v, %v)", detail, err)
+	}
+	detail, err = runtime.EventDetail(context.Background(), EventDetailRequest{SessionID: sessionIDs[0], EventID: timeline.Events[0].ID, IncludePayload: true})
+	if err != nil || detail.Payload == nil {
+		t.Fatalf("payload-included detail = (%#v, %v)", detail, err)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := runtime.ListSessions(canceled, ListSessionsRequest{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled session list error = %v", err)
 	}
 	firstCounts := readDatabaseCounts(t, runtime.Paths().DatabasePath)
 	if firstCounts.sessions != len(sessionIDs) || firstCounts.rawRecords == 0 || firstCounts.events == 0 || firstCounts.checkpoints != len(sessionIDs) || firstCounts.revisions != int64(len(sessionIDs)) || firstCounts.projectionStates != len(sessionIDs)*len(projection.Kinds()) {
@@ -106,6 +172,9 @@ func TestRuntimeImportsAllAdaptersIdempotently(t *testing.T) {
 	}
 	if _, _, err := runtime.Reader().Session(context.Background(), sessionIDs[0]); err == nil {
 		t.Fatal("reader succeeded after database closure")
+	}
+	if page, err := runtime.Timeline(context.Background(), TimelineRequest{SessionID: sessionIDs[0]}); err == nil || page.State == EvidenceNotFound {
+		t.Fatalf("timeline after database closure = (%#v, %v), want storage failure distinct from not-found", page, err)
 	}
 	if _, err := runtime.Discover(context.Background()); !errors.Is(err, ErrShuttingDown) {
 		t.Fatalf("Discover after shutdown = %v", err)
@@ -160,6 +229,9 @@ func TestRuntimeTimedOutShutdownRemainsRetryable(t *testing.T) {
 	}
 	if _, err := runtime.Discover(context.Background()); !errors.Is(err, ErrShuttingDown) {
 		t.Fatalf("Discover during shutdown = %v", err)
+	}
+	if start, err := runtime.StartImport(context.Background(), "unknown-during-shutdown"); !errors.Is(err, ErrShuttingDown) || start.State == EvidenceNotFound {
+		t.Fatalf("StartImport(unknown) during shutdown = (%#v, %v), want shutdown error", start, err)
 	}
 	close(settle)
 	if err := runtime.Shutdown(context.Background()); err != nil {

@@ -67,13 +67,27 @@ type ImportProgress struct {
 type ImportedSessionSummary struct {
 	SourceID          model.SourceID
 	SessionID         model.SessionID
-	Change            importer.SourceChange
+	Change            SourceChange
 	RecordsCommitted  int64
 	BatchesCommitted  int64
 	CanonicalChanged  bool
 	Reconciled        bool
 	ProjectionWarning bool
 }
+
+// SourceChange is the application-facing classification of an incremental
+// import. It prevents importer implementation types crossing presentation
+// boundaries.
+type SourceChange string
+
+const (
+	SourceNew       SourceChange = "new"
+	SourceUnchanged SourceChange = "unchanged"
+	SourceAppend    SourceChange = "append"
+	SourceTruncated SourceChange = "truncated"
+	SourceReplaced  SourceChange = "replaced"
+	SourceMutated   SourceChange = "mutated"
+)
 
 // ImportFunc is the synchronous importer operation managed by ImportManager.
 type ImportFunc func(context.Context, importer.Source, importer.ProgressObserver) ([]importer.ImportResult, error)
@@ -298,7 +312,7 @@ func (j *importJob) finish(results []importer.ImportResult, err error) {
 	}
 	for _, result := range results[start:] {
 		j.latest.ImportedSessions = append(j.latest.ImportedSessions, ImportedSessionSummary{
-			SourceID: result.SourceID, SessionID: result.SessionID, Change: result.Change,
+			SourceID: result.SourceID, SessionID: result.SessionID, Change: applicationSourceChange(result.Change),
 			RecordsCommitted: result.RecordsCommitted, BatchesCommitted: result.BatchesCommitted,
 			CanonicalChanged: result.CanonicalChanged, Reconciled: result.Reconciled,
 			ProjectionWarning: result.ProjectionError != nil,
@@ -316,6 +330,19 @@ func (j *importJob) finish(results []importer.ImportResult, err error) {
 	for subscription, updates := range j.subscribers {
 		close(updates)
 		delete(j.subscribers, subscription)
+	}
+}
+
+func applicationSourceChange(change importer.SourceChange) SourceChange {
+	switch change {
+	case importer.SourceTruncated:
+		return SourceTruncated
+	case importer.SourceReplaced:
+		return SourceReplaced
+	case importer.SourceMutated:
+		return SourceMutated
+	default:
+		return SourceChange(change)
 	}
 }
 
