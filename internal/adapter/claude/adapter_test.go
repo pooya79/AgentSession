@@ -208,6 +208,20 @@ func TestMainThreadNormalizationRetainsRecordsAndUsesIndependentSequences(t *tes
 	}
 }
 
+func TestToolInputPreservesExactJSONNumbers(t *testing.T) {
+	data := []byte(`{"type":"assistant","sessionId":"exact-numbers","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"Lookup","input":{"id":9007199254740993,"fraction":1.2300,"nested":[18446744073709551615]}}]}}` + "\n")
+	sink, _ := importSource(t, bytesSource("exact-numbers", data), nil, nil)
+	got := events(sink.records)
+	if len(got) != 1 {
+		t.Fatalf("events = %d, want 1", len(got))
+	}
+	call := got[0].Data.(model.ToolCallData)
+	want := `{"id":9007199254740993,"fraction":1.2300,"nested":[18446744073709551615]}`
+	if call.Input != want || got[0].SearchableText != want {
+		t.Fatalf("tool input/searchable = %q/%q, want %q", call.Input, got[0].SearchableText, want)
+	}
+}
+
 func TestUUIDIdentityIsSessionScopedAndQualifiedForMultipleEvents(t *testing.T) {
 	sink, _ := importSource(t, fixtureSource(t, "main.jsonl"), nil, nil)
 	got := events(sink.records)
@@ -411,6 +425,16 @@ func TestOversizedRecordIsDeliveredBeforeRemainingSourceIsConsumed(t *testing.T)
 		t.Fatal(err)
 	}
 	defer view.Close()
+	preparedView := view.(*prepared)
+	if preparedView.replay == nil {
+		t.Fatal("probe prefix was not moved to replay storage")
+	}
+	if preparedView.sessionID != "streaming" || preparedView.format != "claude-code-jsonl-v1+cli-5.0.0" {
+		t.Fatalf("large probe metadata = session %q format %q", preparedView.sessionID, preparedView.format)
+	}
+	if info, statErr := preparedView.replay.Stat(); statErr != nil || info.Size() <= int64(len(large)) {
+		t.Fatalf("probe replay size = %v, %v", info, statErr)
+	}
 	accepted := 0
 	sink := &captureSink{onAccept: func(envelope importer.RecordEnvelope) {
 		accepted++
