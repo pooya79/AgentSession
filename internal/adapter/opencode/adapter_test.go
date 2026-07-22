@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"io"
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	claudeAdapter "github.com/pooya79/AgentSession/internal/adapter/claude"
 	codexAdapter "github.com/pooya79/AgentSession/internal/adapter/codex"
@@ -146,6 +148,54 @@ func TestCoordinatorImportsLogicalSessionsAndRetainsRows(t *testing.T) {
 		}
 		if repeated[i].SessionID != results[i].SessionID {
 			t.Fatal("session ID changed")
+		}
+	}
+}
+
+func TestCopiedContainerUsesDistinctEventIdentities(t *testing.T) {
+	ctx := context.Background()
+	sourcePath := createFixture(t)
+	indexDB, err := storageSQLite.Open(ctx, filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer indexDB.Close()
+	store, err := storageSQLite.NewImportStore(indexDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := importer.NewCoordinator(store, []importer.Adapter{New()}, nil, importer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := coordinator.ImportAll(ctx, importer.Source{ID: "physical-copy-a", LocalPath: sourcePath, Hint: "opencode"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := coordinator.ImportAll(ctx, importer.Source{ID: "physical-copy-b", LocalPath: sourcePath, Hint: "opencode"})
+	if err != nil {
+		t.Fatalf("import copied container: %v", err)
+	}
+	if len(first) != len(second) || len(first) == 0 {
+		t.Fatalf("logical result counts = %d and %d", len(first), len(second))
+	}
+	for i := range first {
+		left, err := store.EventSummaries(ctx, first[i].SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		right, err := store.EventSummaries(ctx, second[i].SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(left) != len(right) {
+			t.Fatalf("event counts for logical session %d = %d and %d", i, len(left), len(right))
+		}
+		for j := range left {
+			if left[j].ID == right[j].ID {
+				t.Fatalf("copied container event identity was reused: %q", left[j].ID)
+			}
 		}
 	}
 }
@@ -334,5 +384,133 @@ func TestPreparedSnapshotRejectsWrites(t *testing.T) {
 	prepared := containerView.(*container)
 	if _, err := prepared.snapshot.tx.ExecContext(ctx, `INSERT INTO unrelated VALUES ('write')`); err == nil {
 		t.Fatal("query-only OpenCode snapshot accepted a write")
+	}
+}
+
+func TestPartIterationErrorAbortsImport(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "iteration-error.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statements := []string{
+		`CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, time_created INTEGER, time_updated INTEGER)`,
+		`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT)`,
+		`CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT, extra TEXT)`,
+		`INSERT INTO session VALUES ('session', 'Iteration error', 1700000000000, 1700000000001)`,
+		`INSERT INTO message VALUES ('message', 'session', 1700000000000, '{"role":"user"}')`,
+		`INSERT INTO part VALUES ('part', 'message', 'session', '{"type":"text","text":"unreachable"}', 'not-json')`,
+		`ALTER TABLE part ADD COLUMN broken TEXT GENERATED ALWAYS AS (json_extract(extra, '$')) VIRTUAL`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("prepare iteration-error database: %v", err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	containerView, err := New().PrepareContainer(ctx, sourceFor(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer containerView.Close()
+	children, err := containerView.Children(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(children) != 1 {
+		t.Fatalf("child count = %d, want 1", len(children))
+	}
+	if err := children[0].Prepared.(*prepared).eachRecord(ctx, func(logicalRecord) error { return nil }); err == nil {
+		t.Fatal("part-row iteration error was ignored")
+	}
+}
+
+func TestNegativeTokenCounterIsDiagnosedAndOmitted(t *testing.T) {
+	ctx := context.Background()
+	sourcePath := createFixture(t)
+	sourceDB, err := sql.Open("sqlite", sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sourceDB.Exec(`UPDATE message SET data = '{"role":"assistant","tokens":{"input":-3,"output":5}}' WHERE id = 'msg_assistant'`); err != nil {
+		t.Fatal(err)
+	}
+	_ = sourceDB.Close()
+
+	indexDB, err := storageSQLite.Open(ctx, filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer indexDB.Close()
+	store, _ := storageSQLite.NewImportStore(indexDB)
+	coordinator, _ := importer.NewCoordinator(store, []importer.Adapter{New()}, nil, importer.Options{})
+	results, err := coordinator.ImportAll(ctx, sourceFor(sourcePath))
+	if err != nil {
+		t.Fatalf("import negative token evidence: %v", err)
+	}
+	diagnostics, err := store.RecordDiagnostics(ctx, results[0].SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundDiagnostic := false
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Diagnostic.Code == "opencode.message.tokens.negative" {
+			foundDiagnostic = true
+		}
+	}
+	if !foundDiagnostic {
+		t.Fatalf("negative token diagnostic missing: %#v", diagnostics)
+	}
+	summaries, err := store.EventSummaries(ctx, results[0].SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundUsage := false
+	for _, summary := range summaries {
+		if summary.Kind != model.EventKindUsage {
+			continue
+		}
+		event, found, err := store.Event(ctx, summary.ID)
+		if err != nil || !found {
+			t.Fatalf("read usage event: %v, %v", found, err)
+		}
+		usage, ok := event.Data.(model.UsageData)
+		if !ok || usage.InputTokens != nil || usage.OutputTokens == nil || *usage.OutputTokens != 5 {
+			t.Fatalf("sanitized usage = %#v", event.Data)
+		}
+		foundUsage = true
+	}
+	if !foundUsage {
+		t.Fatal("sanitized usage event missing")
+	}
+}
+
+func TestMillisecondTimeRejectsValuesOutsideRFC3339Range(t *testing.T) {
+	tests := []struct {
+		name  string
+		value int64
+		valid bool
+	}{
+		{name: "ordinary", value: 1700000000000, valid: true},
+		{name: "year zero", value: time.Date(0, time.January, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), valid: true},
+		{name: "last millisecond of year 9999", value: time.Date(9999, time.December, 31, 23, 59, 59, int(time.Millisecond*999), time.UTC).UnixMilli(), valid: true},
+		{name: "year 10000", value: time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC).UnixMilli()},
+		{name: "maximum integer", value: math.MaxInt64},
+		{name: "minimum integer", value: math.MinInt64},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value, diagnostic := millisecondTime(test.value, "timestamp.invalid")
+			if test.valid && (value == nil || diagnostic != nil) {
+				t.Fatalf("valid timestamp = %v, %#v", value, diagnostic)
+			}
+			if !test.valid && (value != nil || diagnostic == nil || diagnostic.Code != "timestamp.invalid") {
+				t.Fatalf("invalid timestamp = %v, %#v", value, diagnostic)
+			}
+		})
 	}
 }

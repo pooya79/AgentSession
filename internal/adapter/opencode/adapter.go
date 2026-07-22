@@ -481,6 +481,10 @@ func (p *prepared) eachRecord(ctx context.Context, accept func(logicalRecord) er
 				return err
 			}
 		}
+		if err := parts.Err(); err != nil {
+			parts.Close()
+			return err
+		}
 		if err := parts.Close(); err != nil {
 			return err
 		}
@@ -640,6 +644,9 @@ func millisecondTime(value any, code string) (*time.Time, *model.Diagnostic) {
 		return nil, timestampDiagnostic(code)
 	}
 	valueTime := time.UnixMilli(milliseconds).UTC()
+	if valueTime.Year() < 0 || valueTime.Year() > 9999 {
+		return nil, timestampDiagnostic(code)
+	}
 	return &valueTime, nil
 }
 
@@ -679,12 +686,16 @@ func normalizeMessage(record logicalRecord, data map[string]json.RawMessage, typ
 		return nil, nil, nil
 	}
 	var events []model.Event
+	var diagnostics []model.Diagnostic
 	if raw := data["tokens"]; len(raw) > 0 {
 		var tokens map[string]json.RawMessage
 		if json.Unmarshal(raw, &tokens) == nil {
 			var cache map[string]json.RawMessage
 			_ = json.Unmarshal(tokens["cache"], &cache)
 			usage := model.UsageData{InputTokens: jsonInt64(tokens["input"]), OutputTokens: jsonInt64(tokens["output"]), CacheReadTokens: jsonInt64(cache["read"]), CacheWriteTokens: jsonInt64(cache["write"])}
+			if clearNegativeTokenCounters(&usage) {
+				diagnostics = append(diagnostics, model.Diagnostic{Code: "opencode.message.tokens.negative", Severity: model.SeverityWarning, Message: "The OpenCode token usage contains a negative counter; malformed counters were omitted."})
+			}
 			event, err := newEvent(record, sessionID, sequence+int64(len(events)), uint64(len(events)), "usage", model.EventKindUsage, "OpenCode token usage", "", usage)
 			if err != nil {
 				return nil, nil, err
@@ -709,7 +720,18 @@ func normalizeMessage(record logicalRecord, data map[string]json.RawMessage, typ
 		}
 		events = append(events, event)
 	}
-	return events, nil, nil
+	return events, diagnostics, nil
+}
+
+func clearNegativeTokenCounters(usage *model.UsageData) bool {
+	found := false
+	for _, counter := range []**int64{&usage.InputTokens, &usage.OutputTokens, &usage.CacheReadTokens, &usage.CacheWriteTokens} {
+		if *counter != nil && **counter < 0 {
+			*counter = nil
+			found = true
+		}
+	}
+	return found
 }
 
 func normalizePart(record logicalRecord, data map[string]json.RawMessage, typeName string, sessionID model.SessionID, sequence int64) ([]model.Event, []model.Diagnostic, error) {
@@ -780,7 +802,7 @@ func newEvent(record logicalRecord, sessionID model.SessionID, sequence int64, o
 	}
 	var native *model.NativeEventIdentity
 	if nativeID != "" {
-		native = &model.NativeEventIdentity{Scope: model.NativeEventIDGlobal, EventID: nativeID}
+		native = &model.NativeEventIdentity{Scope: model.NativeEventIDSession, SessionID: string(sessionID), EventID: nativeID}
 	}
 	id, err := model.NewEventID(model.EventIDInput{Native: native, SourceID: "fallback", RecordSequence: &sequence, RecordHash: "fallback", EventOrdinal: ordinal})
 	if err != nil {
