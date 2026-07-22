@@ -54,11 +54,11 @@ func NewImportProgressHandler(provider ImportSubscriptionProvider) http.Handler 
 			writeError(w, http.StatusServiceUnavailable)
 			return
 		}
-		streamImport(w, r, subscription)
+		streamImport(w, r, subscription, nil)
 	})
 }
 
-func streamImport(w http.ResponseWriter, r *http.Request, subscription *app.ImportSubscription) {
+func streamImport(w http.ResponseWriter, r *http.Request, subscription *app.ImportSubscription, shutdown <-chan struct{}) {
 	defer subscription.Close()
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -71,6 +71,8 @@ func streamImport(w http.ResponseWriter, r *http.Request, subscription *app.Impo
 
 	for {
 		select {
+		case <-shutdown:
+			return
 		case <-r.Context().Done():
 			return
 		case progress, open := <-subscription.Updates():
@@ -165,6 +167,10 @@ func importProgressJSON(progress app.ImportProgress) importProgressPayload {
 
 // NewHandler creates the local web interface over the shared application services.
 func NewHandler(services app.Services) http.Handler {
+	return newHandler(services, nil)
+}
+
+func newHandler(services app.Services, streamShutdown <-chan struct{}) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -222,7 +228,7 @@ func NewHandler(services app.Services) http.Handler {
 			return
 		}
 		w.Header().Set("X-AgentSession-Import-Joined", strconv.FormatBool(started.Joined))
-		streamImport(w, r, started.Subscription)
+		streamImport(w, r, started.Subscription, streamShutdown)
 	})
 	mux.HandleFunc("GET /fragments/sessions", func(w http.ResponseWriter, r *http.Request) {
 		if services == nil {
@@ -513,8 +519,9 @@ func Serve(ctx context.Context, addr string, services app.Services) error {
 	if services == nil {
 		return errors.New("web: application services are required")
 	}
+	streamShutdown := make(chan struct{})
 	server := &http.Server{
-		Addr: addr, Handler: NewHandler(services), ReadHeaderTimeout: 5 * time.Second,
+		Addr: addr, Handler: newHandler(services, streamShutdown), ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
 	}
 
@@ -528,6 +535,9 @@ func Serve(ctx context.Context, addr string, services app.Services) error {
 		}
 		return err
 	case <-ctx.Done():
+		// Shutdown waits for active handlers, so detach long-lived SSE observers
+		// first. Closing a subscription does not cancel application-owned work.
+		close(streamShutdown)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pooya79/AgentSession/internal/app"
 	"github.com/pooya79/AgentSession/internal/app/apptest"
@@ -296,6 +297,54 @@ func TestImportResponseReportsCoalescedWork(t *testing.T) {
 	response := <-done
 	if response.Header().Get("X-AgentSession-Import-Joined") != "true" || !strings.Contains(response.Body.String(), "event: completion") {
 		t.Fatalf("coalesced response headers/body = %#v %q", response.Header(), response.Body.String())
+	}
+}
+
+func TestStreamShutdownDetachesObserverWithoutCancelingImport(t *testing.T) {
+	started := make(chan context.Context, 1)
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	manager, err := app.NewImportManager(func(ctx context.Context, _ importer.Source, _ importer.ProgressObserver) ([]importer.ImportResult, error) {
+		started <- ctx
+		<-release
+		close(finished)
+		return nil, nil
+	}, app.ImportManagerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := testImportSource("shutdown-stream")
+	streamShutdown := make(chan struct{})
+	handler := newHandler(servicesStub{start: func(context.Context, model.SourceID) (app.ImportStart, error) {
+		subscription, joined, err := manager.Request(source)
+		return app.ImportStart{State: app.EvidenceComplete, Subscription: subscription, Joined: joined}, err
+	}}, streamShutdown)
+	done := make(chan struct{})
+	go func() {
+		req := httptest.NewRequest(http.MethodPost, "/imports", strings.NewReader("source=shutdown-stream"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set(importHeader, "import")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+		close(done)
+	}()
+
+	importContext := <-started
+	close(streamShutdown)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("SSE handler did not stop when web shutdown began")
+	}
+	select {
+	case <-importContext.Done():
+		t.Fatal("stopping the SSE observer canceled application-owned import work")
+	default:
+	}
+	close(release)
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("import runner did not finish after release")
 	}
 }
 
