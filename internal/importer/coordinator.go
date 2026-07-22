@@ -117,6 +117,10 @@ func NewCoordinator(store ImportStore, adapters []Adapter, projector Projector, 
 }
 
 func (c *Coordinator) Import(ctx context.Context, source Source) (result ImportResult, err error) {
+	return c.importOne(ctx, source, nil)
+}
+
+func (c *Coordinator) importOne(ctx context.Context, source Source, progress *progressTracker) (result ImportResult, err error) {
 	result.SourceID = source.ID
 	if err := source.Validate(); err != nil {
 		return result, fmt.Errorf("import source: %w", err)
@@ -125,10 +129,16 @@ func (c *Coordinator) Import(ctx context.Context, source Source) (result ImportR
 		return result, err
 	}
 
-	adapter, _, err := c.selectAdapter(ctx, source)
+	if progress == nil {
+		progress = newProgressTracker(source.ID, nil)
+	}
+	progress.activate(source.ID)
+	progress.publish(PhaseProbing, nil)
+	adapter, probe, err := c.selectAdapter(ctx, source)
 	if err != nil {
 		return result, err
 	}
+	progress.publish(PhasePreparing, probe.Diagnostics)
 	streamAdapter, ok := adapter.(StreamAdapter)
 	if !ok {
 		return result, fmt.Errorf("import source %q with adapter %q: container source requires ImportAll", source.ID, adapter.Name())
@@ -142,20 +152,28 @@ func (c *Coordinator) Import(ctx context.Context, source Source) (result ImportR
 			err = errors.Join(err, fmt.Errorf("import source %q with adapter %q: close prepared view: %w", source.ID, adapter.Name(), closeErr))
 		}
 	}()
-	return c.importPrepared(ctx, source, adapter, prepared)
+	return c.importPrepared(ctx, source, adapter, prepared, progress)
 }
 
 // ImportAll imports either one stream source or every logical child in a
 // container snapshot. Container membership is published only after all child
 // imports have completed successfully.
 func (c *Coordinator) ImportAll(ctx context.Context, source Source) (results []ImportResult, err error) {
+	return c.ImportAllObserved(ctx, source, nil)
+}
+
+// ImportAllObserved is ImportAll with cumulative source-neutral progress.
+func (c *Coordinator) ImportAllObserved(ctx context.Context, source Source, observer ProgressObserver) (results []ImportResult, err error) {
 	if err := source.Validate(); err != nil {
 		return nil, fmt.Errorf("import source: %w", err)
 	}
-	adapter, _, err := c.selectAdapter(ctx, source)
+	progress := newProgressTracker(source.ID, observer)
+	progress.publish(PhaseProbing, nil)
+	adapter, probe, err := c.selectAdapter(ctx, source)
 	if err != nil {
 		return nil, err
 	}
+	progress.publish(PhasePreparing, probe.Diagnostics)
 	if containerAdapter, ok := adapter.(ContainerAdapter); ok {
 		membershipStore, ok := c.store.(ContainerMembershipStore)
 		if !ok {
@@ -183,13 +201,16 @@ func (c *Coordinator) ImportAll(ctx context.Context, source Source) (results []I
 			if err := child.Source.Validate(); err != nil {
 				return nil, fmt.Errorf("import source %q with adapter %q: logical source %d: %w", source.ID, adapter.Name(), i, err)
 			}
-			result, err := c.importPrepared(ctx, child.Source, adapter, child.Prepared)
+			progress.activate(child.Source.ID)
+			result, err := c.importPrepared(ctx, child.Source, adapter, child.Prepared, progress)
 			if err != nil {
 				return nil, err
 			}
 			results = append(results, result)
 			members = append(members, child.Source.ID)
 		}
+		progress.activate(source.ID)
+		progress.publish(PhaseFinalizing, nil)
 		if err := membershipStore.SyncContainerMembers(ctx, source.ID, members); err != nil {
 			return nil, fmt.Errorf("import source %q with adapter %q: synchronize logical-source inventory: %w", source.ID, adapter.Name(), err)
 		}
@@ -208,15 +229,17 @@ func (c *Coordinator) ImportAll(ctx context.Context, source Source) (results []I
 			err = errors.Join(err, fmt.Errorf("import source %q with adapter %q: close prepared view: %w", source.ID, adapter.Name(), closeErr))
 		}
 	}()
-	result, err := c.importPrepared(ctx, source, adapter, prepared)
+	result, err := c.importPrepared(ctx, source, adapter, prepared, progress)
 	if err != nil {
 		return nil, err
 	}
+	progress.publish(PhaseFinalizing, nil)
 	return []ImportResult{result}, nil
 }
 
-func (c *Coordinator) importPrepared(ctx context.Context, source Source, adapter Adapter, prepared PreparedSource) (result ImportResult, err error) {
+func (c *Coordinator) importPrepared(ctx context.Context, source Source, adapter Adapter, prepared PreparedSource, progress *progressTracker) (result ImportResult, err error) {
 	result.SourceID = source.ID
+	progress.publish(PhaseVerifying, nil)
 	state, found, err := c.store.SourceState(ctx, source.ID)
 	if err != nil {
 		return result, fmt.Errorf("import source %q: load durable state: %w", source.ID, err)
@@ -233,10 +256,12 @@ func (c *Coordinator) importPrepared(ctx context.Context, source Source, adapter
 	}
 	result.Change = change
 	if change.requiresReconciliation() {
-		if err := c.reconcile(ctx, source, prepared, state, &result); err != nil {
+		progress.publish(PhaseReconciling, nil)
+		if err := c.reconcile(ctx, source, prepared, state, &result, progress); err != nil {
 			return result, fmt.Errorf("import source %q with adapter %q: reconcile %s: %w", source.ID, adapter.Name(), change, err)
 		}
 	} else {
+		progress.publish(PhaseImporting, nil)
 		var resume *ImportCheckpoint
 		if found {
 			checkpoint := cloneCheckpoint(state.Checkpoint)
@@ -244,7 +269,7 @@ func (c *Coordinator) importPrepared(ctx context.Context, source Source, adapter
 		}
 		sink := &batchSink{
 			store: c.store, options: c.options, source: source,
-			state: state, hasState: found, result: &result,
+			state: state, hasState: found, result: &result, progress: progress, workPhase: PhaseImporting,
 		}
 		if err := prepared.Import(ctx, resume, sink); err != nil {
 			return result, fmt.Errorf("import source %q with adapter %q: %w", source.ID, adapter.Name(), err)
@@ -255,14 +280,21 @@ func (c *Coordinator) importPrepared(ctx context.Context, source Source, adapter
 		result.CanonicalChanged = result.BatchesCommitted > 0
 	}
 	if c.projector != nil {
+		progress.publish(PhaseProjecting, nil)
 		result.ProjectionError = c.projector.Project(ctx, ProjectionRequest{
 			SourceID: source.ID, SessionID: result.SessionID, Checkpoint: cloneCheckpoint(result.Checkpoint),
 		})
+		if result.ProjectionError != nil {
+			progress.publish(PhaseProjecting, []model.Diagnostic{{
+				Code: "import.projection.failed", Severity: model.SeverityWarning,
+				Message: fmt.Sprintf("Projection failed after canonical import: %v", result.ProjectionError),
+			}})
+		}
 	}
 	return result, nil
 }
 
-func (c *Coordinator) reconcile(ctx context.Context, source Source, prepared PreparedSource, state SourceState, result *ImportResult) (err error) {
+func (c *Coordinator) reconcile(ctx context.Context, source Source, prepared PreparedSource, state SourceState, result *ImportResult, progress *progressTracker) (err error) {
 	reconciliation, err := c.store.BeginReconciliation(ctx, source.ID, cloneCheckpoint(state.Checkpoint))
 	if err != nil {
 		return fmt.Errorf("begin staged replacement: %w", err)
@@ -278,16 +310,18 @@ func (c *Coordinator) reconcile(ctx context.Context, source Source, prepared Pre
 	}()
 
 	stagedResult := ImportResult{SourceID: source.ID, Change: result.Change}
-	sink := &batchSink{store: stagedCommitter{reconciliation}, options: c.options, source: source, result: &stagedResult}
+	sink := &batchSink{store: stagedCommitter{reconciliation}, options: c.options, source: source, result: &stagedResult, progress: progress, workPhase: PhaseReconciling}
 	if err := prepared.Reconcile(ctx, sink); err != nil {
 		return err
 	}
 	if !sink.completed {
 		return fmt.Errorf("adapter returned without reconciliation completion")
 	}
+	progress.publish(PhaseCommitting, nil)
 	if err := reconciliation.Finalize(ctx); err != nil {
 		return fmt.Errorf("promote staged replacement: %w", err)
 	}
+	progress.publish(PhaseReconciling, nil)
 	finalized = true
 	result.SessionID = stagedResult.SessionID
 	result.Checkpoint = cloneCheckpoint(stagedResult.Checkpoint)
@@ -340,12 +374,14 @@ func (c *Coordinator) selectAdapter(ctx context.Context, source Source) (Adapter
 }
 
 type batchSink struct {
-	store    batchCommitter
-	options  Options
-	source   Source
-	state    SourceState
-	hasState bool
-	result   *ImportResult
+	store     batchCommitter
+	options   Options
+	source    Source
+	state     SourceState
+	hasState  bool
+	result    *ImportResult
+	progress  *progressTracker
+	workPhase ProgressPhase
 
 	initial           model.Session
 	current           model.Session
@@ -425,6 +461,7 @@ func (s *batchSink) Accept(ctx context.Context, envelope RecordEnvelope) error {
 	}
 	s.batchRecords++
 	s.deliveredRecords++
+	s.progress.processed(envelope, s.workPhase)
 	return nil
 }
 
@@ -458,6 +495,7 @@ func (s *batchSink) Complete(ctx context.Context, session model.Session, checkpo
 		s.current = session
 		s.completed = true
 		s.result.Checkpoint = cloneCheckpoint(checkpoint)
+		s.progress.publish(s.workPhase, session.Diagnostics)
 		return nil
 	}
 	s.batch.Checkpoint = cloneCheckpoint(checkpoint)
@@ -468,6 +506,7 @@ func (s *batchSink) Complete(ctx context.Context, session model.Session, checkpo
 	}
 	s.completed = true
 	s.result.Checkpoint = cloneCheckpoint(checkpoint)
+	s.progress.publish(s.workPhase, session.Diagnostics)
 	return nil
 }
 
@@ -496,11 +535,14 @@ func (s *batchSink) flush(ctx context.Context, session model.Session) error {
 		return fmt.Errorf("import sink has no valid checkpoint to commit: %w", err)
 	}
 	s.batch.Session = session
+	s.progress.publish(PhaseCommitting, nil)
 	if err := s.store.CommitBatch(ctx, s.batch); err != nil {
 		return fmt.Errorf("commit canonical batch: %w", err)
 	}
+	committedRecords := s.batchRecords
 	s.result.BatchesCommitted++
 	s.result.RecordsCommitted += s.batchRecords
+	s.progress.committed(committedRecords, s.workPhase)
 	s.batch = ImportBatch{}
 	s.batchBytes = 0
 	s.batchRecords = 0

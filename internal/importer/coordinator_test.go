@@ -603,3 +603,36 @@ func TestCoordinatorProjectionFailureIsSeparateFromCanonicalSuccess(t *testing.T
 		t.Fatalf("result=%#v raw=%d", result, len(store.raw))
 	}
 }
+
+func TestCoordinatorObservedProgressIncludesCountsDiagnosticsAndPhases(t *testing.T) {
+	fixture := &coordinatorFixture{}
+	fixture.set("bad\none\n")
+	store := newMemoryImportStore()
+	coordinator, _ := NewCoordinator(store, []Adapter{&streamingFixtureAdapter{fixture}}, nil, Options{BatchRecords: 1})
+	var progress []Progress
+	results, err := coordinator.ImportAllObserved(context.Background(), fixture.source(), func(update Progress) {
+		progress = append(progress, update)
+	})
+	if err != nil || len(results) != 1 {
+		t.Fatalf("ImportAllObserved() = (%#v, %v)", results, err)
+	}
+	if len(progress) == 0 {
+		t.Fatal("ImportAllObserved() emitted no progress")
+	}
+	last := progress[len(progress)-1]
+	if last.SourceID != fixture.source().ID || last.ActiveSourceID != fixture.source().ID || last.Phase != PhaseFinalizing {
+		t.Fatalf("last progress identity/phase = %#v", last)
+	}
+	if last.RecordsProcessed != 2 || last.EventsProcessed != 1 || last.RecordsCommitted != 2 || last.BatchesCommitted != 2 || last.DiagnosticsObserved != 1 {
+		t.Fatalf("last progress counts = %#v", last)
+	}
+	seenDiagnostic := false
+	seenCommit := false
+	for _, update := range progress {
+		seenCommit = seenCommit || update.Phase == PhaseCommitting
+		seenDiagnostic = seenDiagnostic || len(update.Diagnostics) == 1 && update.Diagnostics[0].Code == "record.malformed"
+	}
+	if !seenDiagnostic || !seenCommit {
+		t.Fatalf("progress missing diagnostic or commit phase: %#v", progress)
+	}
+}
