@@ -161,12 +161,11 @@ func rawText(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	var value any
-	if json.Unmarshal(raw, &value) != nil {
+	var compact bytes.Buffer
+	if json.Compact(&compact, raw) != nil {
 		return string(raw)
 	}
-	encoded, _ := json.Marshal(value)
-	return string(encoded)
+	return compact.String()
 }
 
 func contentText(raw json.RawMessage) string {
