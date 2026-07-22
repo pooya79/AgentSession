@@ -6,8 +6,28 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/pooya79/AgentSession/internal/app"
 	"github.com/pooya79/AgentSession/internal/sanitization"
 )
+
+// ImportProgressMsg delivers one shared application progress snapshot.
+type ImportProgressMsg struct{ Progress app.ImportProgress }
+
+// ImportProgressClosedMsg reports that a subscription reached its terminal
+// state or was independently detached.
+type ImportProgressClosedMsg struct{}
+
+// WaitForImportProgress adapts an application subscription to Bubble Tea. It
+// observes shared work and contains no import orchestration.
+func WaitForImportProgress(subscription *app.ImportSubscription) tea.Cmd {
+	return func() tea.Msg {
+		progress, ok := <-subscription.Updates()
+		if !ok {
+			return ImportProgressClosedMsg{}
+		}
+		return ImportProgressMsg{Progress: progress}
+	}
+}
 
 // Model is the initial AgentSession terminal interface.
 type Model struct {

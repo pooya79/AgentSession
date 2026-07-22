@@ -3,11 +3,17 @@ package web
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/pooya79/AgentSession/internal/app"
+	"github.com/pooya79/AgentSession/internal/importer"
+	"github.com/pooya79/AgentSession/internal/model"
 )
 
 func TestSourceTextEscapesHTML(t *testing.T) {
@@ -66,4 +72,83 @@ func TestHandler(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestImportProgressHandlerStreamsTerminalFailure(t *testing.T) {
+	manager, err := app.NewImportManager(func(_ context.Context, source importer.Source, observe importer.ProgressObserver) ([]importer.ImportResult, error) {
+		observe(importer.Progress{
+			SourceID: source.ID, ActiveSourceID: source.ID, Phase: importer.PhaseImporting,
+			DiagnosticsObserved: 1, Diagnostics: []model.Diagnostic{{Code: "unsafe", Severity: model.SeverityWarning, Message: "<script>"}},
+		})
+		return nil, errors.New("failed\ncleanly")
+	}, app.ImportManagerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := testImportSource("http-source")
+	handler := NewImportProgressHandler(func(*http.Request) (*app.ImportSubscription, error) {
+		subscription, _, err := manager.Request(source)
+		return subscription, err
+	})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/progress", nil))
+	body := recorder.Body.String()
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("response status/content-type = %d/%q", recorder.Code, recorder.Header().Get("Content-Type"))
+	}
+	for _, fragment := range []string{"event: failure", `"source":"http-source"`, `"phase":"failed"`, `failed\ncleanly`, `\u003cscript\u003e`} {
+		if !strings.Contains(body, fragment) {
+			t.Errorf("SSE body = %q, want %q", body, fragment)
+		}
+	}
+	if strings.Contains(body, "\ndata: failed") {
+		t.Fatalf("failure introduced an SSE data line: %q", body)
+	}
+}
+
+func TestImportProgressHandlerDisconnectDoesNotCancelImport(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	runnerContext := make(chan context.Context, 1)
+	manager, _ := app.NewImportManager(func(ctx context.Context, _ importer.Source, _ importer.ProgressObserver) ([]importer.ImportResult, error) {
+		runnerContext <- ctx
+		close(started)
+		<-release
+		return nil, nil
+	}, app.ImportManagerOptions{})
+	source := testImportSource("disconnect")
+	primary, _, _ := manager.Request(source)
+	defer primary.Close()
+	<-started
+	ctx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "/progress", nil).WithContext(ctx)
+	done := make(chan struct{})
+	go func() {
+		NewImportProgressHandler(func(*http.Request) (*app.ImportSubscription, error) {
+			subscription, _, err := manager.Request(source)
+			return subscription, err
+		}).ServeHTTP(httptest.NewRecorder(), request)
+		close(done)
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("SSE handler did not stop after disconnect")
+	}
+	importCtx := <-runnerContext
+	select {
+	case <-importCtx.Done():
+		t.Fatal("HTTP disconnect canceled shared import")
+	default:
+	}
+	close(release)
+	for range primary.Updates() {
+	}
+}
+
+func testImportSource(id model.SourceID) importer.Source {
+	return importer.Source{ID: id, Open: func(context.Context) (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader("")), nil
+	}}
 }

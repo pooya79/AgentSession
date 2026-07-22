@@ -209,6 +209,7 @@ type memoryImportStore struct {
 	commits      int
 	maxRecords   int
 	beforeCommit func(int, context.Context) error
+	finalizeErr  error
 }
 
 func newMemoryImportStore() *memoryImportStore {
@@ -280,6 +281,9 @@ func (r *memoryReconciliation) StageBatch(_ context.Context, batch ImportBatch) 
 func (r *memoryReconciliation) Finalize(ctx context.Context) error {
 	if r.aborted || len(r.batches) == 0 {
 		return errors.New("reconciliation is incomplete")
+	}
+	if r.store.finalizeErr != nil {
+		return r.store.finalizeErr
 	}
 	r.store.raw = map[model.RawRecordID]model.RawRecord{}
 	r.store.events = map[model.EventID]model.Event{}
@@ -471,6 +475,37 @@ func TestCoordinatorInterruptionDuringRecoveryKeepsOldGeneration(t *testing.T) {
 	}
 }
 
+func TestCoordinatorFailedReconciliationPromotionDoesNotPublishCommittedCounts(t *testing.T) {
+	fixture := &coordinatorFixture{}
+	fixture.set("one\ntwo\n")
+	store := newMemoryImportStore()
+	coordinator, err := NewCoordinator(store, []Adapter{&streamingFixtureAdapter{fixture}}, nil, Options{BatchRecords: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coordinator.Import(context.Background(), fixture.source()); err != nil {
+		t.Fatal(err)
+	}
+
+	fixture.set("changed\ntwo\n")
+	store.finalizeErr = ErrCheckpointConflict
+	var progress []Progress
+	_, err = coordinator.ImportAllObserved(context.Background(), fixture.source(), func(update Progress) {
+		progress = append(progress, update)
+	})
+	if !errors.Is(err, ErrCheckpointConflict) {
+		t.Fatalf("ImportAllObserved() error = %v, want ErrCheckpointConflict", err)
+	}
+	if len(progress) == 0 {
+		t.Fatal("ImportAllObserved() emitted no progress")
+	}
+	for _, update := range progress {
+		if update.RecordsCommitted != 0 || update.BatchesCommitted != 0 {
+			t.Fatalf("failed promotion published committed counts: %#v", update)
+		}
+	}
+}
+
 func TestCoordinatorResumeUsesVerifiedSourceSnapshot(t *testing.T) {
 	fixture := &coordinatorFixture{}
 	fixture.set("one\n")
@@ -601,5 +636,38 @@ func TestCoordinatorProjectionFailureIsSeparateFromCanonicalSuccess(t *testing.T
 	}
 	if !errors.Is(result.ProjectionError, projectionErr) || len(store.raw) != 1 {
 		t.Fatalf("result=%#v raw=%d", result, len(store.raw))
+	}
+}
+
+func TestCoordinatorObservedProgressIncludesCountsDiagnosticsAndPhases(t *testing.T) {
+	fixture := &coordinatorFixture{}
+	fixture.set("bad\none\n")
+	store := newMemoryImportStore()
+	coordinator, _ := NewCoordinator(store, []Adapter{&streamingFixtureAdapter{fixture}}, nil, Options{BatchRecords: 1})
+	var progress []Progress
+	results, err := coordinator.ImportAllObserved(context.Background(), fixture.source(), func(update Progress) {
+		progress = append(progress, update)
+	})
+	if err != nil || len(results) != 1 {
+		t.Fatalf("ImportAllObserved() = (%#v, %v)", results, err)
+	}
+	if len(progress) == 0 {
+		t.Fatal("ImportAllObserved() emitted no progress")
+	}
+	last := progress[len(progress)-1]
+	if last.SourceID != fixture.source().ID || last.ActiveSourceID != fixture.source().ID || last.Phase != PhaseFinalizing {
+		t.Fatalf("last progress identity/phase = %#v", last)
+	}
+	if last.RecordsProcessed != 2 || last.EventsProcessed != 1 || last.RecordsCommitted != 2 || last.BatchesCommitted != 2 || last.DiagnosticsObserved != 1 {
+		t.Fatalf("last progress counts = %#v", last)
+	}
+	seenDiagnostic := false
+	seenCommit := false
+	for _, update := range progress {
+		seenCommit = seenCommit || update.Phase == PhaseCommitting
+		seenDiagnostic = seenDiagnostic || len(update.Diagnostics) == 1 && update.Diagnostics[0].Code == "record.malformed"
+	}
+	if !seenDiagnostic || !seenCommit {
+		t.Fatalf("progress missing diagnostic or commit phase: %#v", progress)
 	}
 }
