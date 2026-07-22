@@ -365,7 +365,25 @@ Rebuildable projections
 - statistics and aggregates
 ```
 
-Projection data can be deleted and reconstructed from authoritative database data without re-reading the original session source. Git projections may additionally consult the still read-only repository. Projection schemas record the version that produced them and whether rebuilding is pending or failed.
+Projection data can be deleted and reconstructed from authoritative database data without re-reading the original session source. Git projections may additionally consult the still read-only repository. Projection lifecycle details are defined by [ADR-008](decisions/008-versioned-projection-lifecycle.md).
+
+Each authoritative batch advances a session's monotonic canonical revision and,
+inside that same transaction, marks all registered projections pending for the
+new revision. Idempotent retries that do not change canonical evidence preserve
+the revision and any ready projection state. The five fixed projection kinds are search, Git correlation,
+findings, outcomes, and aggregates. Each has an opaque target algorithm version
+and per-session status of pending, running, failed, or ready. A ready projection
+is usable only when its ready version and revision equal the current target.
+The previous ready identity is retained when an upgrade fails.
+
+Projection builders run only after commit and read session evidence through
+authoritative SQLite readers rather than source adapters or original-session
+openers. Requests are coalesced per session in process, and durable random run
+tokens make claims and completions compare-and-swap operations. A stale
+completion cannot become ready after another import advances the revision.
+Canceled or interrupted runs return to pending; unimplemented builders remain
+pending. Persisted failures use bounded stable codes and generic or explicitly
+safe summaries, never raw error strings or canonical payloads.
 
 Storage details remain behind small, consumer-owned use-case interfaces rather than one interface per table. Examples include an `ImportStore` that atomically commits a batch, a `SessionReader` that lists sessions and timelines and fetches event details, and an `AnalysisStore` that replaces versioned findings and outcomes. Application code depends on these interfaces, not concrete SQLite types. Schema changes use ordered embedded migrations. Import batches use transactions, foreign keys are enabled, and tests use isolated temporary databases.
 

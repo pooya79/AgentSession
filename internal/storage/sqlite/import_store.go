@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -167,31 +169,83 @@ func (s *ImportStore) commitBatch(ctx context.Context, batch importer.ImportBatc
 }
 
 func persistImportBatch(ctx context.Context, tx *sql.Tx, batch importer.ImportBatch) error {
-	if err := upsertSession(ctx, tx, batch.Session); err != nil {
+	return persistImportBatchWithRevisionBase(ctx, tx, batch, nil)
+}
+
+func persistImportBatchWithRevisionBase(ctx context.Context, tx *sql.Tx, batch importer.ImportBatch, revisionBase *int64) error {
+	changed, err := upsertSession(ctx, tx, batch.Session)
+	if err != nil {
 		return fmt.Errorf("persist session: %w", err)
 	}
+	if revisionBase != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET canonical_revision = ? WHERE id = ?`, *revisionBase, batch.Session.ID); err != nil {
+			return fmt.Errorf("restore canonical revision: %w", err)
+		}
+	}
 	for i, rawRecord := range batch.RawRecords {
-		if err := persistRawRecord(ctx, tx, batch.Session.ID, rawRecord); err != nil {
+		inserted, err := persistRawRecord(ctx, tx, batch.Session.ID, rawRecord)
+		if err != nil {
 			return fmt.Errorf("persist raw record %d (%q): %w", i, rawRecord.Ref.ID, err)
 		}
+		changed = changed || inserted
 	}
 	for i, event := range batch.Events {
-		if err := persistEvent(ctx, tx, event); err != nil {
+		inserted, err := persistEvent(ctx, tx, event)
+		if err != nil {
 			return fmt.Errorf("persist event %d (%q): %w", i, event.ID, err)
 		}
+		changed = changed || inserted
 	}
 	for i, diagnostic := range batch.RecordDiagnostics {
-		if err := persistRecordDiagnostic(ctx, tx, batch.Session.ID, diagnostic); err != nil {
+		inserted, err := persistRecordDiagnostic(ctx, tx, batch.Session.ID, diagnostic)
+		if err != nil {
 			return fmt.Errorf("persist record diagnostic %d for %q: %w", i, diagnostic.RawRecordID, err)
 		}
+		changed = changed || inserted
 	}
-	if err := replaceDiagnostics(ctx, tx, batch.Session); err != nil {
+	diagnosticsChanged, err := replaceDiagnostics(ctx, tx, batch.Session)
+	if err != nil {
 		return fmt.Errorf("replace diagnostics: %w", err)
 	}
-	if err := persistCheckpoint(ctx, tx, batch.Checkpoint); err != nil {
+	changed = changed || diagnosticsChanged
+	checkpointChanged, err := persistCheckpoint(ctx, tx, batch.Checkpoint)
+	if err != nil {
 		return fmt.Errorf("persist checkpoint: %w", err)
 	}
+	changed = changed || checkpointChanged
+	if changed {
+		if err := advanceCanonicalRevision(ctx, tx, batch.Session.ID); err != nil {
+			return fmt.Errorf("advance canonical revision: %w", err)
+		}
+	}
 	return nil
+}
+
+func advanceCanonicalRevision(ctx context.Context, tx *sql.Tx, sessionID model.SessionID) error {
+	result, err := tx.ExecContext(ctx, `UPDATE sessions SET canonical_revision = canonical_revision + 1 WHERE id = ?`, sessionID)
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("session %q is unavailable", sessionID)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO session_projection_states (
+			session_id, kind, status, target_version, target_revision, updated_at
+		)
+		SELECT s.id, d.kind, 'pending', d.target_version, s.canonical_revision, ?
+		FROM sessions s CROSS JOIN projection_definitions d WHERE s.id = ?
+		ON CONFLICT(session_id, kind) DO UPDATE SET
+			status = 'pending', target_version = excluded.target_version,
+			target_revision = excluded.target_revision, run_token = NULL, started_at = NULL, lease_expires_at = NULL,
+			attempt_count = 0, updated_at = excluded.updated_at,
+			failure_code = NULL, failure_summary = NULL, failure_attempt = NULL, failure_at = NULL
+	`, now, sessionID)
+	return err
 }
 
 type sqliteReconciliation struct {
@@ -335,6 +389,30 @@ func (r *sqliteReconciliation) Finalize(ctx context.Context) (err error) {
 	if batchCount == 0 {
 		return wrap("validate staged batches", errors.New("no completed batch was staged"))
 	}
+	priorRevisions := make(map[model.SessionID]int64)
+	rows, err := tx.QueryContext(ctx, `SELECT id, canonical_revision FROM sessions WHERE source_id = ?`, r.sourceID)
+	if err != nil {
+		return wrap("read prior canonical revisions", err)
+	}
+	for rows.Next() {
+		var sessionID model.SessionID
+		var revision int64
+		if err := rows.Scan(&sessionID, &revision); err != nil {
+			rows.Close()
+			return wrap("scan prior canonical revision", err)
+		}
+		priorRevisions[sessionID] = revision
+	}
+	if err := rows.Close(); err != nil {
+		return wrap("close prior canonical revisions", err)
+	}
+	priorDigest, err := canonicalSourceDigest(ctx, tx, r.sourceID)
+	if err != nil {
+		return wrap("fingerprint prior canonical evidence", err)
+	}
+	if _, err := tx.ExecContext(ctx, `SAVEPOINT replace_canonical_evidence`); err != nil {
+		return wrap("begin canonical replacement savepoint", err)
+	}
 	if err := deleteSourceImport(ctx, tx, r.sourceID); err != nil {
 		return wrap("remove stale source data", err)
 	}
@@ -347,9 +425,26 @@ func (r *sqliteReconciliation) Finalize(ctx context.Context) (err error) {
 		if err != nil {
 			return wrap(fmt.Sprintf("decode staged batch %d", i), err)
 		}
-		if err := persistImportBatch(ctx, tx, batch); err != nil {
+		var revisionBase *int64
+		if prior, exists := priorRevisions[batch.Session.ID]; exists {
+			revisionBase = &prior
+			delete(priorRevisions, batch.Session.ID)
+		}
+		if err := persistImportBatchWithRevisionBase(ctx, tx, batch, revisionBase); err != nil {
 			return wrap(fmt.Sprintf("promote staged batch %d", i), err)
 		}
+	}
+	currentDigest, err := canonicalSourceDigest(ctx, tx, r.sourceID)
+	if err != nil {
+		return wrap("fingerprint promoted canonical evidence", err)
+	}
+	if bytes.Equal(priorDigest, currentDigest) {
+		if _, err := tx.ExecContext(ctx, `ROLLBACK TO replace_canonical_evidence`); err != nil {
+			return wrap("restore idempotent canonical evidence", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `RELEASE replace_canonical_evidence`); err != nil {
+		return wrap("finish canonical replacement savepoint", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM reconciliation_runs WHERE run_id = ?`, r.runID); err != nil {
 		return wrap("remove staging run", err)
@@ -365,6 +460,97 @@ func (r *sqliteReconciliation) Finalize(ctx context.Context) (err error) {
 	}
 	committed = true
 	return nil
+}
+
+func canonicalSourceDigest(ctx context.Context, tx *sql.Tx, sourceID model.SourceID) ([]byte, error) {
+	hash := sha256.New()
+	queries := []string{
+		`SELECT id, title, summary, started_at, ended_at, source_id, adapter_name, adapter_version, format_version, model_version, normalization_version FROM sessions WHERE source_id = ? ORDER BY id`,
+		`SELECT id, session_id, source_id, record_sequence, byte_offset, byte_length, content_hash, storage_encoding, original_size, content, retention_policy_version FROM raw_records WHERE source_id = ? ORDER BY id`,
+		`SELECT e.id, e.session_id, e.sequence, e.timestamp, e.kind, e.summary, e.searchable_text, e.data_json, e.raw_record_id, e.raw_source_id, e.raw_record_sequence, e.raw_byte_offset, e.raw_byte_length, e.raw_content_hash, e.retention_policy_version, e.payload_storage FROM events e JOIN sessions s ON s.id = e.session_id WHERE s.source_id = ? ORDER BY e.id`,
+		`SELECT p.event_id, p.retention_policy_version, p.storage_encoding, p.original_size, p.content FROM event_payloads p JOIN events e ON e.id = p.event_id JOIN sessions s ON s.id = e.session_id WHERE s.source_id = ? ORDER BY p.event_id`,
+		`SELECT d.session_id, d.position, d.code, d.severity, d.message, d.event_ids_json, d.raw_record_ids_json FROM session_diagnostics d JOIN sessions s ON s.id = d.session_id WHERE s.source_id = ? ORDER BY d.session_id, d.position`,
+		`SELECT d.session_id, d.raw_record_id, d.ordinal, d.code, d.severity, d.message, d.event_ids_json, d.raw_record_ids_json FROM record_diagnostics d JOIN sessions s ON s.id = d.session_id WHERE s.source_id = ? ORDER BY d.session_id, d.raw_record_id, d.ordinal`,
+		`SELECT source_id, record_sequence, state_version, cursor, fingerprint FROM import_checkpoints WHERE source_id = ? ORDER BY source_id`,
+	}
+	for tableIndex, query := range queries {
+		if err := binary.Write(hash, binary.BigEndian, uint32(tableIndex)); err != nil {
+			return nil, err
+		}
+		rows, err := tx.QueryContext(ctx, query, sourceID)
+		if err != nil {
+			return nil, err
+		}
+		columns, err := rows.Columns()
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		for rows.Next() {
+			values := make([]any, len(columns))
+			destinations := make([]any, len(columns))
+			for i := range values {
+				destinations[i] = &values[i]
+			}
+			if err := rows.Scan(destinations...); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			for _, value := range values {
+				if err := writeDigestValue(hash, value); err != nil {
+					rows.Close()
+					return nil, err
+				}
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return hash.Sum(nil), nil
+}
+
+func writeDigestValue(hash interface{ Write([]byte) (int, error) }, value any) error {
+	var kind byte
+	var data []byte
+	switch typed := value.(type) {
+	case nil:
+		kind = 0
+	case int64:
+		kind = 1
+		data = make([]byte, 8)
+		binary.BigEndian.PutUint64(data, uint64(typed))
+	case float64:
+		kind = 2
+		data = []byte(fmt.Sprintf("%g", typed))
+	case bool:
+		kind = 3
+		if typed {
+			data = []byte{1}
+		}
+	case []byte:
+		kind = 4
+		data = typed
+	case string:
+		kind = 5
+		data = []byte(typed)
+	default:
+		return fmt.Errorf("unsupported canonical digest value %T", value)
+	}
+	if _, err := hash.Write([]byte{kind}); err != nil {
+		return err
+	}
+	var size [8]byte
+	binary.BigEndian.PutUint64(size[:], uint64(len(data)))
+	if _, err := hash.Write(size[:]); err != nil {
+		return err
+	}
+	_, err := hash.Write(data)
+	return err
 }
 
 func selectReconciliationExpected(ctx context.Context, queryer rowQueryer, runID string, sourceID model.SourceID) (importer.ImportCheckpoint, error) {
@@ -464,7 +650,7 @@ func deleteSourceImport(ctx context.Context, tx *sql.Tx, sourceID model.SourceID
 	return nil
 }
 
-func upsertSession(ctx context.Context, tx *sql.Tx, session model.Session) error {
+func upsertSession(ctx context.Context, tx *sql.Tx, session model.Session) (bool, error) {
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO sessions (
 			id, title, summary, started_at, ended_at, source_id,
@@ -481,6 +667,11 @@ func upsertSession(ctx context.Context, tx *sql.Tx, session model.Session) error
 			model_version = excluded.model_version,
 			normalization_version = excluded.normalization_version
 		WHERE sessions.source_id = excluded.source_id
+		  AND (sessions.title IS NOT excluded.title OR sessions.summary IS NOT excluded.summary
+		    OR sessions.started_at IS NOT excluded.started_at OR sessions.ended_at IS NOT excluded.ended_at
+		    OR sessions.adapter_name IS NOT excluded.adapter_name OR sessions.adapter_version IS NOT excluded.adapter_version
+		    OR sessions.format_version IS NOT excluded.format_version OR sessions.model_version IS NOT excluded.model_version
+		    OR sessions.normalization_version IS NOT excluded.normalization_version)
 	`,
 		session.ID,
 		session.Title,
@@ -495,16 +686,23 @@ func upsertSession(ctx context.Context, tx *sql.Tx, session model.Session) error
 		session.Import.NormalizationVersion,
 	)
 	if err != nil {
-		return fmt.Errorf("upsert session %q: %w", session.ID, err)
+		return false, fmt.Errorf("upsert session %q: %w", session.ID, err)
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("inspect session %q upsert: %w", session.ID, err)
+		return false, fmt.Errorf("inspect session %q upsert: %w", session.ID, err)
 	}
-	if rows == 0 {
-		return fmt.Errorf("session %q is already associated with another source", session.ID)
+	if rows == 1 {
+		return true, nil
 	}
-	return nil
+	var sourceID model.SourceID
+	if err := tx.QueryRowContext(ctx, `SELECT source_id FROM sessions WHERE id = ?`, session.ID).Scan(&sourceID); err != nil {
+		return false, fmt.Errorf("inspect unchanged session %q: %w", session.ID, err)
+	}
+	if sourceID != session.Import.SourceID {
+		return false, fmt.Errorf("session %q is already associated with another source", session.ID)
+	}
+	return false, nil
 }
 
 type storedRawRecord struct {
@@ -546,10 +744,10 @@ func rawRecordForStorage(sessionID model.SessionID, rawRecord model.RawRecord) (
 	return stored, nil
 }
 
-func persistRawRecord(ctx context.Context, tx *sql.Tx, sessionID model.SessionID, rawRecord model.RawRecord) error {
+func persistRawRecord(ctx context.Context, tx *sql.Tx, sessionID model.SessionID, rawRecord model.RawRecord) (bool, error) {
 	stored, err := rawRecordForStorage(sessionID, rawRecord)
 	if err != nil {
-		return err
+		return false, err
 	}
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO raw_records (
@@ -561,23 +759,23 @@ func persistRawRecord(ctx context.Context, tx *sql.Tx, sessionID model.SessionID
 		nullableInt(stored.ByteOffset), nullableInt(stored.ByteLength), stored.ContentHash,
 		stored.Encoding, stored.OriginalSize, stored.Content, stored.PolicyVersion)
 	if err != nil {
-		return fmt.Errorf("insert raw record: %w", err)
+		return false, fmt.Errorf("insert raw record: %w", err)
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("inspect raw record insert: %w", err)
+		return false, fmt.Errorf("inspect raw record insert: %w", err)
 	}
 	if rows == 1 {
-		return nil
+		return true, nil
 	}
 	existing, found, err := selectStoredRawRecord(ctx, tx, rawRecord.Ref.ID)
 	if err != nil {
-		return fmt.Errorf("load duplicate raw record: %w", err)
+		return false, fmt.Errorf("load duplicate raw record: %w", err)
 	}
 	if !found || !storedRawRecordEqual(existing, stored) {
-		return fmt.Errorf("%w: raw record ID %q has different source content", importer.ErrRawRecordConflict, rawRecord.Ref.ID)
+		return false, fmt.Errorf("%w: raw record ID %q has different source content", importer.ErrRawRecordConflict, rawRecord.Ref.ID)
 	}
-	return nil
+	return false, nil
 }
 
 func storedRawRecordEqual(left, right storedRawRecord) bool {
@@ -679,10 +877,10 @@ func eventForStorage(event model.Event) (storedEvent, error) {
 	return stored, nil
 }
 
-func persistEvent(ctx context.Context, tx *sql.Tx, event model.Event) error {
+func persistEvent(ctx context.Context, tx *sql.Tx, event model.Event) (bool, error) {
 	stored, err := eventForStorage(event)
 	if err != nil {
-		return err
+		return false, err
 	}
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO events (
@@ -693,29 +891,29 @@ func persistEvent(ctx context.Context, tx *sql.Tx, event model.Event) error {
 		ON CONFLICT(id) DO NOTHING
 	`, stored.values()...)
 	if err != nil {
-		return fmt.Errorf("insert event: %w", err)
+		return false, fmt.Errorf("insert event: %w", err)
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("inspect event insert: %w", err)
+		return false, fmt.Errorf("inspect event insert: %w", err)
 	}
 	if rows == 1 {
 		if stored.Payload != nil {
 			if err := persistEventPayload(ctx, tx, event.ID, *stored.Payload); err != nil {
-				return err
+				return false, err
 			}
 		}
-		return nil
+		return true, nil
 	}
 
 	existing, found, err := selectStoredEvent(ctx, tx, event.ID)
 	if err != nil {
-		return fmt.Errorf("load duplicate event: %w", err)
+		return false, fmt.Errorf("load duplicate event: %w", err)
 	}
 	if !found || !reflect.DeepEqual(existing, stored) {
-		return fmt.Errorf("%w: event ID %q has different canonical content", importer.ErrEventConflict, event.ID)
+		return false, fmt.Errorf("%w: event ID %q has different canonical content", importer.ErrEventConflict, event.ID)
 	}
-	return nil
+	return false, nil
 }
 
 func (e storedEvent) values() []any {
@@ -797,28 +995,63 @@ func scanStoredEvent(scanner rowScanner) (storedEvent, error) {
 	return event, nil
 }
 
-func replaceDiagnostics(ctx context.Context, tx *sql.Tx, session model.Session) error {
+func replaceDiagnostics(ctx context.Context, tx *sql.Tx, session model.Session) (bool, error) {
+	existing, err := selectSessionDiagnostics(ctx, tx, session.ID)
+	if err != nil {
+		return false, err
+	}
+	changed := !reflect.DeepEqual(existing, session.Diagnostics)
+	if !changed {
+		return false, nil
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM session_diagnostics WHERE session_id = ?`, session.ID); err != nil {
-		return fmt.Errorf("delete diagnostics for session %q: %w", session.ID, err)
+		return false, fmt.Errorf("delete diagnostics for session %q: %w", session.ID, err)
 	}
 	for i, diagnostic := range session.Diagnostics {
 		eventIDs, err := json.Marshal(diagnostic.EventIDs)
 		if err != nil {
-			return fmt.Errorf("encode diagnostic %d event IDs: %w", i, err)
+			return false, fmt.Errorf("encode diagnostic %d event IDs: %w", i, err)
 		}
 		rawRecordIDs, err := json.Marshal(diagnostic.RawRecordIDs)
 		if err != nil {
-			return fmt.Errorf("encode diagnostic %d raw record IDs: %w", i, err)
+			return false, fmt.Errorf("encode diagnostic %d raw record IDs: %w", i, err)
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO session_diagnostics (
 				session_id, position, code, severity, message, event_ids_json, raw_record_ids_json
 			) VALUES (?, ?, ?, ?, ?, ?, ?)
 		`, session.ID, i, diagnostic.Code, diagnostic.Severity, diagnostic.Message, string(eventIDs), string(rawRecordIDs)); err != nil {
-			return fmt.Errorf("insert diagnostic %d: %w", i, err)
+			return false, fmt.Errorf("insert diagnostic %d: %w", i, err)
 		}
 	}
-	return nil
+	return true, nil
+}
+
+func selectSessionDiagnostics(ctx context.Context, tx *sql.Tx, sessionID model.SessionID) ([]model.Diagnostic, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT code, severity, message, event_ids_json, raw_record_ids_json
+		FROM session_diagnostics WHERE session_id = ? ORDER BY position
+	`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("read diagnostics for session %q: %w", sessionID, err)
+	}
+	defer rows.Close()
+	var diagnostics []model.Diagnostic
+	for rows.Next() {
+		var diagnostic model.Diagnostic
+		var eventIDs, rawRecordIDs string
+		if err := rows.Scan(&diagnostic.Code, &diagnostic.Severity, &diagnostic.Message, &eventIDs, &rawRecordIDs); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(eventIDs), &diagnostic.EventIDs); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(rawRecordIDs), &diagnostic.RawRecordIDs); err != nil {
+			return nil, err
+		}
+		diagnostics = append(diagnostics, diagnostic)
+	}
+	return diagnostics, rows.Err()
 }
 
 type storedRecordDiagnostic struct {
@@ -853,10 +1086,10 @@ func recordDiagnosticForStorage(sessionID model.SessionID, diagnostic model.Reco
 	}, nil
 }
 
-func persistRecordDiagnostic(ctx context.Context, tx *sql.Tx, sessionID model.SessionID, diagnostic model.RecordDiagnostic) error {
+func persistRecordDiagnostic(ctx context.Context, tx *sql.Tx, sessionID model.SessionID, diagnostic model.RecordDiagnostic) (bool, error) {
 	stored, err := recordDiagnosticForStorage(sessionID, diagnostic)
 	if err != nil {
-		return err
+		return false, err
 	}
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO record_diagnostics (
@@ -866,23 +1099,23 @@ func persistRecordDiagnostic(ctx context.Context, tx *sql.Tx, sessionID model.Se
 	`, stored.SessionID, stored.RawRecordID, stored.Ordinal, stored.Code, stored.Severity, stored.Message,
 		stored.EventIDsJSON, stored.RawRecordIDsJSON)
 	if err != nil {
-		return fmt.Errorf("insert record diagnostic: %w", err)
+		return false, fmt.Errorf("insert record diagnostic: %w", err)
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("inspect record diagnostic insert: %w", err)
+		return false, fmt.Errorf("inspect record diagnostic insert: %w", err)
 	}
 	if rows == 1 {
-		return nil
+		return true, nil
 	}
 	existing, found, err := selectStoredRecordDiagnostic(ctx, tx, diagnostic.RawRecordID, diagnostic.Ordinal)
 	if err != nil {
-		return fmt.Errorf("load duplicate record diagnostic: %w", err)
+		return false, fmt.Errorf("load duplicate record diagnostic: %w", err)
 	}
 	if !found || existing != stored {
-		return fmt.Errorf("%w: raw record %q ordinal %d has different diagnostic content", importer.ErrDiagnosticConflict, diagnostic.RawRecordID, diagnostic.Ordinal)
+		return false, fmt.Errorf("%w: raw record %q ordinal %d has different diagnostic content", importer.ErrDiagnosticConflict, diagnostic.RawRecordID, diagnostic.Ordinal)
 	}
-	return nil
+	return false, nil
 }
 
 func selectStoredRecordDiagnostic(ctx context.Context, queryer rowQueryer, rawRecordID model.RawRecordID, ordinal int64) (storedRecordDiagnostic, bool, error) {
@@ -903,13 +1136,13 @@ func selectStoredRecordDiagnostic(ctx context.Context, queryer rowQueryer, rawRe
 	return diagnostic, true, nil
 }
 
-func persistCheckpoint(ctx context.Context, tx *sql.Tx, checkpoint importer.ImportCheckpoint) error {
+func persistCheckpoint(ctx context.Context, tx *sql.Tx, checkpoint importer.ImportCheckpoint) (bool, error) {
 	existing, found, err := selectCheckpoint(ctx, tx, checkpoint.SourceID)
 	if err != nil {
-		return fmt.Errorf("load current checkpoint: %w", err)
+		return false, fmt.Errorf("load current checkpoint: %w", err)
 	}
 	if found && checkpoint.RecordSequence < existing.RecordSequence {
-		return fmt.Errorf(
+		return false, fmt.Errorf(
 			"%w: source %q record sequence %d is behind %d",
 			importer.ErrCheckpointRegression,
 			checkpoint.SourceID,
@@ -918,8 +1151,9 @@ func persistCheckpoint(ctx context.Context, tx *sql.Tx, checkpoint importer.Impo
 		)
 	}
 	if found && checkpoint.RecordSequence == existing.RecordSequence && !importer.CheckpointEqual(checkpoint, existing) {
-		return fmt.Errorf("%w: source %q fingerprints changed at the committed cursor", importer.ErrCheckpointRegression, checkpoint.SourceID)
+		return false, fmt.Errorf("%w: source %q fingerprints changed at the committed cursor", importer.ErrCheckpointRegression, checkpoint.SourceID)
 	}
+	changed := !found || !importer.CheckpointEqual(checkpoint, existing)
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO import_checkpoints (
 			source_id, record_sequence, state_version, cursor, fingerprint
@@ -931,9 +1165,9 @@ func persistCheckpoint(ctx context.Context, tx *sql.Tx, checkpoint importer.Impo
 			fingerprint = excluded.fingerprint
 	`, checkpoint.SourceID, checkpoint.RecordSequence, checkpoint.StateVersion, checkpoint.Cursor, checkpoint.Fingerprint)
 	if err != nil {
-		return fmt.Errorf("upsert source checkpoint: %w", err)
+		return false, fmt.Errorf("upsert source checkpoint: %w", err)
 	}
-	return nil
+	return changed, nil
 }
 
 func selectCheckpoint(ctx context.Context, queryer rowQueryer, sourceID model.SourceID) (importer.ImportCheckpoint, bool, error) {

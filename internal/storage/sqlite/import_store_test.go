@@ -13,6 +13,7 @@ import (
 
 	"github.com/pooya79/AgentSession/internal/importer"
 	"github.com/pooya79/AgentSession/internal/model"
+	"github.com/pooya79/AgentSession/internal/projection"
 	storagecontract "github.com/pooya79/AgentSession/internal/storage"
 )
 
@@ -501,6 +502,15 @@ func TestImportStoreReconciliationReplacesStaleEvidenceAndRegressedCheckpoint(t 
 	if err := reconcileBatches(context.Background(), store, original.Checkpoint, replacement); err != nil {
 		t.Fatalf("reconcileBatches() error = %v", err)
 	}
+	revision, revisionFound, revisionErr := store.CanonicalRevision(context.Background(), replacement.Session.ID)
+	if revisionErr != nil || !revisionFound || revision != 2 {
+		t.Fatalf("canonical revision after reconciliation = (%d, %v, %v), want monotonic revision 2", revision, revisionFound, revisionErr)
+	}
+	for _, state := range mustProjectionStates(t, store, replacement.Session.ID) {
+		if state.Status != projection.StatusPending || state.TargetRevision != revision {
+			t.Fatalf("projection state after reconciliation = %#v", state)
+		}
+	}
 	gotSession, found, err := store.Session(context.Background(), replacement.Session.ID)
 	if err != nil || !found || !reflect.DeepEqual(gotSession, replacement.Session) {
 		t.Fatalf("Session() = (%#v, %v, %v), want replacement", gotSession, found, err)
@@ -527,6 +537,15 @@ func TestImportStoreReconciliationReplacesStaleEvidenceAndRegressedCheckpoint(t 
 	}
 }
 
+func mustProjectionStates(t *testing.T, store *ImportStore, sessionID model.SessionID) []projection.State {
+	t.Helper()
+	states, err := store.States(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return states
+}
+
 func TestImportStoreStagingIsInvisibleAndRepeatedReconciliationIsIdempotent(t *testing.T) {
 	t.Parallel()
 	store := openImportStore(t)
@@ -551,8 +570,21 @@ func TestImportStoreStagingIsInvisibleAndRepeatedReconciliationIsIdempotent(t *t
 	if err := reconciliation.Finalize(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	claim, claimed, err := store.Claim(context.Background(), replacement.Session.ID, projection.KindSearch)
+	if err != nil || !claimed {
+		t.Fatalf("Claim() before reconciliation retry = (%#v, %v, %v)", claim, claimed, err)
+	}
+	if completed, err := store.Complete(context.Background(), claim); err != nil || !completed {
+		t.Fatalf("Complete() before reconciliation retry = (%v, %v)", completed, err)
+	}
 	if err := reconcileBatches(context.Background(), store, replacement.Checkpoint, replacement); err != nil {
 		t.Fatalf("identical reconciliation retry error = %v", err)
+	}
+	if revision, found, err := store.CanonicalRevision(context.Background(), replacement.Session.ID); err != nil || !found || revision != 2 {
+		t.Fatalf("canonical revision after identical reconciliation retry = (%d, %v, %v), want 2", revision, found, err)
+	}
+	if state := projectionState(t, store, replacement.Session.ID, projection.KindSearch); !state.Usable() {
+		t.Fatalf("ready projection invalidated by identical reconciliation retry: %#v", state)
 	}
 	events, err := store.Events(context.Background(), replacement.Session.ID)
 	if err != nil || len(events) != 1 || events[0].Summary != "replacement" {
@@ -628,8 +660,21 @@ func TestImportStoreRetryPreventsDuplicatesAndAdvancesCheckpoint(t *testing.T) {
 	if err := store.CommitBatch(context.Background(), batch); err != nil {
 		t.Fatalf("first CommitBatch() error = %v", err)
 	}
+	claim, claimed, err := store.Claim(context.Background(), batch.Session.ID, projection.KindSearch)
+	if err != nil || !claimed {
+		t.Fatalf("Claim() before retry = (%#v, %v, %v)", claim, claimed, err)
+	}
+	if completed, err := store.Complete(context.Background(), claim); err != nil || !completed {
+		t.Fatalf("Complete() before retry = (%v, %v)", completed, err)
+	}
 	if err := store.CommitBatch(context.Background(), batch); err != nil {
 		t.Fatalf("identical retry CommitBatch() error = %v", err)
+	}
+	if revision, found, err := store.CanonicalRevision(context.Background(), batch.Session.ID); err != nil || !found || revision != 1 {
+		t.Fatalf("canonical revision after identical retry = (%d, %v, %v), want 1", revision, found, err)
+	}
+	if state := projectionState(t, store, batch.Session.ID, projection.KindSearch); !state.Usable() {
+		t.Fatalf("ready projection invalidated by identical retry: %#v", state)
 	}
 
 	advanced := batch

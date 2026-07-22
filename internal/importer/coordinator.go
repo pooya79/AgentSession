@@ -287,7 +287,7 @@ func (c *Coordinator) importPrepared(ctx context.Context, source Source, adapter
 		if result.ProjectionError != nil {
 			progress.publish(PhaseProjecting, []model.Diagnostic{{
 				Code: "import.projection.failed", Severity: model.SeverityWarning,
-				Message: fmt.Sprintf("Projection failed after canonical import: %v", result.ProjectionError),
+				Message: "One or more projections remain incomplete; inspect projection status and retry.",
 			}})
 		}
 	}
