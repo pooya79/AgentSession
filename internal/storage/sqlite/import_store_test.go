@@ -322,6 +322,25 @@ func TestImportStoreTimelineDoesNotLoadDetachedPayloads(t *testing.T) {
 	if _, _, err := store.Event(context.Background(), batch.Events[0].ID); err == nil {
 		t.Fatal("Event() error = nil after payload corruption, want detail decode error")
 	}
+	page, more, err := store.EventSummaryPage(context.Background(), batch.Session.ID, nil, 10)
+	if err != nil || more || !reflect.DeepEqual(page, want) {
+		t.Fatalf("EventSummaryPage() = (%#v, %v, %v), want payload-free summary", page, more, err)
+	}
+	envelope, found, err := store.EventEnvelope(context.Background(), batch.Session.ID, batch.Events[0].ID)
+	if err != nil || !found || envelope.ID != batch.Events[0].ID {
+		t.Fatalf("EventEnvelope() = (%#v, %v, %v), want payload-free detail", envelope, found, err)
+	}
+	if _, found, err := store.EventPayload(context.Background(), batch.Session.ID, batch.Events[0].ID); err == nil || !found {
+		t.Fatalf("EventPayload() = (found=%v, err=%v), want explicit corrupt-payload error", found, err)
+	}
+	diagnostics, err := store.Diagnostics(context.Background(), batch.Session.ID, nil, 1)
+	if err != nil || diagnostics.Total != 2 || len(diagnostics.Diagnostics) != 1 {
+		t.Fatalf("Diagnostics(session) = (%#v, %v), want bounded exact total", diagnostics, err)
+	}
+	diagnostics, err = store.Diagnostics(context.Background(), batch.Session.ID, &batch.Events[0].ID, 10)
+	if err != nil || diagnostics.Total != 1 || diagnostics.Diagnostics[0].Code != "record.partial" {
+		t.Fatalf("Diagnostics(event) = (%#v, %v), want relevant record diagnostic", diagnostics, err)
+	}
 }
 
 func TestImportStoreDoesNotDeriveSearchableTextFromRawContent(t *testing.T) {

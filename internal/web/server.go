@@ -178,9 +178,9 @@ func NewHandler() http.Handler {
 }
 
 // Serve starts the local web interface and gracefully stops when ctx is done.
-func Serve(ctx context.Context, addr string, runtime *app.Runtime) error {
-	if runtime == nil {
-		return errors.New("web: runtime is required")
+func Serve(ctx context.Context, addr string, services app.Services) error {
+	if services == nil {
+		return errors.New("web: application services are required")
 	}
 	server := &http.Server{
 		Addr:              addr,
