@@ -83,19 +83,34 @@ func NewImportProgressHandler(provider ImportSubscriptionProvider) http.Handler 
 }
 
 type importProgressPayload struct {
-	RunID               uint64              `json:"run_id"`
-	SourceID            model.SourceID      `json:"source"`
-	ActiveSourceID      model.SourceID      `json:"active_source"`
-	Phase               app.ImportPhase     `json:"phase"`
-	RecordsProcessed    int64               `json:"records_processed"`
-	EventsProcessed     int64               `json:"events_processed"`
-	RecordsCommitted    int64               `json:"records_committed"`
-	BatchesCommitted    int64               `json:"batches_committed"`
-	DiagnosticsObserved int64               `json:"diagnostics_observed"`
-	DiagnosticsOmitted  int64               `json:"diagnostics_omitted"`
-	RecentDiagnostics   []diagnosticPayload `json:"recent_diagnostics,omitempty"`
-	Complete            bool                `json:"complete"`
-	Failure             string              `json:"failure,omitempty"`
+	RunID                    uint64                   `json:"run_id"`
+	SourceID                 model.SourceID           `json:"source"`
+	ActiveSourceID           model.SourceID           `json:"active_source"`
+	Phase                    app.ImportPhase          `json:"phase"`
+	RecordsProcessed         int64                    `json:"records_processed"`
+	EventsProcessed          int64                    `json:"events_processed"`
+	RecordsCommitted         int64                    `json:"records_committed"`
+	BatchesCommitted         int64                    `json:"batches_committed"`
+	DiagnosticsObserved      int64                    `json:"diagnostics_observed"`
+	DiagnosticsOmitted       int64                    `json:"diagnostics_omitted"`
+	RecentDiagnostics        []diagnosticPayload      `json:"recent_diagnostics,omitempty"`
+	ImportedSessions         []importedSessionPayload `json:"imported_sessions,omitempty"`
+	ImportResultsObserved    int64                    `json:"import_results_observed"`
+	UnchangedResultsObserved int64                    `json:"unchanged_results_observed"`
+	ImportResultsOmitted     int64                    `json:"import_results_omitted"`
+	Complete                 bool                     `json:"complete"`
+	Failure                  string                   `json:"failure,omitempty"`
+}
+
+type importedSessionPayload struct {
+	SourceID          model.SourceID  `json:"source"`
+	SessionID         model.SessionID `json:"session"`
+	Change            string          `json:"change"`
+	RecordsCommitted  int64           `json:"records_committed"`
+	BatchesCommitted  int64           `json:"batches_committed"`
+	CanonicalChanged  bool            `json:"canonical_changed"`
+	Reconciled        bool            `json:"reconciled"`
+	ProjectionWarning bool            `json:"projection_warning"`
 }
 
 type diagnosticPayload struct {
@@ -112,12 +127,21 @@ func importProgressJSON(progress app.ImportProgress) importProgressPayload {
 		Phase: progress.Phase, RecordsProcessed: progress.RecordsProcessed, EventsProcessed: progress.EventsProcessed,
 		RecordsCommitted: progress.RecordsCommitted, BatchesCommitted: progress.BatchesCommitted,
 		DiagnosticsObserved: progress.DiagnosticsObserved, DiagnosticsOmitted: progress.DiagnosticsOmitted,
-		Complete: progress.Complete,
+		ImportResultsObserved: progress.ImportResultsObserved, UnchangedResultsObserved: progress.UnchangedResultsObserved,
+		ImportResultsOmitted: progress.ImportResultsOmitted, Complete: progress.Complete,
 	}
 	for _, diagnostic := range progress.RecentDiagnostics {
 		payload.RecentDiagnostics = append(payload.RecentDiagnostics, diagnosticPayload{
 			Code: diagnostic.Code, Severity: diagnostic.Severity, Message: diagnostic.Message,
 			EventIDs: diagnostic.EventIDs, RawRecordIDs: diagnostic.RawRecordIDs,
+		})
+	}
+	for _, summary := range progress.ImportedSessions {
+		payload.ImportedSessions = append(payload.ImportedSessions, importedSessionPayload{
+			SourceID: summary.SourceID, SessionID: summary.SessionID, Change: string(summary.Change),
+			RecordsCommitted: summary.RecordsCommitted, BatchesCommitted: summary.BatchesCommitted,
+			CanonicalChanged: summary.CanonicalChanged, Reconciled: summary.Reconciled,
+			ProjectionWarning: summary.ProjectionWarning,
 		})
 	}
 	if progress.Failure != nil {
@@ -154,7 +178,10 @@ func NewHandler() http.Handler {
 }
 
 // Serve starts the local web interface and gracefully stops when ctx is done.
-func Serve(ctx context.Context, addr string) error {
+func Serve(ctx context.Context, addr string, runtime *app.Runtime) error {
+	if runtime == nil {
+		return errors.New("web: runtime is required")
+	}
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           NewHandler(),

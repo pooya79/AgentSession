@@ -15,6 +15,11 @@ import (
 // slow observers. The cumulative diagnostic count remains exact.
 const DefaultRecentDiagnostics = 32
 
+// DefaultRecentImportResults bounds session-level results retained in a
+// terminal progress snapshot. It prevents a large container import from
+// becoming unbounded presentation state.
+const DefaultRecentImportResults = 64
+
 // ErrShuttingDown means the manager has permanently stopped accepting work.
 var ErrShuttingDown = errors.New("application is shutting down")
 
@@ -37,19 +42,37 @@ const (
 
 // ImportProgress is an immutable cumulative snapshot of one application job.
 type ImportProgress struct {
-	RunID               uint64
-	SourceID            model.SourceID
-	ActiveSourceID      model.SourceID
-	Phase               ImportPhase
-	RecordsProcessed    int64
-	EventsProcessed     int64
-	RecordsCommitted    int64
-	BatchesCommitted    int64
-	DiagnosticsObserved int64
-	DiagnosticsOmitted  int64
-	RecentDiagnostics   []model.Diagnostic
-	Complete            bool
-	Failure             error
+	RunID                    uint64
+	SourceID                 model.SourceID
+	ActiveSourceID           model.SourceID
+	Phase                    ImportPhase
+	RecordsProcessed         int64
+	EventsProcessed          int64
+	RecordsCommitted         int64
+	BatchesCommitted         int64
+	DiagnosticsObserved      int64
+	DiagnosticsOmitted       int64
+	RecentDiagnostics        []model.Diagnostic
+	ImportedSessions         []ImportedSessionSummary
+	ImportResultsObserved    int64
+	UnchangedResultsObserved int64
+	ImportResultsOmitted     int64
+	Complete                 bool
+	Failure                  error
+}
+
+// ImportedSessionSummary is the presentation-safe result of importing one
+// logical session. Checkpoints and source records deliberately never cross
+// this application boundary.
+type ImportedSessionSummary struct {
+	SourceID          model.SourceID
+	SessionID         model.SessionID
+	Change            importer.SourceChange
+	RecordsCommitted  int64
+	BatchesCommitted  int64
+	CanonicalChanged  bool
+	Reconciled        bool
+	ProjectionWarning bool
 }
 
 // ImportFunc is the synchronous importer operation managed by ImportManager.
@@ -60,6 +83,7 @@ type ImportManager struct {
 	mu              sync.Mutex
 	run             ImportFunc
 	recentLimit     int
+	resultLimit     int
 	jobs            map[model.SourceID]*importJob
 	nextRunID       uint64
 	shuttingDown    bool
@@ -71,6 +95,7 @@ type ImportManager struct {
 // ImportManagerOptions controls bounded in-memory lifecycle state.
 type ImportManagerOptions struct {
 	RecentDiagnostics int
+	ImportResults     int
 }
 
 func NewImportManager(run ImportFunc, options ImportManagerOptions) (*ImportManager, error) {
@@ -84,8 +109,15 @@ func NewImportManager(run ImportFunc, options ImportManagerOptions) (*ImportMana
 	if limit < 0 {
 		return nil, fmt.Errorf("import manager: recent diagnostic limit must not be negative")
 	}
+	resultLimit := options.ImportResults
+	if resultLimit == 0 {
+		resultLimit = DefaultRecentImportResults
+	}
+	if resultLimit < 0 {
+		return nil, fmt.Errorf("import manager: result summary limit must not be negative")
+	}
 	return &ImportManager{
-		run: run, recentLimit: limit, jobs: make(map[model.SourceID]*importJob), settled: make(chan struct{}),
+		run: run, recentLimit: limit, resultLimit: resultLimit, jobs: make(map[model.SourceID]*importJob), settled: make(chan struct{}),
 	}, nil
 }
 
@@ -109,7 +141,8 @@ func (m *ImportManager) Request(source importer.Source) (*ImportSubscription, bo
 	job := &importJob{
 		manager: m, source: source, ctx: ctx, cancel: cancel,
 		subscribers: make(map[*ImportSubscription]chan ImportProgress), recentLimit: m.recentLimit,
-		latest: ImportProgress{RunID: m.nextRunID, SourceID: source.ID, ActiveSourceID: source.ID, Phase: ImportQueued},
+		resultLimit: m.resultLimit,
+		latest:      ImportProgress{RunID: m.nextRunID, SourceID: source.ID, ActiveSourceID: source.ID, Phase: ImportQueued},
 	}
 	m.jobs[source.ID] = job
 	m.wg.Add(1)
@@ -172,6 +205,7 @@ type importJob struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	recentLimit int
+	resultLimit int
 
 	mu          sync.Mutex
 	latest      ImportProgress
@@ -206,7 +240,7 @@ func (j *importJob) detach(subscription *ImportSubscription) {
 
 func (j *importJob) run() {
 	defer j.manager.wg.Done()
-	_, err := j.manager.run(j.ctx, j.source, j.observe)
+	results, err := j.manager.run(j.ctx, j.source, j.observe)
 
 	j.manager.mu.Lock()
 	if j.manager.jobs[j.source.ID] == j {
@@ -214,7 +248,7 @@ func (j *importJob) run() {
 	}
 	j.manager.mu.Unlock()
 
-	j.finish(err)
+	j.finish(results, err)
 }
 
 func (j *importJob) observe(progress importer.Progress) {
@@ -248,9 +282,28 @@ func (j *importJob) appendDiagnostics(diagnostics []model.Diagnostic) {
 	}
 }
 
-func (j *importJob) finish(err error) {
+func (j *importJob) finish(results []importer.ImportResult, err error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	j.latest.ImportResultsObserved = int64(len(results))
+	for _, result := range results {
+		if result.Change == importer.SourceUnchanged {
+			j.latest.UnchangedResultsObserved++
+		}
+	}
+	start := 0
+	if len(results) > j.resultLimit {
+		start = len(results) - j.resultLimit
+		j.latest.ImportResultsOmitted = int64(start)
+	}
+	for _, result := range results[start:] {
+		j.latest.ImportedSessions = append(j.latest.ImportedSessions, ImportedSessionSummary{
+			SourceID: result.SourceID, SessionID: result.SessionID, Change: result.Change,
+			RecordsCommitted: result.RecordsCommitted, BatchesCommitted: result.BatchesCommitted,
+			CanonicalChanged: result.CanonicalChanged, Reconciled: result.Reconciled,
+			ProjectionWarning: result.ProjectionError != nil,
+		})
+	}
 	if err != nil {
 		j.latest.Phase = ImportFailed
 		j.latest.Failure = err
@@ -278,6 +331,7 @@ func (j *importJob) publishLocked() {
 }
 
 func cloneImportProgress(progress ImportProgress) ImportProgress {
+	progress.ImportedSessions = append([]ImportedSessionSummary(nil), progress.ImportedSessions...)
 	if len(progress.RecentDiagnostics) == 0 {
 		progress.RecentDiagnostics = nil
 		return progress
