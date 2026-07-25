@@ -533,37 +533,19 @@ func parseLimit(w http.ResponseWriter, values url.Values) (int, bool) {
 }
 
 func validImportRequest(w http.ResponseWriter, r *http.Request) bool {
-	if r.URL.RawQuery != "" || r.Header.Get(importHeader) != "import" || !sameOrigin(r) {
-		writeError(w, http.StatusBadRequest)
-		return false
-	}
-	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || mediaType != "application/x-www-form-urlencoded" {
-		writeError(w, http.StatusBadRequest)
-		return false
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maximumRequestBody)
-	if err := r.ParseForm(); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			writeError(w, http.StatusRequestEntityTooLarge)
-		} else {
-			writeError(w, http.StatusBadRequest)
-		}
-		return false
-	}
-	if len(r.PostForm) != 0 {
-		writeError(w, http.StatusBadRequest)
-		return false
-	}
-	return true
+	_, ok := validFormRequest(w, r, "import")
+	return ok
 }
 
 // validProjectionRequest is the shared strict form boundary for mutating
 // projection endpoints. It rejects unknown, missing, empty, and duplicate
 // fields before application work can be admitted.
 func validProjectionRequest(w http.ResponseWriter, r *http.Request, fields ...string) (url.Values, bool) {
-	if r.URL.RawQuery != "" || r.Header.Get(importHeader) != "projection" || !sameOrigin(r) {
+	return validFormRequest(w, r, "projection", fields...)
+}
+
+func validFormRequest(w http.ResponseWriter, r *http.Request, requestType string, fields ...string) (url.Values, bool) {
+	if r.URL.RawQuery != "" || r.Header.Get(importHeader) != requestType || !sameOrigin(r) {
 		writeError(w, http.StatusBadRequest)
 		return nil, false
 	}

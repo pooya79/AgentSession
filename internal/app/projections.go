@@ -12,9 +12,20 @@ import (
 	"github.com/pooya79/AgentSession/internal/projection"
 )
 
-// ProjectionKindAll is the application-level selector for rebuilding every
-// registered projection kind. It is not a durable projection kind.
-const ProjectionKindAll = "all"
+const (
+	// ProjectionKindAll is the application-level selector for rebuilding every
+	// registered projection kind. It is not a durable projection kind.
+	ProjectionKindAll = "all"
+
+	// ProjectionStatusPending is the presentation-safe pending status.
+	ProjectionStatusPending = "pending"
+	// ProjectionStatusRunning is the presentation-safe running status.
+	ProjectionStatusRunning = "running"
+	// ProjectionStatusFailed is the presentation-safe failed status.
+	ProjectionStatusFailed = "failed"
+	// ProjectionStatusReady is the presentation-safe ready status.
+	ProjectionStatusReady = "ready"
+)
 
 // ProjectionController is the application-owned boundary around the durable
 // projection manager. Presentation layers never invalidate storage directly.
@@ -242,7 +253,7 @@ func (s *ProjectionService) run(sessionID model.SessionID, job *projectionJob) {
 		s.mu.Lock()
 		// Never retain controller error text: it may contain source-derived
 		// payloads, paths, commands, or environment values.
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		if err != nil && s.ctx.Err() == nil {
 			s.diagnostics[sessionID] = ProjectionDiagnostic{
 				Code: "projection.operation_failed", Summary: "Projection work did not complete. Retry or inspect per-kind status.",
 				At: time.Now().UTC(),

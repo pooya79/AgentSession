@@ -415,7 +415,7 @@ func TestProjectionPanelControlsPollingConfirmationAndSafeDiagnostics(t *testing
 		State: app.EvidenceComplete, SessionID: "session-1", Active: true,
 		Summary: app.ProjectionSummary{Pending: 1},
 		Projections: []app.ProjectionState{{
-			Kind: "search", Status: "pending", TargetVersion: "1", TargetRevision: 2,
+			Kind: "search", Status: app.ProjectionStatusPending, TargetVersion: "1", TargetRevision: 2,
 			Diagnostic: &app.ProjectionDiagnostic{Code: hostile, Summary: hostile},
 		}},
 	}
@@ -446,6 +446,15 @@ func TestProjectionPanelControlsPollingConfirmationAndSafeDiagnostics(t *testing
 		t.Fatalf("selected rebuild calls = %v", services.rebuildCalls)
 	}
 
+	m, cmd = updateModel(t, m, tea.KeyPressMsg{Code: 't', Text: "t"})
+	if cmd == nil {
+		t.Fatal("retry returned no command")
+	}
+	_ = cmd()
+	if services.retryCalls != 1 {
+		t.Fatalf("retry calls = %d", services.retryCalls)
+	}
+
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'a', Text: "a"})
 	if !m.confirmRebuildAll || !strings.Contains(m.View().Content, "[y/n]") {
 		t.Fatal("rebuild-all confirmation was not shown")
@@ -469,6 +478,33 @@ func TestProjectionPanelControlsPollingConfirmationAndSafeDiagnostics(t *testing
 	updated, staleCmd := updateModel(t, m, pollProjectionsMsg{generation: generation})
 	if staleCmd != nil || updated.screen != timelineScreen {
 		t.Fatal("stale projection poll revived observation")
+	}
+}
+
+func TestProjectionActionNotFoundUpdatesPanelWithoutPolling(t *testing.T) {
+	m := New(context.Background(), &servicesStub{})
+	m.screen = projectionsScreen
+	m.projectionGeneration = 3
+	m.projectionStatus = app.ProjectionStatus{
+		State:  app.EvidenceComplete,
+		Active: true,
+		Projections: []app.ProjectionState{{
+			Kind: "search", Status: app.ProjectionStatusRunning,
+		}},
+	}
+
+	updated, cmd := updateModel(t, m, projectionActionMsg{
+		generation: 3,
+		action:     app.ProjectionAction{State: app.EvidenceNotFound},
+	})
+	if cmd != nil {
+		t.Fatal("not-found projection action scheduled polling")
+	}
+	if updated.projectionStatus.State != app.EvidenceNotFound || updated.projectionStatus.Active {
+		t.Fatalf("projection status = %#v", updated.projectionStatus)
+	}
+	if got := updated.View().Content; !strings.Contains(got, "no longer available") {
+		t.Fatalf("not-found projection view = %q", got)
 	}
 }
 

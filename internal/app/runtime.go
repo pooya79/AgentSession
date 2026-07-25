@@ -191,7 +191,10 @@ func (r *Runtime) ListSessions(ctx context.Context, request ListSessionsRequest)
 	for index := range page.Sessions {
 		status, statusErr := r.projections.ProjectionStatus(ctx, page.Sessions[index].ID)
 		if statusErr != nil {
-			return SessionPage{}, statusErr
+			if errors.Is(statusErr, context.Canceled) || errors.Is(statusErr, context.DeadlineExceeded) {
+				return page, statusErr
+			}
+			continue
 		}
 		page.Sessions[index].Projections = status.Summary
 	}

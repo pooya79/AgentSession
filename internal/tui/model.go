@@ -477,7 +477,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.projectionErr = visibleError(msg.err)
 		if msg.err == nil {
 			m.projectionStatus = msg.action.Status
+			m.projectionStatus.State = msg.action.State
 			m.projectionStatus.Active = msg.action.Active
+			if msg.action.State == app.EvidenceNotFound {
+				return m, nil
+			}
 			return m, pollProjections(m.projectionGeneration)
 		}
 		return m, nil

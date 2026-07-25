@@ -292,7 +292,7 @@ func TestProjectionStatusActionsPollingEscapingAndValidation(t *testing.T) {
 		State: app.EvidenceComplete, SessionID: "session-1", Active: true,
 		Summary: app.ProjectionSummary{Running: 1, Stale: 1},
 		Projections: []app.ProjectionState{{
-			Kind: hostile, Status: "running", TargetVersion: hostile, TargetRevision: 2, Stale: true,
+			Kind: hostile, Status: app.ProjectionStatusRunning, TargetVersion: hostile, TargetRevision: 2, Stale: true,
 			Diagnostic: &app.ProjectionDiagnostic{Code: hostile, Summary: hostile},
 		}},
 	}
@@ -345,6 +345,7 @@ func TestProjectionStatusActionsPollingEscapingAndValidation(t *testing.T) {
 		{name: "wrong media", body: "session=a", headers: map[string]string{importHeader: "projection", "Content-Type": "text/plain"}, status: http.StatusBadRequest},
 		{name: "cross origin", body: "session=a", headers: map[string]string{importHeader: "projection", "Content-Type": "application/x-www-form-urlencoded", "Origin": "http://evil.example"}, status: http.StatusBadRequest},
 		{name: "invalid kind", body: "session=a&kind=invalid", headers: headers, status: http.StatusBadRequest},
+		{name: "missing request header", body: "session=a", headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded"}, status: http.StatusBadRequest},
 		{name: "oversized", body: "session=" + strings.Repeat("x", maximumRequestBody+1), headers: headers, status: http.StatusRequestEntityTooLarge},
 	}
 	for _, tt := range tests {
@@ -358,6 +359,27 @@ func TestProjectionStatusActionsPollingEscapingAndValidation(t *testing.T) {
 				t.Fatalf("status = %d, want %d; body = %q", response.Code, tt.status, response.Body.String())
 			}
 		})
+	}
+
+	notFoundHandler := NewHandler(servicesStub{
+		retryProjections: func(context.Context, model.SessionID) (app.ProjectionAction, error) {
+			return app.ProjectionAction{State: app.EvidenceNotFound}, nil
+		},
+		rebuildProjections: func(context.Context, model.SessionID, string) (app.ProjectionAction, error) {
+			return app.ProjectionAction{State: app.EvidenceNotFound}, nil
+		},
+	})
+	for _, endpoint := range []struct {
+		path string
+		body string
+	}{
+		{path: "/projections/retry", body: "session=missing"},
+		{path: "/projections/rebuild", body: "session=missing&kind=all"},
+	} {
+		response := request(t, notFoundHandler, http.MethodPost, endpoint.path, strings.NewReader(endpoint.body), headers)
+		if response.Code != http.StatusNotFound {
+			t.Errorf("%s status = %d, want %d", endpoint.path, response.Code, http.StatusNotFound)
+		}
 	}
 }
 

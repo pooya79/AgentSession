@@ -119,13 +119,13 @@ func RunConsumerContract(t *testing.T, consumer Consumer) {
 	var detailed app.ProjectionSummary
 	for _, state := range projections.Projections {
 		switch state.Status {
-		case "pending":
+		case app.ProjectionStatusPending:
 			detailed.Pending++
-		case "running":
+		case app.ProjectionStatusRunning:
 			detailed.Running++
-		case "failed":
+		case app.ProjectionStatusFailed:
 			detailed.Failed++
-		case "ready":
+		case app.ProjectionStatusReady:
 			detailed.Ready++
 		}
 		if state.Usable {

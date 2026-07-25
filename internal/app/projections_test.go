@@ -15,12 +15,17 @@ import (
 type projectionControllerStub struct {
 	mu      sync.Mutex
 	states  []projection.State
+	status  func(context.Context, model.SessionID) ([]projection.State, error)
 	started chan string
 	release chan struct{}
 	calls   []string
+	errors  map[string]error
 }
 
-func (s *projectionControllerStub) Status(ctx context.Context, _ model.SessionID) ([]projection.State, error) {
+func (s *projectionControllerStub) Status(ctx context.Context, sessionID model.SessionID) ([]projection.State, error) {
+	if s.status != nil {
+		return s.status(ctx, sessionID)
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -53,7 +58,7 @@ func (s *projectionControllerStub) call(ctx context.Context, name string) error 
 		case <-s.release:
 		}
 	}
-	return nil
+	return s.errors[name]
 }
 
 func TestProjectionStatusDerivesUsableStaleAndSafeDiagnostics(t *testing.T) {
@@ -158,5 +163,34 @@ func TestProjectionActionOutlivesInitiatingContextAndShutdownCancelsWorker(t *te
 	defer cancelShutdown()
 	if err := service.Shutdown(shutdownCtx); err != nil {
 		t.Fatalf("shutdown did not cancel and await worker: %v", err)
+	}
+}
+
+func TestProjectionCoordinatorRecordsJoinedFailureWhenServiceContextIsActive(t *testing.T) {
+	controller := &projectionControllerStub{
+		states: []projection.State{{Kind: projection.KindSearch, Status: projection.StatusPending}},
+		errors: map[string]error{
+			"rebuild:search":   context.Canceled,
+			"rebuild:findings": errors.New("projection failed"),
+		},
+	}
+	service := NewProjectionService(controller)
+	job := &projectionJob{running: projectionRequest{kinds: map[projection.Kind]struct{}{
+		projection.KindSearch:   {},
+		projection.KindFindings: {},
+	}}}
+	service.jobs["session"] = job
+	service.wg.Add(1)
+	service.run("session", job)
+
+	status, err := service.ProjectionStatus(context.Background(), "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.OperationDiagnostic == nil || status.OperationDiagnostic.Code != "projection.operation_failed" {
+		t.Fatalf("operation diagnostic = %#v", status.OperationDiagnostic)
+	}
+	if err := service.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
