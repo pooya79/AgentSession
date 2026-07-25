@@ -18,13 +18,37 @@ import (
 )
 
 type servicesStub struct {
-	discover  func(context.Context) (app.SourceDiscovery, error)
-	start     func(context.Context, model.SourceID) (app.ImportStart, error)
-	startAll  func(context.Context) (app.ImportAllStart, error)
-	statusAll func(context.Context) (app.ImportAllStatus, error)
-	list      func(context.Context, app.ListSessionsRequest) (app.SessionPage, error)
-	timeline  func(context.Context, app.TimelineRequest) (app.TimelinePage, error)
-	detail    func(context.Context, app.EventDetailRequest) (app.EventDetail, error)
+	discover           func(context.Context) (app.SourceDiscovery, error)
+	start              func(context.Context, model.SourceID) (app.ImportStart, error)
+	startAll           func(context.Context) (app.ImportAllStart, error)
+	statusAll          func(context.Context) (app.ImportAllStatus, error)
+	list               func(context.Context, app.ListSessionsRequest) (app.SessionPage, error)
+	timeline           func(context.Context, app.TimelineRequest) (app.TimelinePage, error)
+	detail             func(context.Context, app.EventDetailRequest) (app.EventDetail, error)
+	projectionStatus   func(context.Context, model.SessionID) (app.ProjectionStatus, error)
+	retryProjections   func(context.Context, model.SessionID) (app.ProjectionAction, error)
+	rebuildProjections func(context.Context, model.SessionID, string) (app.ProjectionAction, error)
+}
+
+func (s servicesStub) ProjectionStatus(ctx context.Context, sessionID model.SessionID) (app.ProjectionStatus, error) {
+	if s.projectionStatus != nil {
+		return s.projectionStatus(ctx, sessionID)
+	}
+	return app.ProjectionStatus{State: app.EvidenceNotFound, SessionID: sessionID}, nil
+}
+
+func (s servicesStub) RetryProjections(ctx context.Context, sessionID model.SessionID) (app.ProjectionAction, error) {
+	if s.retryProjections != nil {
+		return s.retryProjections(ctx, sessionID)
+	}
+	return app.ProjectionAction{State: app.EvidenceNotFound}, nil
+}
+
+func (s servicesStub) RebuildProjections(ctx context.Context, sessionID model.SessionID, kind string) (app.ProjectionAction, error) {
+	if s.rebuildProjections != nil {
+		return s.rebuildProjections(ctx, sessionID, kind)
+	}
+	return app.ProjectionAction{State: app.EvidenceNotFound}, nil
 }
 
 func (s servicesStub) StartImportAll(ctx context.Context) (app.ImportAllStart, error) {
@@ -259,6 +283,103 @@ func TestImportRequestValidationAndStatusMapping(t *testing.T) {
 				t.Fatalf("status = %d, want %d; body = %q", response.Code, tt.status, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestProjectionStatusActionsPollingEscapingAndValidation(t *testing.T) {
+	hostile := `<img src=x onerror="alert(1)">`
+	status := app.ProjectionStatus{
+		State: app.EvidenceComplete, SessionID: "session-1", Active: true,
+		Summary: app.ProjectionSummary{Running: 1, Stale: 1},
+		Projections: []app.ProjectionState{{
+			Kind: hostile, Status: app.ProjectionStatusRunning, TargetVersion: hostile, TargetRevision: 2, Stale: true,
+			Diagnostic: &app.ProjectionDiagnostic{Code: hostile, Summary: hostile},
+		}},
+	}
+	var retries int
+	var rebuilds []string
+	handler := NewHandler(servicesStub{
+		projectionStatus: func(context.Context, model.SessionID) (app.ProjectionStatus, error) {
+			return status, nil
+		},
+		retryProjections: func(context.Context, model.SessionID) (app.ProjectionAction, error) {
+			retries++
+			return app.ProjectionAction{State: app.EvidenceComplete, Active: true, Joined: true, Status: status}, nil
+		},
+		rebuildProjections: func(_ context.Context, _ model.SessionID, kind string) (app.ProjectionAction, error) {
+			if kind == "invalid" {
+				return app.ProjectionAction{}, app.ErrInvalidRequest
+			}
+			rebuilds = append(rebuilds, kind)
+			return app.ProjectionAction{State: app.EvidenceComplete, Active: true, Status: status}, nil
+		},
+	})
+
+	got := request(t, handler, http.MethodGet, "/fragments/projections?session=session-1", nil, nil)
+	if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "delay:500ms") ||
+		!strings.Contains(got.Body.String(), "&lt;img") || strings.Contains(got.Body.String(), "<img") {
+		t.Fatalf("projection fragment = %d %q", got.Code, got.Body.String())
+	}
+
+	headers := map[string]string{
+		"Content-Type": "application/x-www-form-urlencoded",
+		importHeader:   "projection",
+		"Origin":       "http://example.com",
+	}
+	retry := request(t, handler, http.MethodPost, "/projections/retry", strings.NewReader("session=session-1"), headers)
+	if retry.Code != http.StatusAccepted || retry.Header().Get("X-AgentSession-Projection-Joined") != "true" || retries != 1 {
+		t.Fatalf("retry response = %d %q calls=%d", retry.Code, retry.Body.String(), retries)
+	}
+	rebuild := request(t, handler, http.MethodPost, "/projections/rebuild", strings.NewReader("session=session-1&kind=all"), headers)
+	if rebuild.Code != http.StatusAccepted || len(rebuilds) != 1 || rebuilds[0] != app.ProjectionKindAll {
+		t.Fatalf("rebuild response = %d %q calls=%v", rebuild.Code, rebuild.Body.String(), rebuilds)
+	}
+
+	tests := []struct {
+		name, body string
+		headers    map[string]string
+		status     int
+	}{
+		{name: "duplicate", body: "session=a&session=b", headers: headers, status: http.StatusBadRequest},
+		{name: "extra", body: "session=a&extra=b", headers: headers, status: http.StatusBadRequest},
+		{name: "wrong media", body: "session=a", headers: map[string]string{importHeader: "projection", "Content-Type": "text/plain"}, status: http.StatusBadRequest},
+		{name: "cross origin", body: "session=a", headers: map[string]string{importHeader: "projection", "Content-Type": "application/x-www-form-urlencoded", "Origin": "http://evil.example"}, status: http.StatusBadRequest},
+		{name: "invalid kind", body: "session=a&kind=invalid", headers: headers, status: http.StatusBadRequest},
+		{name: "missing request header", body: "session=a", headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded"}, status: http.StatusBadRequest},
+		{name: "oversized", body: "session=" + strings.Repeat("x", maximumRequestBody+1), headers: headers, status: http.StatusRequestEntityTooLarge},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := "/projections/retry"
+			if tt.name == "invalid kind" {
+				path = "/projections/rebuild"
+			}
+			response := request(t, handler, http.MethodPost, path, strings.NewReader(tt.body), tt.headers)
+			if response.Code != tt.status {
+				t.Fatalf("status = %d, want %d; body = %q", response.Code, tt.status, response.Body.String())
+			}
+		})
+	}
+
+	notFoundHandler := NewHandler(servicesStub{
+		retryProjections: func(context.Context, model.SessionID) (app.ProjectionAction, error) {
+			return app.ProjectionAction{State: app.EvidenceNotFound}, nil
+		},
+		rebuildProjections: func(context.Context, model.SessionID, string) (app.ProjectionAction, error) {
+			return app.ProjectionAction{State: app.EvidenceNotFound}, nil
+		},
+	})
+	for _, endpoint := range []struct {
+		path string
+		body string
+	}{
+		{path: "/projections/retry", body: "session=missing"},
+		{path: "/projections/rebuild", body: "session=missing&kind=all"},
+	} {
+		response := request(t, notFoundHandler, http.MethodPost, endpoint.path, strings.NewReader(endpoint.body), headers)
+		if response.Code != http.StatusNotFound {
+			t.Errorf("%s status = %d, want %d", endpoint.path, response.Code, http.StatusNotFound)
+		}
 	}
 }
 

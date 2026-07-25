@@ -48,6 +48,9 @@ type SessionSummary struct {
 	EventCount  int64
 	State       EvidenceState
 	Diagnostics DiagnosticSynopsis
+	// Projections reports derived-data readiness separately from State, which
+	// describes canonical evidence only.
+	Projections ProjectionSummary
 }
 
 type ListSessionsRequest struct {

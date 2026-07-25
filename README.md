@@ -61,9 +61,14 @@ you return from a timeline.
 
 Use `↑`/`↓` or `j`/`k` to move, `Enter` to open a session or event, `n`/`p` or
 PageDown/PageUp to change pages, `i` to inspect source-level indexing progress
-and diagnostics, and `Esc` to go back. Press `r` on the sessions or indexing
+and diagnostics, and `Esc` to go back. From a timeline, press `x` to inspect
+projection readiness separately from canonical evidence. In that panel, use
+`t` to retry pending or failed projections, `b` to rebuild the selected kind,
+and `a` followed by `y` to confirm rebuilding every kind. Projection work is
+application-owned and continues after leaving the panel. Press `r` on the sessions or indexing
 screen to rescan all sources and reload sessions; on timeline and event screens
-it reloads the current evidence. Press `q` or Ctrl-C to exit. Event lists fetch
+it reloads the current evidence, and in the projection panel it refreshes
+status. Press `q` or Ctrl-C to exit. Event lists fetch
 only lightweight summaries; normalized payload JSON is loaded when an event is
 opened, and retained raw record contents are never displayed.
 
@@ -89,7 +94,11 @@ filesystem watcher or periodic background scan.
 Open an indexed session to browse its paginated evidence timeline. Session and
 timeline diagnostics remain visible when evidence is partial or unavailable.
 Normalized payloads are fetched only when an event detail is opened; retained
-raw record contents are not exposed by the web UI.
+raw record contents are not exposed by the web UI. Timeline pages also show
+per-kind projection state and bounded diagnostics. Retry and rebuild actions
+return immediately and poll while application-owned work is active; closing
+the page stops observation without stopping the operation. Rebuilding all
+kinds requires an explicit confirmation.
 
 The web command accepts the same repeatable, typed source flags as the import
 command. Explicit paths supplement default discovery locations:

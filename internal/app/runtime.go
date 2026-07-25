@@ -184,7 +184,21 @@ func (r *Runtime) Projections() *ProjectionService          { return r.projectio
 func (r *Runtime) Explorer() Explorer                       { return r.explorer }
 
 func (r *Runtime) ListSessions(ctx context.Context, request ListSessionsRequest) (SessionPage, error) {
-	return r.explorer.ListSessions(ctx, request)
+	page, err := r.explorer.ListSessions(ctx, request)
+	if err != nil {
+		return page, err
+	}
+	for index := range page.Sessions {
+		status, statusErr := r.projections.ProjectionStatus(ctx, page.Sessions[index].ID)
+		if statusErr != nil {
+			if errors.Is(statusErr, context.Canceled) || errors.Is(statusErr, context.DeadlineExceeded) {
+				return page, statusErr
+			}
+			continue
+		}
+		page.Sessions[index].Projections = status.Summary
+	}
+	return page, nil
 }
 
 func (r *Runtime) Timeline(ctx context.Context, request TimelineRequest) (TimelinePage, error) {
@@ -193,6 +207,28 @@ func (r *Runtime) Timeline(ctx context.Context, request TimelineRequest) (Timeli
 
 func (r *Runtime) EventDetail(ctx context.Context, request EventDetailRequest) (EventDetail, error) {
 	return r.explorer.EventDetail(ctx, request)
+}
+
+// ProjectionStatus exposes the runtime-owned projection lifecycle service.
+func (r *Runtime) ProjectionStatus(ctx context.Context, sessionID model.SessionID) (ProjectionStatus, error) {
+	return r.projections.ProjectionStatus(ctx, sessionID)
+}
+
+// RetryProjections admits retry work only while the runtime accepts new work.
+func (r *Runtime) RetryProjections(ctx context.Context, sessionID model.SessionID) (ProjectionAction, error) {
+	if err := r.accepting(); err != nil {
+		return ProjectionAction{}, err
+	}
+	return r.projections.RetryProjections(ctx, sessionID)
+}
+
+// RebuildProjections admits rebuild work only while the runtime accepts new
+// work.
+func (r *Runtime) RebuildProjections(ctx context.Context, sessionID model.SessionID, kind string) (ProjectionAction, error) {
+	if err := r.accepting(); err != nil {
+		return ProjectionAction{}, err
+	}
+	return r.projections.RebuildProjections(ctx, sessionID, kind)
 }
 
 // Discover refreshes the runtime source catalog.
@@ -364,6 +400,9 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 		return err
 	}
 	if err := r.imports.Shutdown(ctx); err != nil {
+		return err
+	}
+	if err := r.projections.Shutdown(ctx); err != nil {
 		return err
 	}
 	if err := r.db.Close(); err != nil {

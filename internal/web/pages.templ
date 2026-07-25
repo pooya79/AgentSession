@@ -206,6 +206,9 @@ templ sessionsFragment(page app.SessionPage, first bool) {
 					<span class="metadata">
 						{ formatTime(session.StartedAt) } · { formatCount(session.EventCount, "event") } · { string(session.State) }
 					</span>
+					<span class="metadata">
+						Projections: { strconvFormatInt(session.Projections.Usable) } usable · { strconvFormatInt(session.Projections.Pending) } pending · { strconvFormatInt(session.Projections.Running) } running · { strconvFormatInt(session.Projections.Failed) } failed · { strconvFormatInt(session.Projections.Stale) } stale
+					</span>
 				</a>
 			}
 		</div>
@@ -227,6 +230,19 @@ templ timelinePage(sessionID model.SessionID, page app.TimelinePage) {
 				<h1 class="session-id">{ string(sessionID) }</h1>
 				<p class="muted">Normalized summaries load first. Payloads remain collapsed until requested.</p>
 			</section>
+			<section class="projection-panel" aria-labelledby="projection-title">
+				<div class="section-heading">
+					<div>
+						<p class="eyebrow">Derived data</p>
+						<h2 id="projection-title">Projection readiness</h2>
+					</div>
+					<button class="quiet" type="button" hx-get={ projectionsFragmentURL(sessionID) } hx-target="#projection-status" hx-swap="innerHTML">Refresh</button>
+				</div>
+				<p class="muted">Canonical timeline evidence remains available independently of projection state.</p>
+				<div id="projection-status" hx-get={ projectionsFragmentURL(sessionID) } hx-trigger="load" hx-swap="innerHTML">
+					<p class="notice" role="status">Loading projection status…</p>
+				</div>
+			</section>
 			<section aria-label="Session events">
 				@timelineEvidenceState(page)
 				<div class="timeline">
@@ -235,6 +251,65 @@ templ timelinePage(sessionID model.SessionID, page app.TimelinePage) {
 			</section>
 		</main>
 	}
+}
+
+templ projectionStatusFragment(status app.ProjectionStatus) {
+	<div class="projection-status" aria-live="polite">
+		if status.State == app.EvidenceNotFound {
+			<p class="notice warning">This session is no longer available.</p>
+		} else {
+			<div class="stat-grid" aria-label="Projection statistics">
+				<div><strong>{ strconvFormatInt(status.Summary.Usable) }</strong><span>usable</span></div>
+				<div><strong>{ strconvFormatInt(status.Summary.Pending) }</strong><span>pending</span></div>
+				<div><strong>{ strconvFormatInt(status.Summary.Running) }</strong><span>running</span></div>
+				<div><strong>{ strconvFormatInt(status.Summary.Failed) }</strong><span>failed</span></div>
+				<div><strong>{ strconvFormatInt(status.Summary.Stale) }</strong><span>stale</span></div>
+			</div>
+			if status.OperationDiagnostic != nil {
+				<p class="notice warning"><strong>{ status.OperationDiagnostic.Code }</strong>: { status.OperationDiagnostic.Summary }</p>
+			}
+			<div class="projection-list">
+				for _, projection := range status.Projections {
+					<article class={ "projection-row state-" + projection.Status }>
+						<div>
+							<strong>{ projection.Kind }</strong>
+							<span class="badge">{ projection.Status }</span>
+							if projection.Usable {
+								<span class="badge state-complete">usable</span>
+							}
+							if projection.Stale {
+								<span class="badge warning">stale</span>
+							}
+							<p class="metadata">Target { projection.TargetVersion }/{ strconvFormatInt(projection.TargetRevision) } · { formatCount(projection.AttemptCount, "attempt") }</p>
+							if projection.Diagnostic != nil {
+								<p class="notice warning"><strong>{ projection.Diagnostic.Code }</strong>: { projection.Diagnostic.Summary }</p>
+							}
+						</div>
+						<form method="post" action="/projections/rebuild" hx-post="/projections/rebuild" hx-target="#projection-status" hx-swap="innerHTML" hx-headers={ `{"X-AgentSession-Request":"projection"}` }>
+							<input type="hidden" name="session" value={ string(status.SessionID) }/>
+							<input type="hidden" name="kind" value={ projection.Kind }/>
+							<button class="quiet" type="submit">Rebuild</button>
+						</form>
+					</article>
+				}
+			</div>
+			<div class="projection-actions">
+				<form method="post" action="/projections/retry" hx-post="/projections/retry" hx-target="#projection-status" hx-swap="innerHTML" hx-headers={ `{"X-AgentSession-Request":"projection"}` }>
+					<input type="hidden" name="session" value={ string(status.SessionID) }/>
+					<button type="submit">Retry pending and failed</button>
+				</form>
+				<form method="post" action="/projections/rebuild" hx-post="/projections/rebuild" hx-target="#projection-status" hx-swap="innerHTML" hx-confirm="Rebuild every projection for this session?" hx-headers={ `{"X-AgentSession-Request":"projection"}` }>
+					<input type="hidden" name="session" value={ string(status.SessionID) }/>
+					<input type="hidden" name="kind" value="all"/>
+					<button class="danger" type="submit">Rebuild all…</button>
+				</form>
+			</div>
+			if status.Active || status.Summary.Running > 0 {
+				<p class="muted">Projection work continues in the application if this page is closed.</p>
+				<div hx-get={ projectionsFragmentURL(status.SessionID) } hx-trigger="load delay:500ms" hx-target="#projection-status" hx-swap="innerHTML"></div>
+			}
+		}
+	</div>
 }
 
 templ timelineEvidenceState(page app.TimelinePage) {

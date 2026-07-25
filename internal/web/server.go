@@ -361,6 +361,85 @@ func newHandler(services app.Services, streamShutdown <-chan struct{}) http.Hand
 		}
 		render(w, r, http.StatusOK, eventFragment(detail, payload))
 	})
+	// Projection fragments are observations only. Conditional polling is
+	// encoded by the fragment and stops when work is no longer active/running.
+	mux.HandleFunc("GET /fragments/projections", func(w http.ResponseWriter, r *http.Request) {
+		if services == nil {
+			writeError(w, http.StatusServiceUnavailable)
+			return
+		}
+		values, ok := strictQuery(w, r, "session")
+		if !ok {
+			return
+		}
+		session, ok := requiredSingle(w, values, "session")
+		if !ok {
+			return
+		}
+		status, err := services.ProjectionStatus(r.Context(), model.SessionID(session))
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if status.State == app.EvidenceNotFound {
+			writeError(w, http.StatusNotFound)
+			return
+		}
+		render(w, r, http.StatusOK, projectionStatusFragment(status))
+	})
+	// Action handlers return the admitted snapshot immediately; the runtime,
+	// rather than this request, owns the operation that follows.
+	mux.HandleFunc("POST /projections/retry", func(w http.ResponseWriter, r *http.Request) {
+		if services == nil {
+			writeError(w, http.StatusServiceUnavailable)
+			return
+		}
+		values, ok := validProjectionRequest(w, r, "session")
+		if !ok {
+			return
+		}
+		session, ok := requiredSingle(w, values, "session")
+		if !ok {
+			return
+		}
+		action, err := services.RetryProjections(r.Context(), model.SessionID(session))
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if action.State == app.EvidenceNotFound {
+			writeError(w, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("X-AgentSession-Projection-Joined", strconv.FormatBool(action.Joined))
+		render(w, r, http.StatusAccepted, projectionStatusFragment(action.Status))
+	})
+	mux.HandleFunc("POST /projections/rebuild", func(w http.ResponseWriter, r *http.Request) {
+		if services == nil {
+			writeError(w, http.StatusServiceUnavailable)
+			return
+		}
+		values, ok := validProjectionRequest(w, r, "session", "kind")
+		if !ok {
+			return
+		}
+		session, sessionOK := requiredSingle(w, values, "session")
+		kind, kindOK := requiredSingle(w, values, "kind")
+		if !sessionOK || !kindOK {
+			return
+		}
+		action, err := services.RebuildProjections(r.Context(), model.SessionID(session), kind)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if action.State == app.EvidenceNotFound {
+			writeError(w, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("X-AgentSession-Projection-Joined", strconv.FormatBool(action.Joined))
+		render(w, r, http.StatusAccepted, projectionStatusFragment(action.Status))
+	})
 
 	assets, err := fs.Sub(embeddedAssets, "assets")
 	if err != nil {
@@ -454,14 +533,26 @@ func parseLimit(w http.ResponseWriter, values url.Values) (int, bool) {
 }
 
 func validImportRequest(w http.ResponseWriter, r *http.Request) bool {
-	if r.URL.RawQuery != "" || r.Header.Get(importHeader) != "import" || !sameOrigin(r) {
+	_, ok := validFormRequest(w, r, "import")
+	return ok
+}
+
+// validProjectionRequest is the shared strict form boundary for mutating
+// projection endpoints. It rejects unknown, missing, empty, and duplicate
+// fields before application work can be admitted.
+func validProjectionRequest(w http.ResponseWriter, r *http.Request, fields ...string) (url.Values, bool) {
+	return validFormRequest(w, r, "projection", fields...)
+}
+
+func validFormRequest(w http.ResponseWriter, r *http.Request, requestType string, fields ...string) (url.Values, bool) {
+	if r.URL.RawQuery != "" || r.Header.Get(importHeader) != requestType || !sameOrigin(r) {
 		writeError(w, http.StatusBadRequest)
-		return false
+		return nil, false
 	}
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/x-www-form-urlencoded" {
 		writeError(w, http.StatusBadRequest)
-		return false
+		return nil, false
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maximumRequestBody)
 	if err := r.ParseForm(); err != nil {
@@ -471,13 +562,23 @@ func validImportRequest(w http.ResponseWriter, r *http.Request) bool {
 		} else {
 			writeError(w, http.StatusBadRequest)
 		}
-		return false
+		return nil, false
 	}
-	if len(r.PostForm) != 0 {
+	allowed := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		allowed[field] = struct{}{}
+	}
+	for key, values := range r.PostForm {
+		if _, ok := allowed[key]; !ok || len(values) != 1 || values[0] == "" {
+			writeError(w, http.StatusBadRequest)
+			return nil, false
+		}
+	}
+	if len(r.PostForm) != len(allowed) {
 		writeError(w, http.StatusBadRequest)
-		return false
+		return nil, false
 	}
-	return true
+	return r.PostForm, true
 }
 
 func sameOrigin(r *http.Request) bool {

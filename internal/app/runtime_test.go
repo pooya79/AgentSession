@@ -18,6 +18,60 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+type runtimeExplorerStub struct {
+	page SessionPage
+	err  error
+}
+
+func (s runtimeExplorerStub) ListSessions(context.Context, ListSessionsRequest) (SessionPage, error) {
+	return s.page, s.err
+}
+
+func (runtimeExplorerStub) Timeline(context.Context, TimelineRequest) (TimelinePage, error) {
+	return TimelinePage{}, nil
+}
+
+func (runtimeExplorerStub) EventDetail(context.Context, EventDetailRequest) (EventDetail, error) {
+	return EventDetail{}, nil
+}
+
+func TestRuntimeListSessionsPreservesCanonicalPageWhenProjectionStatusFails(t *testing.T) {
+	summary := ProjectionSummary{Ready: 1, Usable: 1}
+	readyRevision := int64(1)
+	controller := &projectionControllerStub{status: func(_ context.Context, sessionID model.SessionID) ([]projection.State, error) {
+		if sessionID == "session-2" {
+			return nil, errors.New("projection storage unavailable")
+		}
+		return []projection.State{{
+			Kind: projection.KindSearch, Status: projection.StatusReady,
+			TargetVersion: "1", TargetRevision: 1, ReadyVersion: "1", ReadyRevision: &readyRevision,
+		}}, nil
+	}}
+	projections := NewProjectionService(controller)
+	defer projections.Shutdown(context.Background())
+	runtime := &Runtime{
+		explorer: runtimeExplorerStub{page: SessionPage{
+			State: EvidenceComplete,
+			Sessions: []SessionSummary{
+				{ID: "session-1", State: EvidenceComplete},
+				{ID: "session-2", State: EvidenceComplete},
+			},
+		}},
+		projections: projections,
+	}
+
+	page, err := runtime.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(page.Sessions) != 2 || page.Sessions[0].Projections != summary {
+		t.Fatalf("canonical page or enriched session lost: %#v", page)
+	}
+	if page.Sessions[1].Projections != (ProjectionSummary{}) {
+		t.Fatalf("unavailable projection summary = %#v", page.Sessions[1].Projections)
+	}
+}
+
 func TestRuntimeImportsAllAdaptersIdempotently(t *testing.T) {
 	root := t.TempDir()
 	sources := filepath.Join(root, "sources")
