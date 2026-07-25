@@ -18,6 +18,8 @@ type theme struct {
 	footer    lipgloss.Style
 }
 
+// newTheme selects contrast-appropriate colors for the terminal background
+// while keeping the same semantic roles in both variants.
 func newTheme(dark bool) theme {
 	foreground := lipgloss.Color("#D7DEE9")
 	muted := lipgloss.Color("#8290A6")

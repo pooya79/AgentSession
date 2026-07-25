@@ -15,9 +15,15 @@ import (
 )
 
 const (
-	DefaultPageSize        = 50
-	MaximumPageSize        = 200
-	DiagnosticSynopsisMax  = 10
+	// DefaultPageSize is used when an exploration request does not specify a
+	// limit.
+	DefaultPageSize = 50
+	// MaximumPageSize bounds exploration reads and presentation memory use.
+	MaximumPageSize = 200
+	// DiagnosticSynopsisMax bounds the diagnostic evidence returned inline.
+	DiagnosticSynopsisMax = 10
+	// SessionPreviewMaxRunes bounds human-readable session previews without
+	// splitting a UTF-8 code point.
 	SessionPreviewMaxRunes = 240
 	maximumIdentifierSize  = 512
 )
@@ -57,6 +63,8 @@ type SessionSummary struct {
 	Projections ProjectionSummary
 }
 
+// LibraryOverview contains exact counts over committed canonical evidence.
+// IssueSessions counts affected sessions rather than individual diagnostics.
 type LibraryOverview struct {
 	Sessions      int64
 	Events        int64
@@ -293,6 +301,9 @@ func pageLimit(limit int) (int, error) {
 }
 
 func encodeCursor(cursor cursorEnvelope) (string, error) {
+	// Session pagination changed from start time to maintained activity time.
+	// Giving that cursor its own version prevents an older cursor from
+	// silently skipping or repeating sessions under the new ordering.
 	cursor.Version = 1
 	if cursor.Kind == sessionCursorKind {
 		cursor.Version = sessionCursorVersion
@@ -335,6 +346,9 @@ func decodeSessionCursor(value string) (storage.SessionCursor, error) {
 	return result, nil
 }
 
+// sessionPreview prefers an adapter-provided summary and falls back to the
+// first user message. Whitespace normalization keeps previews compact and
+// deterministic across terminal and web presentation layers.
 func sessionPreview(summary, firstUserMessage string) string {
 	preview := strings.Join(strings.Fields(summary), " ")
 	if preview == "" {

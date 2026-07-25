@@ -228,6 +228,14 @@ type contextExecer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
+// refreshSessionExploration maintains the bounded, sortable fields used by
+// session-list reads. It runs in the import transaction so readers never see
+// canonical evidence and its exploration metadata at different revisions.
+//
+// Last activity prefers the explicit session end, then the latest timestamped
+// event, then the session start. Timestamps are padded to nanosecond precision
+// because RFC3339 values with optional fractional seconds do not sort
+// chronologically as plain text.
 func refreshSessionExploration(ctx context.Context, db contextExecer, sessionID model.SessionID) error {
 	_, err := db.ExecContext(ctx, `
 		UPDATE sessions

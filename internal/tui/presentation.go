@@ -6,6 +6,8 @@ import (
 	"github.com/pooya79/AgentSession/internal/sanitization"
 )
 
+// syncViewports refreshes dimensions and content after state or terminal-size
+// changes. Viewport models own offset clamping across both operations.
 func (m *Model) syncViewports() {
 	width := max(1, m.renderWidth())
 	height := max(1, m.contentHeight())
@@ -23,6 +25,8 @@ func (m *Model) syncViewports() {
 	m.helpViewport.SetContentLines(sanitizeLines(m.helpLines()))
 }
 
+// sanitizeLines establishes the terminal-safety boundary before any
+// application-owned ANSI styling is added.
 func sanitizeLines(lines []string) []string {
 	safe := make([]string, len(lines))
 	for index, line := range lines {
@@ -31,6 +35,8 @@ func sanitizeLines(lines []string) []string {
 	return safe
 }
 
+// styleLines applies semantic color while preserving text labels for terminals
+// that omit or down-sample color.
 func (m Model) styleLines(lines []string) []string {
 	safe := sanitizeLines(lines)
 	for index, line := range safe {
@@ -60,6 +66,7 @@ func (m Model) styleLines(lines []string) []string {
 	return safe
 }
 
+// styleStatusLine maps the persistent status row to its semantic theme.
 func styleStatusLine(styles theme, line string) string {
 	lineState := strings.ToLower(line)
 	switch {
@@ -76,6 +83,8 @@ func styleStatusLine(styles theme, line string) string {
 	}
 }
 
+// isScreenTitle recognizes section headings that are not the first rendered
+// line and therefore need explicit title styling.
 func isScreenTitle(line string) bool {
 	for _, prefix := range []string{
 		"Imported sessions", "Indexing details", "Timeline", "Event detail",
@@ -88,6 +97,8 @@ func isScreenTitle(line string) bool {
 	return false
 }
 
+// helpLines returns the complete control reference; the viewport handles
+// wrapping and scrolling in constrained terminals.
 func (m Model) helpLines() []string {
 	lines := []string{
 		"Keyboard help",

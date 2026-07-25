@@ -80,6 +80,9 @@ func dataSourceName(path string) (string, error) {
 	return u.String(), nil
 }
 
+// enableWriteAheadLogging permits exploration reads to continue while an
+// importer commits a batch. The bounded busy timeout in dataSourceName handles
+// the remaining short-lived writer contention.
 func enableWriteAheadLogging(ctx context.Context, db *sql.DB) error {
 	var journalMode string
 	if err := db.QueryRowContext(ctx, `PRAGMA journal_mode = WAL`).Scan(&journalMode); err != nil {

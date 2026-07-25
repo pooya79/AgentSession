@@ -14,6 +14,8 @@ import (
 
 var _ storagecontract.ExplorationReader = (*ImportStore)(nil)
 
+// LibraryOverview returns exact library aggregates from committed canonical
+// tables. UNION ensures a session with both diagnostic kinds is counted once.
 func (s *ImportStore) LibraryOverview(ctx context.Context) (storagecontract.LibraryOverview, error) {
 	var overview storagecontract.LibraryOverview
 	err := s.db.QueryRowContext(ctx, `
@@ -43,6 +45,9 @@ func (s *ImportStore) ListSessions(ctx context.Context, after *storagecontract.S
 		FROM sessions s`
 	args := make([]any, 0, 4)
 	if after != nil {
+		// The keyset mirrors ORDER BY exactly. NULL activity sorts last, so a
+		// cursor in that partition advances by ID without revisiting dated
+		// sessions.
 		if after.LastActivityAt == nil {
 			query += ` WHERE s.last_activity_at IS NULL AND s.id > ?`
 			args = append(args, after.ID)

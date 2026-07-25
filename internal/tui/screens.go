@@ -9,9 +9,9 @@ import (
 	"github.com/pooya79/AgentSession/internal/model"
 )
 
-// Each screen owns its page, selection, loading, error, and viewport state.
-// The root Model coordinates navigation and asynchronous lifetimes between
-// these units rather than making each screen an independent tea.Model.
+// sessionsState owns the bounded session page, stable selection, and separately
+// loaded library overview. The root Model coordinates navigation and
+// asynchronous lifetimes rather than making each screen an independent model.
 type sessionsState struct {
 	page            app.SessionPage
 	loading         bool
@@ -25,6 +25,7 @@ type sessionsState struct {
 	overviewErr     error
 }
 
+// timelineState owns one bounded event page and its page-local selection.
 type timelineState struct {
 	page       app.TimelinePage
 	loading    bool
@@ -34,6 +35,8 @@ type timelineState struct {
 	pageNumber int
 }
 
+// detailState retains the last usable detail while a refresh is in flight or
+// fails, allowing the UI to represent partial availability honestly.
 type detailState struct {
 	detail   app.EventDetail
 	loading  bool
@@ -41,12 +44,16 @@ type detailState struct {
 	viewport viewport.Model
 }
 
+// indexingState contains the latest observation of application-owned import
+// work and the viewport used to inspect its evidence.
 type indexingState struct {
 	status   app.ImportAllStatus
 	err      error
 	viewport viewport.Model
 }
 
+// projectionsState owns panel observation state. generation rejects delayed
+// replies after refresh or navigation; cancel stops observation, not work.
 type projectionsState struct {
 	generation   uint64
 	cancel       context.CancelFunc

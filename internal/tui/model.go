@@ -47,6 +47,8 @@ type sessionsLoadedMsg struct {
 	err        error
 }
 
+// overviewLoadedMsg carries library aggregates separately from the session
+// page so a failed aggregate read does not hide usable session evidence.
 type overviewLoadedMsg struct {
 	generation uint64
 	overview   app.LibraryOverview
@@ -196,6 +198,8 @@ func (m Model) Init() tea.Cmd {
 	)
 }
 
+// loadOverview requests exact committed-evidence totals independently of the
+// paginated session list.
 func loadOverview(ctx context.Context, services app.Services, generation uint64) tea.Cmd {
 	return func() tea.Msg {
 		overview, err := services.LibraryOverview(ctx)
@@ -257,6 +261,8 @@ func pollImport(generation uint64) tea.Cmd {
 	})
 }
 
+// readProjectionStatus obtains one snapshot owned by the projection panel's
+// current observation generation.
 func readProjectionStatus(ctx context.Context, services app.Services, generation uint64, sessionID model.SessionID) tea.Cmd {
 	return func() tea.Msg {
 		status, err := services.ProjectionStatus(ctx, sessionID)
@@ -280,6 +286,8 @@ func projectionAction(services app.Services, generation uint64, sessionID model.
 	}
 }
 
+// pollProjections creates one delayed observation message. A handler schedules
+// another only while application-owned projection work remains active.
 func pollProjections(generation uint64) tea.Cmd {
 	return tea.Tick(pollInterval, func(time.Time) tea.Msg {
 		return pollProjectionsMsg{generation: generation}
@@ -354,6 +362,8 @@ func (m *Model) stopProjectionObservation() {
 	m.projectionsState.cancel = nil
 }
 
+// startSpinner pairs newly admitted asynchronous work with at most one spinner
+// tick loop.
 func (m *Model) startSpinner(cmd tea.Cmd) tea.Cmd {
 	if cmd == nil || m.spinnerActive {
 		return cmd
@@ -370,6 +380,8 @@ func (m *Model) observeProjectionsNow() tea.Cmd {
 	return m.startSpinner(readProjectionStatus(ctx, m.services, m.projectionsState.generation, m.sessionsState.selected))
 }
 
+// runProjectionAction marks the panel busy while the application accepts or
+// joins projection work.
 func (m *Model) runProjectionAction(kind string, retry bool) tea.Cmd {
 	m.projectionsState.loading = true
 	return m.startSpinner(projectionAction(
@@ -576,6 +588,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// busy reports whether any visible request or application-owned workflow needs
+// spinner animation.
 func (m Model) busy() bool {
 	return m.sessionsState.loading || m.sessionsState.overviewLoading || m.timelineState.loading || m.detailState.loading ||
 		m.projectionsState.loading || m.projectionsState.status.Active || m.indexingState.status.Active
@@ -744,6 +758,8 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// retryAvailable reports whether at least one pending or failed projection has
+// a builder in the current runtime.
 func (m Model) retryAvailable() bool {
 	for _, state := range m.projectionsState.status.Projections {
 		if state.BuildAvailable && (state.Status == app.ProjectionStatusPending || state.Status == app.ProjectionStatusFailed) {
@@ -753,6 +769,8 @@ func (m Model) retryAvailable() bool {
 	return false
 }
 
+// rebuildAllAvailable requires every registered projection kind to have a
+// builder, preventing a bulk action from promising work this binary cannot do.
 func (m Model) rebuildAllAvailable() bool {
 	if len(m.projectionsState.status.Projections) == 0 {
 		return false
@@ -821,8 +839,8 @@ func (m *Model) refresh() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// move changes the selected row on list screens and the viewport on long-form
-// detail screens.
+// move changes selection within the active list screen and keeps stable
+// session identity synchronized with the sessions cursor.
 func (m *Model) move(delta int) {
 	switch m.screen {
 	case sessionsScreen:
@@ -843,6 +861,8 @@ func (m *Model) move(delta int) {
 	}
 }
 
+// moveToBoundary jumps to the first or last row, or to the corresponding
+// viewport boundary on long-form screens.
 func (m *Model) moveToBoundary(last bool) {
 	switch m.screen {
 	case sessionsScreen:
@@ -887,7 +907,8 @@ func (m *Model) moveToBoundary(last bool) {
 	}
 }
 
-// moveScroll delegates to a viewport that clamps its stored offset.
+// moveScroll delegates clamping to the viewport so repeated input cannot leave
+// a latent offset beyond the rendered content.
 func (m *Model) moveScroll(delta int) {
 	m.syncViewports()
 	target := &m.detailState.viewport
@@ -901,7 +922,7 @@ func (m *Model) moveScroll(delta int) {
 	}
 }
 
-// pageStep derives a usable viewport-sized scroll increment for PageUp/PageDown.
+// pageStep derives a viewport-sized jump while always making forward progress.
 func (m Model) pageStep() int {
 	return max(1, m.contentHeight())
 }
@@ -998,7 +1019,8 @@ func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View renders a bounded, terminal-safe representation of the current screen.
+// View renders the active screen, applying sanitization before styling and
+// fitting the result to the current terminal dimensions.
 func (m Model) View() tea.View {
 	width := m.width
 	if width <= 0 {

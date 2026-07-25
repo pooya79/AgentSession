@@ -183,6 +183,7 @@ func (r *Runtime) ProjectionService() *ProjectionService    { return r.projectio
 func (r *Runtime) Projections() *ProjectionService          { return r.projections }
 func (r *Runtime) Explorer() Explorer                       { return r.explorer }
 
+// LibraryOverview reports aggregate counts over committed canonical evidence.
 func (r *Runtime) LibraryOverview(ctx context.Context) (LibraryOverview, error) {
 	return r.explorer.LibraryOverview(ctx)
 }
