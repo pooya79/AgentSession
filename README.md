@@ -24,9 +24,9 @@ analysis are still under development.
   including unknown columns and exact TEXT/BLOB values, are retained.
 
 The application composes discovery and all adapters behind one shared runtime.
-Canonical imports are stored locally in SQLite. The web command indexes
-automatically at startup, while the import command remains available for an
-explicit command-line run.
+Canonical imports are stored locally in SQLite. Both interactive interfaces
+index automatically at startup, while the import command remains available for
+an explicit command-line run.
 
 ## Session source discovery
 
@@ -52,6 +52,20 @@ Run the terminal interface:
 ```bash
 go run ./cmd/agentsession
 ```
+
+The TUI immediately starts or joins an asynchronous scan of every supported
+source and loads already imported sessions at the same time. Indexing is
+application-owned, so it continues while you browse timelines and event
+details. The sessions list refreshes when an observed scan finishes and whenever
+you return from a timeline.
+
+Use `↑`/`↓` or `j`/`k` to move, `Enter` to open a session or event, `n`/`p` or
+PageDown/PageUp to change pages, `i` to inspect source-level indexing progress
+and diagnostics, and `Esc` to go back. Press `r` on the sessions or indexing
+screen to rescan all sources and reload sessions; on timeline and event screens
+it reloads the current evidence. Press `q` or Ctrl-C to exit. Event lists fetch
+only lightweight summaries; normalized payload JSON is loaded when an event is
+opened, and retained raw record contents are never displayed.
 
 Start the local web interface:
 
