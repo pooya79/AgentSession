@@ -46,7 +46,9 @@ func newRootCommand(info buildinfo.Info) *cobra.Command {
 		Version:       info.String(),
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return withRuntime(cmd.Context(), *options, func(runtime *app.Runtime) error { return tui.Run(runtime) })
+			return withRuntime(cmd.Context(), *options, func(runtime *app.Runtime) error {
+				return tui.Run(cmd.Context(), runtime)
+			})
 		},
 	}
 	cmd.SetVersionTemplate("{{.Version}}\n")
