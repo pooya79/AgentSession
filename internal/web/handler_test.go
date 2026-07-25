@@ -11,20 +11,34 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/pooya79/AgentSession/internal/app"
 	"github.com/pooya79/AgentSession/internal/app/apptest"
-	"github.com/pooya79/AgentSession/internal/importer"
 	"github.com/pooya79/AgentSession/internal/model"
 )
 
 type servicesStub struct {
-	discover func(context.Context) (app.SourceDiscovery, error)
-	start    func(context.Context, model.SourceID) (app.ImportStart, error)
-	list     func(context.Context, app.ListSessionsRequest) (app.SessionPage, error)
-	timeline func(context.Context, app.TimelineRequest) (app.TimelinePage, error)
-	detail   func(context.Context, app.EventDetailRequest) (app.EventDetail, error)
+	discover  func(context.Context) (app.SourceDiscovery, error)
+	start     func(context.Context, model.SourceID) (app.ImportStart, error)
+	startAll  func(context.Context) (app.ImportAllStart, error)
+	statusAll func(context.Context) (app.ImportAllStatus, error)
+	list      func(context.Context, app.ListSessionsRequest) (app.SessionPage, error)
+	timeline  func(context.Context, app.TimelineRequest) (app.TimelinePage, error)
+	detail    func(context.Context, app.EventDetailRequest) (app.EventDetail, error)
+}
+
+func (s servicesStub) StartImportAll(ctx context.Context) (app.ImportAllStart, error) {
+	if s.startAll != nil {
+		return s.startAll(ctx)
+	}
+	return app.ImportAllStart{Status: app.ImportAllStatus{Phase: app.ImportAllUpToDate}}, nil
+}
+
+func (s servicesStub) ImportAllStatus(ctx context.Context) (app.ImportAllStatus, error) {
+	if s.statusAll != nil {
+		return s.statusAll(ctx)
+	}
+	return app.ImportAllStatus{Phase: app.ImportAllUpToDate}, nil
 }
 
 func (s servicesStub) DiscoverSources(ctx context.Context) (app.SourceDiscovery, error) {
@@ -71,7 +85,7 @@ func TestSourceFragmentStatesAndEscaping(t *testing.T) {
 	}{
 		{name: "empty", discovery: app.SourceDiscovery{State: app.EvidenceComplete}, want: []string{"No supported session sources"}},
 		{name: "unavailable", discovery: app.SourceDiscovery{State: app.EvidenceUnavailable, Diagnostics: []app.DiscoveryDiagnostic{{Code: hostile, Message: hostile, Path: hostile}}}, want: []string{"Source discovery is unavailable", "&lt;img"}},
-		{name: "partial", discovery: app.SourceDiscovery{State: app.EvidencePartial, Sources: []app.SourceSummary{{ID: "source-1", Kind: hostile, Path: hostile, Origin: hostile}}, Diagnostics: []app.DiscoveryDiagnostic{{Code: "warning", Message: hostile}}}, want: []string{"Import selected", "source-1", "&lt;img"}},
+		{name: "partial", discovery: app.SourceDiscovery{State: app.EvidencePartial, Sources: []app.SourceSummary{{ID: "source-1", Kind: hostile, Path: hostile, Origin: hostile}}, Diagnostics: []app.DiscoveryDiagnostic{{Code: "warning", Message: hostile}}}, want: []string{"1 source discovered", "&lt;img"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -213,24 +227,15 @@ func TestHandlerRejectsMalformedAndDuplicateInputs(t *testing.T) {
 }
 
 func TestImportRequestValidationAndStatusMapping(t *testing.T) {
-	manager, err := app.NewImportManager(func(context.Context, importer.Source, importer.ProgressObserver) ([]importer.ImportResult, error) {
-		return []importer.ImportResult{{SessionID: "session-1", SourceID: "source-1", Change: importer.SourceNew}}, nil
-	}, app.ImportManagerOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := testImportSource("source-1")
-	handler := NewHandler(servicesStub{start: func(_ context.Context, sourceID model.SourceID) (app.ImportStart, error) {
-		if sourceID == "missing" {
-			return app.ImportStart{State: app.EvidenceNotFound}, nil
-		}
-		subscription, joined, err := manager.Request(source)
-		return app.ImportStart{State: app.EvidenceComplete, Subscription: subscription, Joined: joined}, err
+	calls := 0
+	handler := NewHandler(servicesStub{startAll: func(context.Context) (app.ImportAllStart, error) {
+		calls++
+		return app.ImportAllStart{Status: app.ImportAllStatus{RunID: 7, Active: true, Phase: app.ImportAllIndexing}, Joined: true}, nil
 	}})
 
 	validHeaders := map[string]string{"Content-Type": "application/x-www-form-urlencoded", importHeader: "import", "Origin": "http://example.com"}
-	valid := request(t, handler, http.MethodPost, "/imports", strings.NewReader("source=source-1"), validHeaders)
-	if valid.Code != http.StatusOK || !strings.Contains(valid.Header().Get("Content-Type"), "text/event-stream") || !strings.Contains(valid.Body.String(), "event: completion") {
+	valid := request(t, handler, http.MethodPost, "/imports", strings.NewReader(""), validHeaders)
+	if valid.Code != http.StatusAccepted || valid.Header().Get("X-AgentSession-Import-Joined") != "true" || !strings.Contains(valid.Body.String(), "Indexing local evidence") || calls != 1 {
 		t.Fatalf("valid import = %d %q", valid.Code, valid.Body.String())
 	}
 
@@ -240,13 +245,12 @@ func TestImportRequestValidationAndStatusMapping(t *testing.T) {
 		headers map[string]string
 		status  int
 	}{
-		{name: "missing header", body: "source=source-1", headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded"}, status: http.StatusBadRequest},
-		{name: "cross origin", body: "source=source-1", headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded", importHeader: "import", "Origin": "http://evil.example"}, status: http.StatusBadRequest},
-		{name: "wrong media", body: "source=source-1", headers: map[string]string{"Content-Type": "text/plain", importHeader: "import"}, status: http.StatusBadRequest},
-		{name: "duplicate", body: "source=a&source=b", headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded", importHeader: "import"}, status: http.StatusBadRequest},
-		{name: "extra", body: "source=a&other=b", headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded", importHeader: "import"}, status: http.StatusBadRequest},
-		{name: "missing source", body: "source=missing", headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded", importHeader: "import"}, status: http.StatusNotFound},
-		{name: "oversized", body: "source=" + strings.Repeat("x", maximumRequestBody+1), headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded", importHeader: "import"}, status: http.StatusRequestEntityTooLarge},
+		{name: "missing header", headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded"}, status: http.StatusBadRequest},
+		{name: "cross origin", headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded", importHeader: "import", "Origin": "http://evil.example"}, status: http.StatusBadRequest},
+		{name: "wrong media", headers: map[string]string{"Content-Type": "text/plain", importHeader: "import"}, status: http.StatusBadRequest},
+		{name: "source selector rejected", body: "source=a", headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded", importHeader: "import"}, status: http.StatusBadRequest},
+		{name: "extra", body: "other=b", headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded", importHeader: "import"}, status: http.StatusBadRequest},
+		{name: "oversized", body: "extra=" + strings.Repeat("x", maximumRequestBody+1), headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded", importHeader: "import"}, status: http.StatusRequestEntityTooLarge},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -259,92 +263,34 @@ func TestImportRequestValidationAndStatusMapping(t *testing.T) {
 }
 
 func TestImportResponseReportsCoalescedWork(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
-	manager, err := app.NewImportManager(func(context.Context, importer.Source, importer.ProgressObserver) ([]importer.ImportResult, error) {
-		close(started)
-		<-release
-		return nil, nil
-	}, app.ImportManagerOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := testImportSource("coalesced")
-	primary, _, err := manager.Request(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer primary.Close()
-	<-started
-	joinedRequest := make(chan struct{})
-	handler := NewHandler(servicesStub{start: func(context.Context, model.SourceID) (app.ImportStart, error) {
-		subscription, joined, err := manager.Request(source)
-		close(joinedRequest)
-		return app.ImportStart{State: app.EvidenceComplete, Subscription: subscription, Joined: joined}, err
+	handler := NewHandler(servicesStub{startAll: func(context.Context) (app.ImportAllStart, error) {
+		return app.ImportAllStart{Joined: true, Status: app.ImportAllStatus{RunID: 3, Active: true, Phase: app.ImportAllIndexing}}, nil
 	}})
-	done := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		req := httptest.NewRequest(http.MethodPost, "/imports", strings.NewReader("source=coalesced"))
-		req.Host = "example.com"
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.Header.Set(importHeader, "import")
-		recorder := httptest.NewRecorder()
-		handler.ServeHTTP(recorder, req)
-		done <- recorder
-	}()
-	<-joinedRequest
-	close(release)
-	response := <-done
-	if response.Header().Get("X-AgentSession-Import-Joined") != "true" || !strings.Contains(response.Body.String(), "event: completion") {
+	response := request(t, handler, http.MethodPost, "/imports", strings.NewReader(""), map[string]string{
+		"Content-Type": "application/x-www-form-urlencoded", importHeader: "import",
+	})
+	if response.Header().Get("X-AgentSession-Import-Joined") != "true" || !strings.Contains(response.Body.String(), "Scanning") {
 		t.Fatalf("coalesced response headers/body = %#v %q", response.Header(), response.Body.String())
 	}
 }
 
-func TestStreamShutdownDetachesObserverWithoutCancelingImport(t *testing.T) {
-	started := make(chan context.Context, 1)
-	release := make(chan struct{})
-	finished := make(chan struct{})
-	manager, err := app.NewImportManager(func(ctx context.Context, _ importer.Source, _ importer.ProgressObserver) ([]importer.ImportResult, error) {
-		started <- ctx
-		<-release
-		close(finished)
-		return nil, nil
-	}, app.ImportManagerOptions{})
-	if err != nil {
-		t.Fatal(err)
+func TestImportStatusTerminalTriggersSessionRefreshAndEscapesDetails(t *testing.T) {
+	hostile := `<script>alert(1)</script>`
+	handler := NewHandler(servicesStub{statusAll: func(context.Context) (app.ImportAllStatus, error) {
+		return app.ImportAllStatus{
+			Phase: app.ImportAllIssues, SourcesDiscovered: 1, SourcesCompleted: 1, SourcesFailed: 1,
+			DiagnosticsTotal: 2, DiagnosticsOmitted: 1,
+			Sources:           []app.ImportAllSourceStatus{{ID: "source", Kind: "codex", Path: hostile, Origin: "default", Phase: app.ImportFailed, Failure: hostile}},
+			RecentDiagnostics: []app.ImportAllDiagnostic{{Code: hostile, Message: hostile, SourcePath: hostile, EventIDs: []model.EventID{validEventID("status")}}},
+		}, nil
+	}})
+	response := request(t, handler, http.MethodGet, "/fragments/import-status", nil, nil)
+	body := response.Body.String()
+	if response.Code != http.StatusOK || response.Header().Get("HX-Trigger") != "sessionsRefresh" || !strings.Contains(body, "completed with issues") || !strings.Contains(body, "earlier diagnostic") {
+		t.Fatalf("terminal status = %d %#v %q", response.Code, response.Header(), body)
 	}
-	source := testImportSource("shutdown-stream")
-	streamShutdown := make(chan struct{})
-	handler := newHandler(servicesStub{start: func(context.Context, model.SourceID) (app.ImportStart, error) {
-		subscription, joined, err := manager.Request(source)
-		return app.ImportStart{State: app.EvidenceComplete, Subscription: subscription, Joined: joined}, err
-	}}, streamShutdown)
-	done := make(chan struct{})
-	go func() {
-		req := httptest.NewRequest(http.MethodPost, "/imports", strings.NewReader("source=shutdown-stream"))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.Header.Set(importHeader, "import")
-		handler.ServeHTTP(httptest.NewRecorder(), req)
-		close(done)
-	}()
-
-	importContext := <-started
-	close(streamShutdown)
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("SSE handler did not stop when web shutdown began")
-	}
-	select {
-	case <-importContext.Done():
-		t.Fatal("stopping the SSE observer canceled application-owned import work")
-	default:
-	}
-	close(release)
-	select {
-	case <-finished:
-	case <-time.After(time.Second):
-		t.Fatal("import runner did not finish after release")
+	if strings.Contains(body, "<script>") || !strings.Contains(body, "&lt;script") || !strings.Contains(body, "Source details") {
+		t.Fatalf("status details were not safely rendered: %q", body)
 	}
 }
 
@@ -393,7 +339,7 @@ func TestEndToEndLocalWebWorkflow(t *testing.T) {
 	fixture := apptest.NewFixture(t)
 	handler := NewHandler(fixture.Services)
 	sources := request(t, handler, http.MethodGet, "/fragments/sources", nil, nil)
-	if sources.Code != http.StatusOK || !strings.Contains(sources.Body.String(), "Import selected") {
+	if sources.Code != http.StatusOK || !strings.Contains(sources.Body.String(), "source discovered") || strings.Contains(sources.Body.String(), "checkbox") {
 		t.Fatalf("sources = %d %q", sources.Code, sources.Body.String())
 	}
 	discovery, err := fixture.Services.DiscoverSources(context.Background())
@@ -401,8 +347,8 @@ func TestEndToEndLocalWebWorkflow(t *testing.T) {
 		t.Fatalf("DiscoverSources() = (%#v, %v)", discovery, err)
 	}
 	headers := map[string]string{"Content-Type": "application/x-www-form-urlencoded", importHeader: "import"}
-	imported := request(t, handler, http.MethodPost, "/imports", strings.NewReader(url.Values{"source": {string(discovery.Sources[0].ID)}}.Encode()), headers)
-	if imported.Code != http.StatusOK || (!strings.Contains(imported.Body.String(), "event: completion") && !strings.Contains(imported.Body.String(), "event: failure")) {
+	imported := request(t, handler, http.MethodPost, "/imports", strings.NewReader(""), headers)
+	if imported.Code != http.StatusAccepted || !strings.Contains(imported.Body.String(), "Indexing local evidence") {
 		t.Fatalf("import = %d %q", imported.Code, imported.Body.String())
 	}
 	sessions := request(t, handler, http.MethodGet, "/fragments/sessions?limit=1", nil, nil)
@@ -415,7 +361,7 @@ func TestEndToEndLocalWebWorkflow(t *testing.T) {
 	}
 	sessionID := page.Sessions[0].ID
 	timeline := request(t, handler, http.MethodGet, "/timeline?session="+url.QueryEscape(string(sessionID))+"&limit=1", nil, nil)
-	if timeline.Code != http.StatusOK || !strings.Contains(timeline.Body.String(), "Load event detail") {
+	if timeline.Code != http.StatusOK || !strings.Contains(timeline.Body.String(), "Inspect event detail") {
 		t.Fatalf("timeline = %d %q", timeline.Code, timeline.Body.String())
 	}
 	timelinePage, err := fixture.Services.Timeline(context.Background(), app.TimelineRequest{SessionID: sessionID, Limit: 1})

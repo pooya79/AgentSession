@@ -25,6 +25,14 @@ func eventFragmentURL(sessionID model.SessionID, eventID model.EventID) string {
 	return "/fragments/event?" + url.Values{"session": {string(sessionID)}, "event": {string(eventID)}}.Encode()
 }
 
+func eventAnchorURL(eventID model.EventID) string {
+	return "#" + url.PathEscape("event-"+string(eventID))
+}
+
+func eventAnchorID(eventID model.EventID) string {
+	return "event-" + string(eventID)
+}
+
 func sessionTitle(session app.SessionSummary) string {
 	if session.Title != "" {
 		return session.Title

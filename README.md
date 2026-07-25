@@ -24,8 +24,9 @@ analysis are still under development.
   including unknown columns and exact TEXT/BLOB values, are retained.
 
 The application composes discovery and all adapters behind one shared runtime.
-Canonical imports are stored locally in SQLite and can be started explicitly
-from the command line.
+Canonical imports are stored locally in SQLite. The web command indexes
+automatically at startup, while the import command remains available for an
+explicit command-line run.
 
 ## Session source discovery
 
@@ -64,10 +65,17 @@ The web server listens on `127.0.0.1:8080` by default. Use `--addr` to select an
 go run ./cmd/agentsession web --addr 127.0.0.1:9000
 ```
 
-The source and session panels load from the shared application services. Select
-one or more discovered sources to import them, then open an imported session to
-browse its paginated event summaries. Normalized payloads are fetched only when
-an event detail is opened; retained raw records are not exposed by the web UI.
+Starting the web server triggers one asynchronous discovery and incremental
+import of every supported source. The dashboard reports live aggregate
+progress, per-source details, failures, and bounded diagnostics while indexing
+continues independently of browser connections. Use **Rescan all sources** to
+run the same idempotent workflow again after local histories change; there is no
+filesystem watcher or periodic background scan.
+
+Open an indexed session to browse its paginated evidence timeline. Session and
+timeline diagnostics remain visible when evidence is partial or unavailable.
+Normalized payloads are fetched only when an event detail is opened; retained
+raw record contents are not exposed by the web UI.
 
 The web command accepts the same repeatable, typed source flags as the import
 command. Explicit paths supplement default discovery locations:

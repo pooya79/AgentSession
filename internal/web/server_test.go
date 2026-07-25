@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -74,6 +75,20 @@ func TestHandler(t *testing.T) {
 	}
 }
 
+func TestServeStartsAutomaticImportBeforeListening(t *testing.T) {
+	calls := 0
+	services := servicesStub{startAll: func(context.Context) (app.ImportAllStart, error) {
+		calls++
+		return app.ImportAllStart{Status: app.ImportAllStatus{Active: true, Phase: app.ImportAllIndexing}}, nil
+	}}
+	if err := Serve(context.Background(), "127.0.0.1:-1", services); err == nil {
+		t.Fatal("Serve() with an invalid address returned no error")
+	}
+	if calls != 1 {
+		t.Fatalf("automatic import starts = %d, want 1", calls)
+	}
+}
+
 func TestImportProgressHandlerStreamsTerminalFailure(t *testing.T) {
 	manager, err := app.NewImportManager(func(_ context.Context, source importer.Source, observe importer.ProgressObserver) ([]importer.ImportResult, error) {
 		observe(importer.Progress{
@@ -103,6 +118,22 @@ func TestImportProgressHandlerStreamsTerminalFailure(t *testing.T) {
 	}
 	if strings.Contains(body, "\ndata: failed") {
 		t.Fatalf("failure introduced an SSE data line: %q", body)
+	}
+}
+
+func TestImportProgressHandlerMapsMissingSourceToNotFound(t *testing.T) {
+	handler := NewImportProgressHandler(func(*http.Request) (*app.ImportSubscription, error) {
+		return nil, fmt.Errorf("request import: %w", app.ErrSourceNotFound)
+	})
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/progress", nil))
+
+	if recorder.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+	if body := recorder.Body.String(); body != "Not Found\n" {
+		t.Errorf("body = %q, want %q", body, "Not Found\n")
 	}
 }
 
