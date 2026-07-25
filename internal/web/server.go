@@ -497,6 +497,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, app.ErrInvalidRequest):
 		writeError(w, http.StatusBadRequest)
+	case errors.Is(err, app.ErrSourceNotFound):
+		writeError(w, http.StatusNotFound)
 	case errors.Is(err, app.ErrShuttingDown), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		writeError(w, http.StatusServiceUnavailable)
 	default:

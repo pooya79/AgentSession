@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -117,6 +118,22 @@ func TestImportProgressHandlerStreamsTerminalFailure(t *testing.T) {
 	}
 	if strings.Contains(body, "\ndata: failed") {
 		t.Fatalf("failure introduced an SSE data line: %q", body)
+	}
+}
+
+func TestImportProgressHandlerMapsMissingSourceToNotFound(t *testing.T) {
+	handler := NewImportProgressHandler(func(*http.Request) (*app.ImportSubscription, error) {
+		return nil, fmt.Errorf("request import: %w", app.ErrSourceNotFound)
+	})
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/progress", nil))
+
+	if recorder.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+	if body := recorder.Body.String(); body != "Not Found\n" {
+		t.Errorf("body = %q, want %q", body, "Not Found\n")
 	}
 }
 
