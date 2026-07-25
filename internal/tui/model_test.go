@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -23,6 +24,8 @@ type servicesStub struct {
 	statusErr           error
 	sessionPage         app.SessionPage
 	sessionErr          error
+	overview            app.LibraryOverview
+	overviewErr         error
 	timeline            app.TimelinePage
 	timelineErr         error
 	detail              app.EventDetail
@@ -69,6 +72,12 @@ func (s *servicesStub) ListSessions(_ context.Context, request app.ListSessionsR
 	defer s.mu.Unlock()
 	s.sessionCalls = append(s.sessionCalls, request)
 	return s.sessionPage, s.sessionErr
+}
+
+func (s *servicesStub) LibraryOverview(context.Context) (app.LibraryOverview, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.overview, s.overviewErr
 }
 
 func (s *servicesStub) Timeline(_ context.Context, request app.TimelineRequest) (app.TimelinePage, error) {
@@ -138,8 +147,8 @@ func TestInitStartsImportAllAndLoadsSessions(t *testing.T) {
 	}
 	m := New(context.Background(), services)
 	msg, ok := m.Init()().(tea.BatchMsg)
-	if !ok || len(msg) != 4 {
-		t.Fatalf("Init() message = %T %#v, want load, import, theme, and spinner commands", msg, msg)
+	if !ok || len(msg) != 5 {
+		t.Fatalf("Init() message = %T %#v, want sessions, overview, import, theme, and spinner commands", msg, msg)
 	}
 	for _, cmd := range msg {
 		switch result := cmd().(type) {
@@ -152,7 +161,7 @@ func TestInitStartsImportAllAndLoadsSessions(t *testing.T) {
 	if services.startCalls != 1 || len(services.sessionCalls) != 1 {
 		t.Fatalf("startup calls = start %d, sessions %d", services.startCalls, len(services.sessionCalls))
 	}
-	if got := m.View().Content; !strings.Contains(got, "Imported sessions") || strings.Contains(got, "Select source") {
+	if got := m.View().Content; !strings.Contains(got, "Sessions dashboard") || strings.Contains(got, "Select source") {
 		t.Fatalf("startup view = %q", got)
 	}
 }
@@ -327,7 +336,15 @@ func TestCursorHistoryAndStaleResponses(t *testing.T) {
 	if len(m.sessionsState.page.Sessions) != 1 || m.sessionsState.page.Sessions[0].ID != "first" {
 		t.Fatalf("stale response replaced sessions: %#v", m.sessionsState.page.Sessions)
 	}
-	m, _ = updateModel(t, m, cmd().(sessionsLoadedMsg))
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("next-page command = %T, want batch", cmd())
+	}
+	for _, batched := range batch {
+		if loaded, ok := batched().(sessionsLoadedMsg); ok {
+			m, _ = updateModel(t, m, loaded)
+		}
+	}
 	if got := services.sessionCalls[0].Cursor; got != "next" {
 		t.Fatalf("next cursor = %q, want next", got)
 	}
@@ -337,7 +354,13 @@ func TestCursorHistoryAndStaleResponses(t *testing.T) {
 	if m.sessionsState.pageNumber != 0 || cmd == nil {
 		t.Fatalf("previous page = %d, cmd %v", m.sessionsState.pageNumber, cmd != nil)
 	}
-	_ = cmd()
+	previousBatch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("previous-page command = %T, want batch", cmd())
+	}
+	for _, batched := range previousBatch {
+		_ = batched()
+	}
 	if got := services.sessionCalls[1].Cursor; got != "" {
 		t.Fatalf("previous cursor = %q, want first page", got)
 	}
@@ -626,5 +649,78 @@ func TestUnimplementedProjectionActionsAreHonestAndDisabled(t *testing.T) {
 	}
 	if !strings.Contains(m.View().Content, "disabled") {
 		t.Fatalf("disabled action feedback = %q", m.View().Content)
+	}
+}
+
+func TestSessionsDashboardResponsiveLayoutsAndUnavailableMetrics(t *testing.T) {
+	activity := time.Date(2026, 7, 25, 12, 30, 0, 0, time.FixedZone("test", 3*60*60))
+	session := testSession("session-with-a-long-identifier")
+	session.Title = ""
+	session.Preview = "first user request with enough detail to identify the work"
+	session.AgentName = "codex"
+	session.LastActivityAt = &activity
+	m := New(context.Background(), &servicesStub{})
+	m.sessionsState.loading = false
+	m.sessionsState.overviewLoading = false
+	m.sessionsState.overview = app.LibraryOverview{Sessions: 12, Events: 345, Agents: 3, IssueSessions: 2}
+	m.sessionsState.page = app.SessionPage{State: app.EvidenceComplete, Sessions: []app.SessionSummary{session}}
+	m.restoreSessionSelection()
+
+	tests := []struct {
+		name   string
+		width  int
+		height int
+		want   []string
+	}{
+		{name: "wide", width: 120, height: 30, want: []string{"LAST ACTIVITY ↓", "SESSION / PREVIEW", "CODEX", "2026-07-25 09:30 UTC", "┌"}},
+		{name: "medium", width: 90, height: 30, want: []string{"LAST ACTIVITY ↓", "CODEX", "Sessions", "Evidence issues"}},
+		{name: "narrow", width: 60, height: 30, want: []string{"Sessions 12 · Events 345 · Agents 3", "CODEX", "first user request"}},
+		{name: "short", width: 120, height: 14, want: []string{"Sessions 12 · Events 345 · Agents 3", "CODEX", "first user request"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			copy := m
+			copy.width, copy.height = test.width, test.height
+			content := ansi.Strip(copy.View().Content)
+			for _, want := range test.want {
+				if !strings.Contains(content, want) {
+					t.Fatalf("view missing %q:\n%s", want, content)
+				}
+			}
+			for _, line := range strings.Split(content, "\n") {
+				if ansi.StringWidth(line) > test.width {
+					t.Fatalf("line width %d exceeds %d: %q", ansi.StringWidth(line), test.width, line)
+				}
+			}
+		})
+	}
+
+	m.sessionsState.overviewErr = errors.New("aggregate read failed")
+	content := ansi.Strip(m.View().Content)
+	if !strings.Contains(content, "— unavailable") || !strings.Contains(content, "first user request") {
+		t.Fatalf("overview failure disturbed table or lacked explicit unavailable label:\n%s", content)
+	}
+}
+
+func TestSessionsDashboardSanitizesHostileFieldsAndRestoresSelection(t *testing.T) {
+	m := New(context.Background(), &servicesStub{})
+	m.width, m.height = 120, 30
+	m.sessionsState.loading = false
+	m.sessionsState.overviewLoading = false
+	m.sessionsState.selected = "safe-two"
+	m.sessionsState.page = app.SessionPage{Sessions: []app.SessionSummary{
+		{ID: "safe-one", Preview: "\x1b]8;;https://attacker.invalid\aopen\x1b]8;;\a", AgentName: "\x1b[31mcodex", State: app.EvidenceComplete},
+		{ID: "safe-two", Title: "selected", AgentName: "claude", State: app.EvidenceComplete},
+	}}
+	m.restoreSessionSelection()
+	if m.sessionsState.cursor != 1 {
+		t.Fatalf("restored cursor = %d, want 1", m.sessionsState.cursor)
+	}
+	content := m.View().Content
+	if strings.Contains(content, "attacker.invalid") || strings.Contains(content, "\x1b]8;") {
+		t.Fatalf("hostile terminal content survived sanitization: %q", content)
+	}
+	if !strings.Contains(ansi.Strip(content), "> 202") && !strings.Contains(ansi.Strip(content), "> —") {
+		t.Fatalf("focused row marker missing: %q", ansi.Strip(content))
 	}
 }

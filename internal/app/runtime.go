@@ -183,6 +183,10 @@ func (r *Runtime) ProjectionService() *ProjectionService    { return r.projectio
 func (r *Runtime) Projections() *ProjectionService          { return r.projections }
 func (r *Runtime) Explorer() Explorer                       { return r.explorer }
 
+func (r *Runtime) LibraryOverview(ctx context.Context) (LibraryOverview, error) {
+	return r.explorer.LibraryOverview(ctx)
+}
+
 func (r *Runtime) ListSessions(ctx context.Context, request ListSessionsRequest) (SessionPage, error) {
 	page, err := r.explorer.ListSessions(ctx, request)
 	if err != nil {

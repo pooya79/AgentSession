@@ -16,6 +16,7 @@ import (
 
 // Consumer is the exploration portion every presentation integration exposes.
 type Consumer interface {
+	LibraryOverview(context.Context) (app.LibraryOverview, error)
 	ListSessions(context.Context, app.ListSessionsRequest) (app.SessionPage, error)
 	Timeline(context.Context, app.TimelineRequest) (app.TimelinePage, error)
 	EventDetail(context.Context, app.EventDetailRequest) (app.EventDetail, error)
@@ -72,6 +73,10 @@ func NewFixture(t *testing.T) Fixture {
 func RunConsumerContract(t *testing.T, consumer Consumer) {
 	t.Helper()
 	ctx := context.Background()
+	overview, err := consumer.LibraryOverview(ctx)
+	if err != nil || overview.Sessions < 1 || overview.Events < 1 || overview.Agents < 1 {
+		t.Fatalf("LibraryOverview() = (%#v, %v), want indexed totals", overview, err)
+	}
 	sessions, err := consumer.ListSessions(ctx, app.ListSessionsRequest{Limit: 1})
 	if err != nil || sessions.State == app.EvidenceNotFound || len(sessions.Sessions) != 1 {
 		t.Fatalf("ListSessions() = (%#v, %v), want one imported session", sessions, err)

@@ -22,12 +22,20 @@ type servicesStub struct {
 	start              func(context.Context, model.SourceID) (app.ImportStart, error)
 	startAll           func(context.Context) (app.ImportAllStart, error)
 	statusAll          func(context.Context) (app.ImportAllStatus, error)
+	overview           func(context.Context) (app.LibraryOverview, error)
 	list               func(context.Context, app.ListSessionsRequest) (app.SessionPage, error)
 	timeline           func(context.Context, app.TimelineRequest) (app.TimelinePage, error)
 	detail             func(context.Context, app.EventDetailRequest) (app.EventDetail, error)
 	projectionStatus   func(context.Context, model.SessionID) (app.ProjectionStatus, error)
 	retryProjections   func(context.Context, model.SessionID) (app.ProjectionAction, error)
 	rebuildProjections func(context.Context, model.SessionID, string) (app.ProjectionAction, error)
+}
+
+func (s servicesStub) LibraryOverview(ctx context.Context) (app.LibraryOverview, error) {
+	if s.overview != nil {
+		return s.overview(ctx)
+	}
+	return app.LibraryOverview{}, nil
 }
 
 func (s servicesStub) ProjectionStatus(ctx context.Context, sessionID model.SessionID) (app.ProjectionStatus, error) {

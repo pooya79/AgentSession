@@ -56,15 +56,23 @@ go run ./cmd/agentsession
 The TUI immediately starts or joins an asynchronous scan of every supported
 source and loads already imported sessions at the same time. Indexing is
 application-owned, so it continues while you browse timelines and event
-details. The sessions list refreshes when an observed scan finishes and whenever
-you return from a timeline.
+details. The sessions dashboard reports exact indexed session, event, agent,
+and evidence-issue totals independently of the paginated list. Sessions are
+ordered by newest recorded activity (session end, latest timestamped event, or
+session start), with unknown activity last. Each row identifies the source
+agent, such as `CODEX`, `CLAUDE`, or `OPENCODE`, and uses the normalized
+session summary or first user message as a bounded preview when available.
+The dashboard refreshes when an observed scan finishes and whenever you return
+from a timeline.
 
 Use `↑`/`↓` or `j`/`k` to move, Home/End or `g`/`G` to jump to the first or
 last item, `Enter` to open a session or event, and `n`/`p` or
 PageDown/PageUp to change bounded pages. Press `?` for complete,
 screen-specific keyboard help and `Esc` to close help or return to the parent
-screen. The interface adapts its metadata and help layout for narrow and short
-terminals while keeping every action available through the help panel.
+screen. The interface adapts the metric cards and session table for wide,
+narrow, and short terminals while keeping every action available through the
+help panel. Times on the terminal dashboard are displayed deterministically in
+UTC.
 
 Press `i` to inspect source-level indexing progress and diagnostics. From a
 timeline, press `x` to inspect derived projection readiness separately from

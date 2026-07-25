@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	DefaultPageSize       = 50
-	MaximumPageSize       = 200
-	DiagnosticSynopsisMax = 10
-	maximumIdentifierSize = 512
+	DefaultPageSize        = 50
+	MaximumPageSize        = 200
+	DiagnosticSynopsisMax  = 10
+	SessionPreviewMaxRunes = 240
+	maximumIdentifierSize  = 512
 )
 
 var ErrInvalidRequest = errors.New("invalid exploration request")
@@ -39,18 +40,28 @@ type DiagnosticSynopsis struct {
 }
 
 type SessionSummary struct {
-	ID          model.SessionID
-	Title       string
-	Summary     string
-	StartedAt   *time.Time
-	EndedAt     *time.Time
-	SourceID    model.SourceID
-	EventCount  int64
-	State       EvidenceState
-	Diagnostics DiagnosticSynopsis
+	ID             model.SessionID
+	Title          string
+	Summary        string
+	StartedAt      *time.Time
+	EndedAt        *time.Time
+	LastActivityAt *time.Time
+	SourceID       model.SourceID
+	AgentName      string
+	Preview        string
+	EventCount     int64
+	State          EvidenceState
+	Diagnostics    DiagnosticSynopsis
 	// Projections reports derived-data readiness separately from State, which
 	// describes canonical evidence only.
 	Projections ProjectionSummary
+}
+
+type LibraryOverview struct {
+	Sessions      int64
+	Events        int64
+	Agents        int64
+	IssueSessions int64
 }
 
 type ListSessionsRequest struct {
@@ -92,6 +103,7 @@ type EventDetail struct {
 }
 
 type Explorer interface {
+	LibraryOverview(context.Context) (LibraryOverview, error)
 	ListSessions(context.Context, ListSessionsRequest) (SessionPage, error)
 	Timeline(context.Context, TimelineRequest) (TimelinePage, error)
 	EventDetail(context.Context, EventDetailRequest) (EventDetail, error)
@@ -104,6 +116,20 @@ func NewExplorer(reader storage.ExplorationReader) (Explorer, error) {
 		return nil, errors.New("application explorer: reader is required")
 	}
 	return &explorationService{reader: reader}, nil
+}
+
+func (s *explorationService) LibraryOverview(ctx context.Context) (LibraryOverview, error) {
+	if err := ctx.Err(); err != nil {
+		return LibraryOverview{}, err
+	}
+	overview, err := s.reader.LibraryOverview(ctx)
+	if err != nil {
+		return LibraryOverview{}, fmt.Errorf("read library overview: %w", err)
+	}
+	return LibraryOverview{
+		Sessions: overview.Sessions, Events: overview.Events,
+		Agents: overview.Agents, IssueSessions: overview.IssueSessions,
+	}, nil
 }
 
 func (s *explorationService) ListSessions(ctx context.Context, request ListSessionsRequest) (SessionPage, error) {
@@ -140,12 +166,17 @@ func (s *explorationService) ListSessions(ctx context.Context, request ListSessi
 		}
 		page.Sessions = append(page.Sessions, SessionSummary{
 			ID: row.ID, Title: row.Title, Summary: row.Summary, StartedAt: row.StartedAt, EndedAt: row.EndedAt,
-			SourceID: row.SourceID, EventCount: row.EventCount, State: state, Diagnostics: synopsis,
+			LastActivityAt: row.LastActivityAt, SourceID: row.SourceID, AgentName: row.AgentName,
+			Preview:    sessionPreview(row.Summary, row.FirstUserMessage),
+			EventCount: row.EventCount, State: state, Diagnostics: synopsis,
 		})
 	}
 	if more && len(rows) > 0 {
 		last := rows[len(rows)-1]
-		page.NextCursor, err = encodeCursor(cursorEnvelope{Kind: "sessions", SessionID: last.ID, StartedAt: formatCursorTime(last.StartedAt)})
+		page.NextCursor, err = encodeCursor(cursorEnvelope{
+			Kind: "sessions-last-activity", SessionID: last.ID,
+			LastActivityAt: formatCursorTime(last.LastActivityAt),
+		})
 		if err != nil {
 			return SessionPage{}, err
 		}
@@ -239,11 +270,11 @@ func (s *explorationService) EventDetail(ctx context.Context, request EventDetai
 }
 
 type cursorEnvelope struct {
-	Version   int             `json:"v"`
-	Kind      string          `json:"kind"`
-	SessionID model.SessionID `json:"session"`
-	StartedAt *string         `json:"started_at,omitempty"`
-	Sequence  int64           `json:"sequence,omitempty"`
+	Version        int             `json:"v"`
+	Kind           string          `json:"kind"`
+	SessionID      model.SessionID `json:"session"`
+	LastActivityAt *string         `json:"last_activity_at,omitempty"`
+	Sequence       int64           `json:"sequence,omitempty"`
 }
 
 func pageLimit(limit int) (int, error) {
@@ -258,6 +289,9 @@ func pageLimit(limit int) (int, error) {
 
 func encodeCursor(cursor cursorEnvelope) (string, error) {
 	cursor.Version = 1
+	if cursor.Kind == "sessions-last-activity" {
+		cursor.Version = 2
+	}
 	encoded, err := json.Marshal(cursor)
 	if err != nil {
 		return "", fmt.Errorf("encode exploration cursor: %w", err)
@@ -271,7 +305,7 @@ func decodeCursor(value string) (cursorEnvelope, error) {
 		return cursorEnvelope{}, fmt.Errorf("%w: malformed cursor", ErrInvalidRequest)
 	}
 	var cursor cursorEnvelope
-	if err := json.Unmarshal(decoded, &cursor); err != nil || cursor.Version != 1 {
+	if err := json.Unmarshal(decoded, &cursor); err != nil || (cursor.Version != 1 && cursor.Version != 2) {
 		return cursorEnvelope{}, fmt.Errorf("%w: unsupported cursor", ErrInvalidRequest)
 	}
 	return cursor, nil
@@ -279,21 +313,33 @@ func decodeCursor(value string) (cursorEnvelope, error) {
 
 func decodeSessionCursor(value string) (storage.SessionCursor, error) {
 	cursor, err := decodeCursor(value)
-	if err != nil || cursor.Kind != "sessions" {
+	if err != nil || cursor.Version != 2 || cursor.Kind != "sessions-last-activity" {
 		return storage.SessionCursor{}, fmt.Errorf("%w: cursor does not belong to a session list", ErrInvalidRequest)
 	}
 	if err := validateIdentifier("session cursor", string(cursor.SessionID)); err != nil {
 		return storage.SessionCursor{}, err
 	}
 	result := storage.SessionCursor{ID: cursor.SessionID}
-	if cursor.StartedAt != nil {
-		parsed, err := time.Parse(time.RFC3339Nano, *cursor.StartedAt)
+	if cursor.LastActivityAt != nil {
+		parsed, err := time.Parse(time.RFC3339Nano, *cursor.LastActivityAt)
 		if err != nil {
 			return storage.SessionCursor{}, fmt.Errorf("%w: malformed session cursor timestamp", ErrInvalidRequest)
 		}
-		result.StartedAt = &parsed
+		result.LastActivityAt = &parsed
 	}
 	return result, nil
+}
+
+func sessionPreview(summary, firstUserMessage string) string {
+	preview := strings.Join(strings.Fields(summary), " ")
+	if preview == "" {
+		preview = strings.Join(strings.Fields(firstUserMessage), " ")
+	}
+	runes := []rune(preview)
+	if len(runes) <= SessionPreviewMaxRunes {
+		return preview
+	}
+	return string(runes[:SessionPreviewMaxRunes-1]) + "…"
 }
 
 func decodeTimelineCursor(value string, sessionID model.SessionID) (int64, error) {

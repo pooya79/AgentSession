@@ -23,6 +23,10 @@ type runtimeExplorerStub struct {
 	err  error
 }
 
+func (runtimeExplorerStub) LibraryOverview(context.Context) (LibraryOverview, error) {
+	return LibraryOverview{}, nil
+}
+
 func (s runtimeExplorerStub) ListSessions(context.Context, ListSessionsRequest) (SessionPage, error) {
 	return s.page, s.err
 }

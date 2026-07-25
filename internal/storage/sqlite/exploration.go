@@ -14,34 +14,79 @@ import (
 
 var _ storagecontract.ExplorationReader = (*ImportStore)(nil)
 
-// Session timestamps are stored as UTC RFC3339Nano text, whose optional
-// fractional component is not lexically sortable. This expression pads that
-// component so both ordering and keyset comparisons are chronological.
-const sessionStartSortKey = `CASE
-	WHEN s.started_at IS NULL THEN NULL
-	WHEN instr(s.started_at, '.') = 0 THEN substr(s.started_at, 1, 19) || '.000000000Z'
-	ELSE substr(s.started_at, 1, 20) || substr(substr(s.started_at, 21, length(s.started_at) - 21) || '000000000', 1, 9) || 'Z'
+// Canonical timestamps are UTC RFC3339Nano text, whose optional fractional
+// component is not lexically sortable. The session_rows CTE exposes the
+// evidence-derived last_activity value and this expression pads its fraction
+// for chronological ordering and keyset comparisons.
+const sessionActivitySortKey = `CASE
+	WHEN r.last_activity IS NULL THEN NULL
+	WHEN instr(r.last_activity, '.') = 0 THEN substr(r.last_activity, 1, 19) || '.000000000Z'
+	ELSE substr(r.last_activity, 1, 20) || substr(substr(r.last_activity, 21, length(r.last_activity) - 21) || '000000000', 1, 9) || 'Z'
 END`
+
+func (s *ImportStore) LibraryOverview(ctx context.Context) (storagecontract.LibraryOverview, error) {
+	var overview storagecontract.LibraryOverview
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM sessions),
+			(SELECT COUNT(*) FROM events),
+			(SELECT COUNT(DISTINCT adapter_name) FROM sessions),
+			(SELECT COUNT(*) FROM (
+				SELECT session_id FROM session_diagnostics
+				UNION
+				SELECT session_id FROM record_diagnostics
+			))
+	`).Scan(&overview.Sessions, &overview.Events, &overview.Agents, &overview.IssueSessions)
+	if err != nil {
+		return storagecontract.LibraryOverview{}, fmt.Errorf("sqlite exploration: library overview: %w", err)
+	}
+	return overview, nil
+}
 
 func (s *ImportStore) ListSessions(ctx context.Context, after *storagecontract.SessionCursor, limit int) ([]storagecontract.SessionSummary, bool, error) {
 	if limit <= 0 {
 		return nil, false, errors.New("sqlite exploration: list sessions: limit must be positive")
 	}
 	query := `
-		SELECT s.id, s.title, s.summary, s.started_at, s.ended_at, s.source_id, COUNT(e.id)
-		FROM sessions s LEFT JOIN events e ON e.session_id = s.id`
+		WITH session_rows AS (
+			SELECT s.id, s.title, s.summary, s.started_at, s.ended_at, s.source_id,
+			       s.adapter_name, COUNT(e.id) AS event_count,
+			       COALESCE(
+			           s.ended_at,
+			           (SELECT latest.timestamp FROM events latest
+			            WHERE latest.session_id = s.id AND latest.timestamp IS NOT NULL
+			            ORDER BY CASE
+			                WHEN instr(latest.timestamp, '.') = 0 THEN substr(latest.timestamp, 1, 19) || '.000000000Z'
+			                ELSE substr(latest.timestamp, 1, 20) || substr(substr(latest.timestamp, 21, length(latest.timestamp) - 21) || '000000000', 1, 9) || 'Z'
+			            END DESC LIMIT 1),
+			           s.started_at
+			       ) AS last_activity,
+			       COALESCE((
+			           SELECT substr(first_user.searchable_text, 1, 1024)
+			           FROM events first_user
+			           WHERE first_user.session_id = s.id
+			             AND first_user.kind = 'message'
+			             AND first_user.summary = 'User message'
+			           ORDER BY first_user.sequence ASC LIMIT 1
+			       ), '') AS first_user_message
+			FROM sessions s LEFT JOIN events e ON e.session_id = s.id
+			GROUP BY s.id
+		)
+		SELECT r.id, r.title, r.summary, r.started_at, r.ended_at, r.last_activity,
+		       r.source_id, r.adapter_name, r.first_user_message, r.event_count
+		FROM session_rows r`
 	args := make([]any, 0, 4)
 	if after != nil {
-		if after.StartedAt == nil {
-			query += ` WHERE s.started_at IS NULL AND s.id > ?`
+		if after.LastActivityAt == nil {
+			query += ` WHERE r.last_activity IS NULL AND r.id > ?`
 			args = append(args, after.ID)
 		} else {
-			encoded := after.StartedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")
-			query += ` WHERE s.started_at IS NULL OR ` + sessionStartSortKey + ` < ? OR (` + sessionStartSortKey + ` = ? AND s.id > ?)`
+			encoded := after.LastActivityAt.UTC().Format("2006-01-02T15:04:05.000000000Z")
+			query += ` WHERE r.last_activity IS NULL OR ` + sessionActivitySortKey + ` < ? OR (` + sessionActivitySortKey + ` = ? AND r.id > ?)`
 			args = append(args, encoded, encoded, after.ID)
 		}
 	}
-	query += ` GROUP BY s.id ORDER BY ` + sessionStartSortKey + ` DESC NULLS LAST, s.id ASC LIMIT ?`
+	query += ` ORDER BY ` + sessionActivitySortKey + ` DESC NULLS LAST, r.id ASC LIMIT ?`
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -51,8 +96,11 @@ func (s *ImportStore) ListSessions(ctx context.Context, after *storagecontract.S
 	items := make([]storagecontract.SessionSummary, 0, limit+1)
 	for rows.Next() {
 		var item storagecontract.SessionSummary
-		var started, ended sql.NullString
-		if err := rows.Scan(&item.ID, &item.Title, &item.Summary, &started, &ended, &item.SourceID, &item.EventCount); err != nil {
+		var started, ended, activity sql.NullString
+		if err := rows.Scan(
+			&item.ID, &item.Title, &item.Summary, &started, &ended, &activity,
+			&item.SourceID, &item.AgentName, &item.FirstUserMessage, &item.EventCount,
+		); err != nil {
 			return nil, false, fmt.Errorf("sqlite exploration: scan session: %w", err)
 		}
 		if item.StartedAt, err = decodeTime(started); err != nil {
@@ -60,6 +108,9 @@ func (s *ImportStore) ListSessions(ctx context.Context, after *storagecontract.S
 		}
 		if item.EndedAt, err = decodeTime(ended); err != nil {
 			return nil, false, fmt.Errorf("sqlite exploration: decode session %q end: %w", item.ID, err)
+		}
+		if item.LastActivityAt, err = decodeTime(activity); err != nil {
+			return nil, false, fmt.Errorf("sqlite exploration: decode session %q last activity: %w", item.ID, err)
 		}
 		items = append(items, item)
 	}

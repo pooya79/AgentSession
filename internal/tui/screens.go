@@ -13,13 +13,16 @@ import (
 // The root Model coordinates navigation and asynchronous lifetimes between
 // these units rather than making each screen an independent tea.Model.
 type sessionsState struct {
-	page       app.SessionPage
-	loading    bool
-	err        error
-	cursor     int
-	cursors    []string
-	pageNumber int
-	selected   model.SessionID
+	page            app.SessionPage
+	loading         bool
+	err             error
+	cursor          int
+	cursors         []string
+	pageNumber      int
+	selected        model.SessionID
+	overview        app.LibraryOverview
+	overviewLoading bool
+	overviewErr     error
 }
 
 type timelineState struct {
