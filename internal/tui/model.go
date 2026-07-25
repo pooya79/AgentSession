@@ -17,10 +17,16 @@ import (
 )
 
 const (
-	pageSize     = app.DefaultPageSize
+	// pageSize deliberately matches the application default so both
+	// presentation layers traverse evidence with the same bounded requests.
+	pageSize = app.DefaultPageSize
+	// pollInterval keeps progress responsive without continuously reading the
+	// coordinator's shared status.
 	pollInterval = 500 * time.Millisecond
 )
 
+// screen identifies the active presentation without encoding navigation or
+// business logic into the application service layer.
 type screen uint8
 
 const (
@@ -30,40 +36,52 @@ const (
 	detailScreen
 )
 
+// sessionsLoadedMsg carries one bounded sessions page and the generation of
+// the request that produced it.
 type sessionsLoadedMsg struct {
 	generation uint64
 	page       app.SessionPage
 	err        error
 }
 
+// timelineLoadedMsg carries one bounded page of lightweight event summaries.
 type timelineLoadedMsg struct {
 	generation uint64
 	page       app.TimelinePage
 	err        error
 }
 
+// detailLoadedMsg carries the only exploration response that includes a
+// normalized payload.
 type detailLoadedMsg struct {
 	generation uint64
 	detail     app.EventDetail
 	err        error
 }
 
+// importStartedMsg reports whether the UI started or joined the shared
+// application-owned import-all workflow.
 type importStartedMsg struct {
 	generation uint64
 	start      app.ImportAllStart
 	err        error
 }
 
+// importStatusMsg is a point-in-time observation of shared indexing work.
 type importStatusMsg struct {
 	generation uint64
 	status     app.ImportAllStatus
 	err        error
 }
 
+// pollImportMsg schedules one status read. It does not represent a repeating
+// timer; another tick is scheduled only while the observed run remains active.
 type pollImportMsg struct{ generation uint64 }
 
 // Model is the sessions-first AgentSession terminal interface.
 type Model struct {
+	// ctx owns presentation requests only. Starting import-all deliberately
+	// uses an independent context because navigation must not cancel indexing.
 	ctx      context.Context
 	services app.Services
 
@@ -71,6 +89,8 @@ type Model struct {
 	height int
 	screen screen
 
+	// Requests and import observation have independent lifetimes. Generations
+	// reject responses from commands canceled by later navigation or refreshes.
 	requestGeneration uint64
 	requestCtx        context.Context
 	requestCancel     context.CancelFunc
@@ -78,6 +98,8 @@ type Model struct {
 	observeCtx        context.Context
 	observeCancel     context.CancelFunc
 
+	// Each cursor slice records the opaque application cursors needed to move
+	// backward through pages without interpreting cursor contents.
 	sessions        app.SessionPage
 	sessionsLoading bool
 	sessionsErr     error
@@ -137,6 +159,7 @@ func (m Model) Init() tea.Cmd {
 	)
 }
 
+// loadSessions requests one opaque-cursor page of imported session summaries.
 func loadSessions(services app.Services, ctx context.Context, generation uint64, cursor string) tea.Cmd {
 	return func() tea.Msg {
 		page, err := services.ListSessions(ctx, app.ListSessionsRequest{Cursor: cursor, Limit: pageSize})
@@ -144,6 +167,8 @@ func loadSessions(services app.Services, ctx context.Context, generation uint64,
 	}
 }
 
+// loadTimeline requests summaries only; payload retrieval belongs exclusively
+// to loadDetail.
 func loadTimeline(services app.Services, ctx context.Context, generation uint64, sessionID model.SessionID, cursor string) tea.Cmd {
 	return func() tea.Msg {
 		page, err := services.Timeline(ctx, app.TimelineRequest{SessionID: sessionID, Cursor: cursor, Limit: pageSize})
@@ -151,6 +176,8 @@ func loadTimeline(services app.Services, ctx context.Context, generation uint64,
 	}
 }
 
+// loadDetail requests a normalized payload for the selected event. Raw record
+// contents are intentionally absent from the exploration response and UI.
 func loadDetail(services app.Services, ctx context.Context, generation uint64, sessionID model.SessionID, eventID model.EventID) tea.Cmd {
 	return func() tea.Msg {
 		detail, err := services.EventDetail(ctx, app.EventDetailRequest{
@@ -160,6 +187,8 @@ func loadDetail(services app.Services, ctx context.Context, generation uint64, s
 	}
 }
 
+// startImportAll transfers work to the application-owned coordinator. The
+// presentation observes that work but never owns or cancels it.
 func startImportAll(services app.Services, generation uint64) tea.Cmd {
 	return func() tea.Msg {
 		// Starting only hands work to the application-owned coordinator. Its
@@ -169,6 +198,7 @@ func startImportAll(services app.Services, generation uint64) tea.Cmd {
 	}
 }
 
+// readImportStatus obtains one snapshot using an observer-owned context.
 func readImportStatus(services app.Services, ctx context.Context, generation uint64) tea.Cmd {
 	return func() tea.Msg {
 		status, err := services.ImportAllStatus(ctx)
@@ -176,12 +206,15 @@ func readImportStatus(services app.Services, ctx context.Context, generation uin
 	}
 }
 
+// pollImport creates a single delayed observation message.
 func pollImport(generation uint64) tea.Cmd {
 	return tea.Tick(pollInterval, func(time.Time) tea.Msg {
 		return pollImportMsg{generation: generation}
 	})
 }
 
+// replaceRequest cancels the previous evidence read and advances its
+// generation before returning a context for the replacement request.
 func (m *Model) replaceRequest() context.Context {
 	if m.requestCancel != nil {
 		m.requestCancel()
@@ -193,6 +226,7 @@ func (m *Model) replaceRequest() context.Context {
 	return ctx
 }
 
+// cancelRequest invalidates an evidence read without starting another one.
 func (m *Model) cancelRequest() {
 	if m.requestCancel != nil {
 		m.requestCancel()
@@ -202,6 +236,8 @@ func (m *Model) cancelRequest() {
 	m.requestCancel = nil
 }
 
+// stopObservation detaches the presentation from indexing progress. It does
+// not call into the application coordinator or stop import work.
 func (m *Model) stopObservation() {
 	if m.observeCancel != nil {
 		m.observeCancel()
@@ -210,6 +246,8 @@ func (m *Model) stopObservation() {
 	m.observeCancel = nil
 }
 
+// startObservation replaces any prior status observer and advances the status
+// generation so delayed ticks cannot revive an obsolete polling loop.
 func (m *Model) startObservation() context.Context {
 	if m.observeCancel != nil {
 		m.observeCancel()
@@ -221,6 +259,7 @@ func (m *Model) startObservation() context.Context {
 	return ctx
 }
 
+// reloadSessions replaces the current page request while retaining its cursor.
 func (m *Model) reloadSessions() tea.Cmd {
 	ctx := m.replaceRequest()
 	m.sessionsLoading = true
@@ -229,6 +268,8 @@ func (m *Model) reloadSessions() tea.Cmd {
 	return loadSessions(m.services, ctx, m.requestGeneration, cursor)
 }
 
+// reloadTimeline replaces the current timeline request while retaining its
+// session and page cursor.
 func (m *Model) reloadTimeline() tea.Cmd {
 	ctx := m.replaceRequest()
 	m.timelineLoading = true
@@ -237,6 +278,7 @@ func (m *Model) reloadTimeline() tea.Cmd {
 	return loadTimeline(m.services, ctx, m.requestGeneration, m.selectedSession, cursor)
 }
 
+// observeNow starts a fresh observer and immediately reads indexing status.
 func (m *Model) observeNow() tea.Cmd {
 	ctx := m.startObservation()
 	return readImportStatus(m.services, ctx, m.observeGeneration)
@@ -335,6 +377,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// visibleError suppresses expected cancellation from superseded presentation
+// requests while retaining actionable service failures.
 func visibleError(err error) error {
 	if errors.Is(err, context.Canceled) {
 		return nil
@@ -342,6 +386,8 @@ func visibleError(err error) error {
 	return err
 }
 
+// restoreSessionSelection prefers stable session identity over row position
+// when a refreshed page still contains the previously selected session.
 func (m *Model) restoreSessionSelection() {
 	if len(m.sessions.Sessions) == 0 {
 		m.sessionCursor = 0
@@ -361,6 +407,7 @@ func (m *Model) restoreSessionSelection() {
 	m.selectedSession = m.sessions.Sessions[m.sessionCursor].ID
 }
 
+// handleKey maps the documented controls to screen-aware navigation.
 func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	if key == "ctrl+c" || key == "q" {
 		if m.requestCancel != nil {
@@ -409,6 +456,8 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// back performs screen-specific cleanup before restoring the parent screen.
+// Returning to sessions always refreshes committed imports.
 func (m *Model) back() (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case indexingScreen:
@@ -431,6 +480,8 @@ func (m *Model) back() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// refresh rescans from overview screens and reloads only the current evidence
+// on timeline/detail screens.
 func (m *Model) refresh() (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case sessionsScreen, indexingScreen:
@@ -451,6 +502,8 @@ func (m *Model) refresh() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// move changes the selected row on list screens and the viewport on long-form
+// detail screens.
 func (m *Model) move(delta int) {
 	switch m.screen {
 	case sessionsScreen:
@@ -467,14 +520,19 @@ func (m *Model) move(delta int) {
 	}
 }
 
+// moveScroll advances a logical line offset; rendering clamps it to available
+// content after wrapping.
 func (m *Model) moveScroll(delta int) {
 	m.scroll = max(0, m.scroll+delta)
 }
 
+// pageStep derives a usable viewport-sized scroll increment for PageUp/PageDown.
 func (m Model) pageStep() int {
 	return max(1, m.contentHeight()-2)
 }
 
+// nextPage records the opaque next cursor before requesting the following
+// bounded page.
 func (m *Model) nextPage() (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case sessionsScreen:
@@ -508,6 +566,7 @@ func (m *Model) nextPage() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// previousPage reuses a cursor retained when the page was first visited.
 func (m *Model) previousPage() (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case sessionsScreen:
@@ -529,6 +588,8 @@ func (m *Model) previousPage() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// openSelection transitions from sessions to summaries or from a summary to
+// its payload-bearing detail. Entering evidence stops indexing observation.
 func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case sessionsScreen:
@@ -591,6 +652,8 @@ func (m Model) View() tea.View {
 	return view
 }
 
+// indexSummary renders the last observed lifecycle state persistently across
+// every screen.
 func (m Model) indexSummary() string {
 	status := m.importStatus
 	switch {
@@ -615,6 +678,8 @@ func (m Model) indexSummary() string {
 	}
 }
 
+// sessionsLines renders the current bounded sessions page and its evidence
+// quality without exposing source-specific data.
 func (m Model) sessionsLines() []string {
 	lines := []string{"Imported sessions"}
 	switch {
@@ -656,6 +721,7 @@ func (m Model) sessionsLines() []string {
 	return lines
 }
 
+// timelineLines renders source-ordered lightweight event summaries.
 func (m Model) timelineLines() []string {
 	lines := []string{"Timeline · session " + string(m.selectedSession)}
 	switch {
@@ -690,6 +756,8 @@ func (m Model) timelineLines() []string {
 	return lines
 }
 
+// detailLines renders normalized evidence as indented JSON and never renders
+// the retained raw-record contents.
 func (m Model) detailLines() []string {
 	lines := []string{"Event detail · session " + string(m.selectedSession)}
 	switch {
@@ -725,6 +793,8 @@ func (m Model) detailLines() []string {
 	return scrollLines(wrapDetailLines(lines, m.renderWidth()), m.scroll, m.contentHeight())
 }
 
+// indexingLines renders aggregate progress, per-source status, failures, and
+// the coordinator's bounded diagnostic synopsis.
 func (m Model) indexingLines() []string {
 	status := m.importStatus
 	lines := []string{"Indexing details", ""}
@@ -775,6 +845,8 @@ func (m Model) indexingLines() []string {
 	return scrollLines(wrapDetailLines(lines, m.renderWidth()), m.scroll, m.contentHeight())
 }
 
+// contentHeight reserves rows for the title, persistent index summary, and
+// contextual help.
 func (m Model) contentHeight() int {
 	height := m.height
 	if height <= 0 {
@@ -783,6 +855,7 @@ func (m Model) contentHeight() int {
 	return max(3, height-5)
 }
 
+// renderWidth supplies a deterministic fallback before the first resize event.
 func (m Model) renderWidth() int {
 	if m.width <= 0 {
 		return 80
@@ -790,6 +863,7 @@ func (m Model) renderWidth() int {
 	return m.width
 }
 
+// helpLine uses compact controls when terminal dimensions are constrained.
 func (m Model) helpLine(width int) string {
 	if width < 55 || m.height > 0 && m.height < 12 {
 		return "↑↓ move · Enter open · Esc back · q quit"
@@ -806,6 +880,7 @@ func (m Model) helpLine(width int) string {
 	}
 }
 
+// evidenceLabel maps application evidence states to conservative UI wording.
 func evidenceLabel(state app.EvidenceState) string {
 	switch state {
 	case app.EvidenceComplete:
@@ -821,6 +896,7 @@ func evidenceLabel(state app.EvidenceState) string {
 	}
 }
 
+// diagnosticSummary states both observed and omitted diagnostic counts.
 func diagnosticSummary(synopsis app.DiagnosticSynopsis) string {
 	if synopsis.Total == 0 {
 		return ""
@@ -828,6 +904,7 @@ func diagnosticSummary(synopsis app.DiagnosticSynopsis) string {
 	return fmt.Sprintf("Partial evidence: %d diagnostic(s), %d omitted.", synopsis.Total, synopsis.Omitted)
 }
 
+// nextLabel reports pagination availability without exposing opaque cursors.
 func nextLabel(cursor string) string {
 	if cursor != "" {
 		return " · more available"
@@ -835,6 +912,8 @@ func nextLabel(cursor string) string {
 	return ""
 }
 
+// scrollLines returns a bounded viewport and marks hidden content in either
+// direction.
 func scrollLines(lines []string, offset, height int) []string {
 	if len(lines) <= height {
 		return lines
@@ -851,6 +930,7 @@ func scrollLines(lines []string, offset, height int) []string {
 	return result
 }
 
+// windowStart centers the selected row where possible while respecting bounds.
 func windowStart(selected, total, visible int) int {
 	if total <= visible {
 		return 0
@@ -859,6 +939,7 @@ func windowStart(selected, total, visible int) int {
 	return clamp(start, 0, total-visible)
 }
 
+// clamp constrains value to the inclusive interval [low, high].
 func clamp(value, low, high int) int {
 	if value < low {
 		return low
@@ -869,6 +950,8 @@ func clamp(value, low, high int) int {
 	return value
 }
 
+// fit applies the terminal sanitization boundary before width measurement,
+// truncates by display cells, and preserves contextual help as the last row.
 func fit(lines []string, width, height int) string {
 	width = max(1, width)
 	height = max(1, height)
@@ -890,6 +973,8 @@ func fit(lines []string, width, height int) string {
 	return strings.Join(fitted, "\n")
 }
 
+// wrapDetailLines wraps sanitized long-form evidence by display width before
+// viewport scrolling is applied.
 func wrapDetailLines(lines []string, width int) []string {
 	width = max(1, width)
 	wrapped := make([]string, 0, len(lines))
