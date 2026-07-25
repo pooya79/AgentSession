@@ -70,6 +70,7 @@ type Runtime struct {
 	discoverer  *discovery.Discoverer
 	store       *sqlitestore.ImportStore
 	imports     *ImportManager
+	importAll   *importAllCoordinator
 	explorer    Explorer
 	projections *ProjectionService
 
@@ -154,10 +155,12 @@ func OpenRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("open runtime: %w", err)
 	}
-	return &Runtime{
+	runtime := &Runtime{
 		paths: paths, db: db, discoverer: discoverer, store: store, imports: manager, explorer: explorer,
 		projections: NewProjectionService(projectionManager), catalog: make(map[model.SourceID]discovery.Source),
-	}, nil
+	}
+	runtime.importAll = newImportAllCoordinator(runtime.DiscoverSources, runtime.StartImport)
+	return runtime, nil
 }
 
 func currentPathInputs() (PathInputs, error) {
@@ -357,6 +360,9 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 	}
 	r.closing = true
 	r.mu.Unlock()
+	if err := r.importAll.Shutdown(ctx); err != nil {
+		return err
+	}
 	if err := r.imports.Shutdown(ctx); err != nil {
 		return err
 	}

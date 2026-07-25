@@ -205,6 +205,24 @@ func newHandler(services app.Services, streamShutdown <-chan struct{}) http.Hand
 		}
 		render(w, r, http.StatusOK, sourcesFragment(discovery))
 	})
+	mux.HandleFunc("GET /fragments/import-status", func(w http.ResponseWriter, r *http.Request) {
+		if !requireNoQuery(w, r) {
+			return
+		}
+		if services == nil {
+			writeError(w, http.StatusServiceUnavailable)
+			return
+		}
+		status, err := services.ImportAllStatus(r.Context())
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if !status.Active {
+			w.Header().Set("HX-Trigger", "sessionsRefresh")
+		}
+		render(w, r, http.StatusOK, importStatusFragment(status))
+	})
 	mux.HandleFunc("POST /imports", func(w http.ResponseWriter, r *http.Request) {
 		if services == nil {
 			writeError(w, http.StatusServiceUnavailable)
@@ -213,22 +231,13 @@ func newHandler(services app.Services, streamShutdown <-chan struct{}) http.Hand
 		if !validImportRequest(w, r) {
 			return
 		}
-		sourceID := model.SourceID(r.PostForm["source"][0])
-		started, err := services.StartImport(r.Context(), sourceID)
+		started, err := services.StartImportAll(r.Context())
 		if err != nil {
 			writeServiceError(w, err)
 			return
 		}
-		if started.State == app.EvidenceNotFound {
-			writeError(w, http.StatusNotFound)
-			return
-		}
-		if started.Subscription == nil {
-			writeError(w, http.StatusServiceUnavailable)
-			return
-		}
 		w.Header().Set("X-AgentSession-Import-Joined", strconv.FormatBool(started.Joined))
-		streamImport(w, r, started.Subscription, streamShutdown)
+		render(w, r, http.StatusAccepted, importStatusFragment(started.Status))
 	})
 	mux.HandleFunc("GET /fragments/sessions", func(w http.ResponseWriter, r *http.Request) {
 		if services == nil {
@@ -464,12 +473,11 @@ func validImportRequest(w http.ResponseWriter, r *http.Request) bool {
 		}
 		return false
 	}
-	if len(r.PostForm) != 1 {
+	if len(r.PostForm) != 0 {
 		writeError(w, http.StatusBadRequest)
 		return false
 	}
-	_, ok := requiredSingle(w, r.PostForm, "source")
-	return ok
+	return true
 }
 
 func sameOrigin(r *http.Request) bool {
@@ -523,6 +531,9 @@ func Serve(ctx context.Context, addr string, services app.Services) error {
 	server := &http.Server{
 		Addr: addr, Handler: newHandler(services, streamShutdown), ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
+	}
+	if _, err := services.StartImportAll(context.Background()); err != nil {
+		return fmt.Errorf("web: start automatic import: %w", err)
 	}
 
 	errCh := make(chan error, 1)

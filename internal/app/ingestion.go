@@ -38,6 +38,8 @@ type ImportStart struct {
 type Ingestion interface {
 	DiscoverSources(context.Context) (SourceDiscovery, error)
 	StartImport(context.Context, model.SourceID) (ImportStart, error)
+	StartImportAll(context.Context) (ImportAllStart, error)
+	ImportAllStatus(context.Context) (ImportAllStatus, error)
 }
 
 // Services is the complete, presentation-neutral boundary shared by TUI and web.
@@ -85,4 +87,12 @@ func (r *Runtime) StartImport(ctx context.Context, sourceID model.SourceID) (Imp
 		return ImportStart{}, fmt.Errorf("start import for source %q: %w", sourceID, err)
 	}
 	return ImportStart{State: EvidenceComplete, Subscription: subscription, Joined: joined}, nil
+}
+
+func (r *Runtime) StartImportAll(ctx context.Context) (ImportAllStart, error) {
+	return r.importAll.Start(ctx)
+}
+
+func (r *Runtime) ImportAllStatus(ctx context.Context) (ImportAllStatus, error) {
+	return r.importAll.Status(ctx)
 }
