@@ -8,12 +8,13 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/pooya79/AgentSession/internal/app"
 	"github.com/pooya79/AgentSession/internal/model"
-	"github.com/pooya79/AgentSession/internal/sanitization"
 )
 
 const (
@@ -116,39 +117,19 @@ type Model struct {
 	observeCtx        context.Context
 	observeCancel     context.CancelFunc
 
-	// Each cursor slice records the opaque application cursors needed to move
-	// backward through pages without interpreting cursor contents.
-	sessions        app.SessionPage
-	sessionsLoading bool
-	sessionsErr     error
-	sessionCursor   int
-	sessionCursors  []string
-	sessionPage     int
-	selectedSession model.SessionID
+	// Screen states own their page, selection, errors, and viewport. They are
+	// embedded so the root coordinator remains concise while retaining one
+	// Bubble Tea model and one explicit navigation graph.
+	sessionsState
+	timelineState
+	detailState
+	indexingState
+	projectionsState
 
-	timeline        app.TimelinePage
-	timelineLoading bool
-	timelineErr     error
-	eventCursor     int
-	timelineCursors []string
-	timelinePage    int
-
-	detail        app.EventDetail
-	detailLoading bool
-	detailErr     error
-	scroll        int
-
-	importStatus app.ImportAllStatus
-	importErr    error
-
-	projectionGeneration uint64
-	projectionCtx        context.Context
-	projectionCancel     context.CancelFunc
-	projectionStatus     app.ProjectionStatus
-	projectionErr        error
-	projectionLoading    bool
-	projectionCursor     int
-	confirmRebuildAll    bool
+	theme        theme
+	helpOpen     bool
+	helpViewport viewport.Model
+	spinner      spinner.Model
 }
 
 // New creates a terminal model over the shared application services.
@@ -158,20 +139,35 @@ func New(ctx context.Context, services app.Services) Model {
 	}
 	requestCtx, requestCancel := context.WithCancel(ctx)
 	observeCtx, observeCancel := context.WithCancel(ctx)
+	detailViewport := viewport.New()
+	detailViewport.SoftWrap = true
+	indexViewport := viewport.New()
+	indexViewport.SoftWrap = true
+	helpViewport := viewport.New()
+	helpViewport.SoftWrap = true
 	return Model{
-		ctx:                  ctx,
-		services:             services,
-		requestGeneration:    1,
-		requestCtx:           requestCtx,
-		requestCancel:        requestCancel,
-		observeGeneration:    1,
-		observeCtx:           observeCtx,
-		observeCancel:        observeCancel,
-		sessionsLoading:      services != nil,
-		sessionCursors:       []string{""},
-		timelineCursors:      []string{""},
-		importStatus:         app.ImportAllStatus{Phase: app.ImportAllUnavailable},
-		projectionGeneration: 1,
+		ctx:               ctx,
+		services:          services,
+		requestGeneration: 1,
+		requestCtx:        requestCtx,
+		requestCancel:     requestCancel,
+		observeGeneration: 1,
+		observeCtx:        observeCtx,
+		observeCancel:     observeCancel,
+		sessionsState: sessionsState{
+			loading: services != nil,
+			cursors: []string{""},
+		},
+		timelineState: timelineState{cursors: []string{""}},
+		detailState:   detailState{viewport: detailViewport},
+		indexingState: indexingState{
+			status:   app.ImportAllStatus{Phase: app.ImportAllUnavailable},
+			viewport: indexViewport,
+		},
+		projectionsState: projectionsState{generation: 1},
+		theme:            newTheme(true),
+		helpViewport:     helpViewport,
+		spinner:          spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 	}
 }
 
@@ -179,11 +175,13 @@ func New(ctx context.Context, services app.Services) Model {
 // the first page of already committed sessions.
 func (m Model) Init() tea.Cmd {
 	if m.services == nil {
-		return nil
+		return tea.RequestBackgroundColor
 	}
 	return tea.Batch(
 		loadSessions(m.requestCtx, m.services, m.requestGeneration, ""),
 		startImportAll(m.services, m.observeGeneration),
+		tea.RequestBackgroundColor,
+		m.spinner.Tick,
 	)
 }
 
@@ -319,39 +317,39 @@ func (m *Model) startObservation() context.Context {
 // startProjectionObservation replaces the panel's prior read context and
 // advances its generation so delayed responses cannot overwrite newer state.
 func (m *Model) startProjectionObservation() context.Context {
-	if m.projectionCancel != nil {
-		m.projectionCancel()
+	if m.projectionsState.cancel != nil {
+		m.projectionsState.cancel()
 	}
-	m.projectionGeneration++
+	m.projectionsState.generation++
 	ctx, cancel := context.WithCancel(m.ctx)
-	m.projectionCtx, m.projectionCancel = ctx, cancel
+	m.projectionsState.ctx, m.projectionsState.cancel = ctx, cancel
 	return ctx
 }
 
 // stopProjectionObservation detaches the panel without stopping application
 // projection work.
 func (m *Model) stopProjectionObservation() {
-	if m.projectionCancel != nil {
-		m.projectionCancel()
+	if m.projectionsState.cancel != nil {
+		m.projectionsState.cancel()
 	}
-	m.projectionGeneration++
-	m.projectionCtx, m.projectionCancel = nil, nil
+	m.projectionsState.generation++
+	m.projectionsState.ctx, m.projectionsState.cancel = nil, nil
 }
 
 // observeProjectionsNow starts one immediate status read; subsequent reads are
 // scheduled only while projectionPolling reports active work.
 func (m *Model) observeProjectionsNow() tea.Cmd {
 	ctx := m.startProjectionObservation()
-	m.projectionLoading, m.projectionErr = true, nil
-	return readProjectionStatus(ctx, m.services, m.projectionGeneration, m.selectedSession)
+	m.projectionsState.loading, m.projectionsState.err = true, nil
+	return readProjectionStatus(ctx, m.services, m.projectionsState.generation, m.sessionsState.selected)
 }
 
 // reloadSessions replaces the current page request while retaining its cursor.
 func (m *Model) reloadSessions() tea.Cmd {
 	ctx := m.replaceRequest()
-	m.sessionsLoading = true
-	m.sessionsErr = nil
-	cursor := m.sessionCursors[m.sessionPage]
+	m.sessionsState.loading = true
+	m.sessionsState.err = nil
+	cursor := m.sessionsState.cursors[m.sessionsState.pageNumber]
 	return loadSessions(ctx, m.services, m.requestGeneration, cursor)
 }
 
@@ -359,10 +357,10 @@ func (m *Model) reloadSessions() tea.Cmd {
 // session and page cursor.
 func (m *Model) reloadTimeline() tea.Cmd {
 	ctx := m.replaceRequest()
-	m.timelineLoading = true
-	m.timelineErr = nil
-	cursor := m.timelineCursors[m.timelinePage]
-	return loadTimeline(ctx, m.services, m.requestGeneration, m.selectedSession, cursor)
+	m.timelineState.loading = true
+	m.timelineState.err = nil
+	cursor := m.timelineState.cursors[m.timelineState.pageNumber]
+	return loadTimeline(ctx, m.services, m.requestGeneration, m.sessionsState.selected, cursor)
 }
 
 // observeNow starts a fresh observer and immediately reads indexing status.
@@ -378,15 +376,27 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.syncViewports()
 		return m, nil
+	case tea.BackgroundColorMsg:
+		m.theme = newTheme(msg.IsDark())
+		m.spinner.Style = m.theme.info
+		return m, nil
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		if !m.busy() {
+			cmd = nil
+		}
+		return m, cmd
 	case sessionsLoadedMsg:
 		if msg.generation != m.requestGeneration {
 			return m, nil
 		}
-		m.sessionsLoading = false
-		m.sessionsErr = visibleError(msg.err)
+		m.sessionsState.loading = false
+		m.sessionsState.err = visibleError(msg.err)
 		if msg.err == nil {
-			m.sessions = msg.page
+			m.sessionsState.page = msg.page
 			m.restoreSessionSelection()
 		}
 		return m, nil
@@ -394,12 +404,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation != m.requestGeneration {
 			return m, nil
 		}
-		m.timelineLoading = false
-		m.timelineErr = visibleError(msg.err)
+		m.timelineState.loading = false
+		m.timelineState.err = visibleError(msg.err)
 		if msg.err == nil {
-			m.timeline = msg.page
-			if m.eventCursor >= len(m.timeline.Events) {
-				m.eventCursor = max(0, len(m.timeline.Events)-1)
+			m.timelineState.page = msg.page
+			if m.timelineState.cursor >= len(m.timelineState.page.Events) {
+				m.timelineState.cursor = max(0, len(m.timelineState.page.Events)-1)
 			}
 		}
 		return m, nil
@@ -407,23 +417,26 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation != m.requestGeneration {
 			return m, nil
 		}
-		m.detailLoading = false
-		m.detailErr = visibleError(msg.err)
+		m.detailState.loading = false
+		m.detailState.err = visibleError(msg.err)
 		if msg.err == nil {
-			m.detail = msg.detail
+			m.detailState.detail = msg.detail
 		}
+		m.syncViewports()
 		return m, nil
 	case importStartedMsg:
 		if msg.generation != m.observeGeneration {
 			return m, nil
 		}
-		m.importErr = visibleError(msg.err)
+		m.indexingState.err = visibleError(msg.err)
 		if msg.err != nil {
-			m.importStatus = app.ImportAllStatus{Phase: app.ImportAllUnavailable, Failure: msg.err.Error()}
+			m.indexingState.status = app.ImportAllStatus{Phase: app.ImportAllUnavailable, Failure: msg.err.Error()}
+			m.syncViewports()
 			return m, nil
 		}
-		m.importStatus = msg.start.Status
-		if m.importStatus.Active {
+		m.indexingState.status = msg.start.Status
+		m.syncViewports()
+		if m.indexingState.status.Active {
 			return m, pollImport(m.observeGeneration)
 		}
 		return m, nil
@@ -440,13 +453,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation != m.observeGeneration {
 			return m, nil
 		}
-		wasActive := m.importStatus.Active
-		m.importErr = visibleError(msg.err)
+		wasActive := m.indexingState.status.Active
+		m.indexingState.err = visibleError(msg.err)
 		if msg.err != nil {
-			m.importStatus = app.ImportAllStatus{Phase: app.ImportAllUnavailable, Failure: msg.err.Error()}
+			m.indexingState.status = app.ImportAllStatus{Phase: app.ImportAllUnavailable, Failure: msg.err.Error()}
+			m.syncViewports()
 			return m, nil
 		}
-		m.importStatus = msg.status
+		m.indexingState.status = msg.status
+		m.syncViewports()
 		if msg.status.Active {
 			return m, pollImport(m.observeGeneration)
 		}
@@ -455,42 +470,48 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case projectionStatusMsg:
-		if msg.generation != m.projectionGeneration {
+		if msg.generation != m.projectionsState.generation {
 			return m, nil
 		}
-		m.projectionLoading = false
-		m.projectionErr = visibleError(msg.err)
+		m.projectionsState.loading = false
+		m.projectionsState.err = visibleError(msg.err)
 		if msg.err == nil {
-			m.projectionStatus = msg.status
-			if m.projectionCursor >= len(msg.status.Projections) {
-				m.projectionCursor = max(0, len(msg.status.Projections)-1)
+			m.projectionsState.status = msg.status
+			m.projectionsState.actionNotice = ""
+			if m.projectionsState.cursor >= len(msg.status.Projections) {
+				m.projectionsState.cursor = max(0, len(msg.status.Projections)-1)
 			}
 			if projectionPolling(msg.status) {
-				return m, pollProjections(m.projectionGeneration)
+				return m, pollProjections(m.projectionsState.generation)
 			}
 		}
 		return m, nil
 	case projectionActionMsg:
-		if msg.generation != m.projectionGeneration {
+		if msg.generation != m.projectionsState.generation {
 			return m, nil
 		}
-		m.projectionErr = visibleError(msg.err)
+		m.projectionsState.err = visibleError(msg.err)
 		if msg.err == nil {
-			m.projectionStatus = msg.action.Status
-			m.projectionStatus.State = msg.action.State
-			m.projectionStatus.Active = msg.action.Active
+			m.projectionsState.status = msg.action.Status
+			m.projectionsState.status.State = msg.action.State
+			m.projectionsState.status.Active = msg.action.Active
 			if msg.action.State == app.EvidenceNotFound {
 				return m, nil
 			}
-			return m, pollProjections(m.projectionGeneration)
+			if msg.action.Joined {
+				m.projectionsState.actionNotice = "Joined projection work already owned by the application."
+			} else {
+				m.projectionsState.actionNotice = "Projection work accepted; it continues after leaving this screen."
+			}
+			return m, pollProjections(m.projectionsState.generation)
 		}
 		return m, nil
 	case pollProjectionsMsg:
-		if msg.generation != m.projectionGeneration || m.projectionCancel == nil || m.screen != projectionsScreen {
+		if msg.generation != m.projectionsState.generation || m.projectionsState.cancel == nil || m.screen != projectionsScreen {
 			return m, nil
 		}
 		ctx := m.startProjectionObservation()
-		return m, readProjectionStatus(ctx, m.services, m.projectionGeneration, m.selectedSession)
+		return m, readProjectionStatus(ctx, m.services, m.projectionsState.generation, m.sessionsState.selected)
 	case tea.KeyPressMsg:
 		updated, cmd := m.handleKey(msg.String())
 		if pointer, ok := updated.(*Model); ok {
@@ -499,6 +520,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return updated, cmd
 	}
 	return m, nil
+}
+
+func (m Model) busy() bool {
+	return m.sessionsState.loading || m.timelineState.loading || m.detailState.loading ||
+		m.projectionsState.loading || m.indexingState.status.Active
 }
 
 // visibleError suppresses expected cancellation from superseded presentation
@@ -513,22 +539,22 @@ func visibleError(err error) error {
 // restoreSessionSelection prefers stable session identity over row position
 // when a refreshed page still contains the previously selected session.
 func (m *Model) restoreSessionSelection() {
-	if len(m.sessions.Sessions) == 0 {
-		m.sessionCursor = 0
+	if len(m.sessionsState.page.Sessions) == 0 {
+		m.sessionsState.cursor = 0
 		return
 	}
-	if m.selectedSession != "" {
-		for i, session := range m.sessions.Sessions {
-			if session.ID == m.selectedSession {
-				m.sessionCursor = i
+	if m.sessionsState.selected != "" {
+		for i, session := range m.sessionsState.page.Sessions {
+			if session.ID == m.sessionsState.selected {
+				m.sessionsState.cursor = i
 				return
 			}
 		}
 	}
-	if m.sessionCursor >= len(m.sessions.Sessions) {
-		m.sessionCursor = len(m.sessions.Sessions) - 1
+	if m.sessionsState.cursor >= len(m.sessionsState.page.Sessions) {
+		m.sessionsState.cursor = len(m.sessionsState.page.Sessions) - 1
 	}
-	m.selectedSession = m.sessions.Sessions[m.sessionCursor].ID
+	m.sessionsState.selected = m.sessionsState.page.Sessions[m.sessionsState.cursor].ID
 }
 
 // handleKey maps the documented controls to screen-aware navigation.
@@ -541,6 +567,48 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		m.stopProjectionObservation()
 		return m, tea.Quit
 	}
+	if key == "?" {
+		m.helpOpen = !m.helpOpen
+		if m.helpOpen {
+			m.syncViewports()
+			m.helpViewport.GotoTop()
+		}
+		return m, nil
+	}
+	if m.helpOpen {
+		switch key {
+		case "esc":
+			m.helpOpen = false
+		case "up", "k":
+			m.syncViewports()
+			m.helpViewport.ScrollUp(1)
+		case "down", "j":
+			m.syncViewports()
+			m.helpViewport.ScrollDown(1)
+		case "pgup":
+			m.syncViewports()
+			m.helpViewport.PageUp()
+		case "pgdown":
+			m.syncViewports()
+			m.helpViewport.PageDown()
+		case "home", "g":
+			m.helpViewport.GotoTop()
+		case "end", "G":
+			m.helpViewport.GotoBottom()
+		}
+		return m, nil
+	}
+	if m.projectionsState.confirmAll {
+		switch key {
+		case "esc", "n":
+			m.projectionsState.confirmAll = false
+			return m, nil
+		case "y":
+			m.projectionsState.confirmAll = false
+			return m, projectionAction(m.services, m.projectionsState.generation, m.sessionsState.selected, app.ProjectionKindAll, false)
+		}
+		return m, nil
+	}
 	if m.services == nil {
 		return m, nil
 	}
@@ -551,7 +619,8 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	case "i":
 		if m.screen == sessionsScreen {
 			m.screen = indexingScreen
-			m.scroll = 0
+			m.syncViewports()
+			m.indexingState.viewport.GotoTop()
 			if m.observeCancel == nil {
 				return m, m.observeNow()
 			}
@@ -559,42 +628,48 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	case "x":
 		if m.screen == timelineScreen {
 			m.screen = projectionsScreen
-			m.projectionCursor = 0
-			m.confirmRebuildAll = false
+			m.projectionsState.cursor = 0
+			m.projectionsState.confirmAll = false
 			return m, m.observeProjectionsNow()
 		}
 	case "r":
 		return m.refresh()
 	case "t":
 		if m.screen == projectionsScreen {
-			m.confirmRebuildAll = false
-			return m, projectionAction(m.services, m.projectionGeneration, m.selectedSession, "", true)
+			if !m.retryAvailable() {
+				m.projectionsState.actionNotice = "No implemented pending or failed projection can be retried."
+				return m, nil
+			}
+			return m, projectionAction(m.services, m.projectionsState.generation, m.sessionsState.selected, "", true)
 		}
 	case "b":
-		if m.screen == projectionsScreen && len(m.projectionStatus.Projections) > 0 {
-			m.confirmRebuildAll = false
-			kind := m.projectionStatus.Projections[m.projectionCursor].Kind
-			return m, projectionAction(m.services, m.projectionGeneration, m.selectedSession, kind, false)
+		if m.screen == projectionsScreen && len(m.projectionsState.status.Projections) > 0 {
+			selected := m.projectionsState.status.Projections[m.projectionsState.cursor]
+			if !selected.BuildAvailable {
+				m.projectionsState.actionNotice = "This projection is not implemented in this build."
+				return m, nil
+			}
+			kind := selected.Kind
+			return m, projectionAction(m.services, m.projectionsState.generation, m.sessionsState.selected, kind, false)
 		}
 	case "a":
 		if m.screen == projectionsScreen {
-			m.confirmRebuildAll = true
-		}
-	case "y":
-		if m.screen == projectionsScreen && m.confirmRebuildAll {
-			m.confirmRebuildAll = false
-			return m, projectionAction(m.services, m.projectionGeneration, m.selectedSession, app.ProjectionKindAll, false)
+			if !m.rebuildAllAvailable() {
+				m.projectionsState.actionNotice = "Rebuild all is disabled until every registered projection is implemented."
+				return m, nil
+			}
+			m.projectionsState.confirmAll = true
 		}
 	case "n":
-		if m.screen == projectionsScreen && m.confirmRebuildAll {
-			m.confirmRebuildAll = false
-			return m, nil
-		}
 		return m.nextPage()
 	case "up", "k":
 		m.move(-1)
 	case "down", "j":
 		m.move(1)
+	case "home", "g":
+		m.moveToBoundary(false)
+	case "end", "G":
+		m.moveToBoundary(true)
 	case "pgup":
 		if m.screen == detailScreen || m.screen == indexingScreen {
 			m.moveScroll(-m.pageStep())
@@ -615,6 +690,27 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) retryAvailable() bool {
+	for _, state := range m.projectionsState.status.Projections {
+		if state.BuildAvailable && (state.Status == app.ProjectionStatusPending || state.Status == app.ProjectionStatusFailed) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) rebuildAllAvailable() bool {
+	if len(m.projectionsState.status.Projections) == 0 {
+		return false
+	}
+	for _, state := range m.projectionsState.status.Projections {
+		if !state.BuildAvailable {
+			return false
+		}
+	}
+	return true
+}
+
 // back performs screen-specific cleanup before restoring the parent screen.
 // Returning to sessions always refreshes committed imports.
 func (m *Model) back() (tea.Model, tea.Cmd) {
@@ -624,23 +720,24 @@ func (m *Model) back() (tea.Model, tea.Cmd) {
 		return m, m.reloadSessions()
 	case timelineScreen:
 		m.screen = sessionsScreen
-		m.timeline = app.TimelinePage{}
-		m.timelineErr = nil
-		m.timelineLoading = false
+		m.timelineState.page = app.TimelinePage{}
+		m.timelineState.err = nil
+		m.timelineState.loading = false
 		return m, tea.Batch(m.reloadSessions(), m.observeNow())
 	case detailScreen:
 		m.cancelRequest()
 		m.screen = timelineScreen
-		m.detail = app.EventDetail{}
-		m.detailErr = nil
-		m.detailLoading = false
-		m.scroll = 0
+		m.detailState.detail = app.EventDetail{}
+		m.detailState.err = nil
+		m.detailState.loading = false
+		m.detailState.viewport.GotoTop()
 	case projectionsScreen:
 		m.stopProjectionObservation()
 		m.screen = timelineScreen
-		m.projectionStatus = app.ProjectionStatus{}
-		m.projectionErr = nil
-		m.confirmRebuildAll = false
+		m.projectionsState.status = app.ProjectionStatus{}
+		m.projectionsState.err = nil
+		m.projectionsState.confirmAll = false
+		m.projectionsState.actionNotice = ""
 	}
 	return m, nil
 }
@@ -658,13 +755,14 @@ func (m *Model) refresh() (tea.Model, tea.Cmd) {
 	case projectionsScreen:
 		return m, m.observeProjectionsNow()
 	case detailScreen:
-		if len(m.timeline.Events) == 0 {
+		if len(m.timelineState.page.Events) == 0 {
 			return m, nil
 		}
 		ctx := m.replaceRequest()
-		m.detailLoading, m.detailErr, m.scroll = true, nil, 0
-		event := m.timeline.Events[m.eventCursor]
-		return m, loadDetail(ctx, m.services, m.requestGeneration, m.selectedSession, event.ID)
+		m.detailState.loading, m.detailState.err = true, nil
+		m.detailState.viewport.GotoTop()
+		event := m.timelineState.page.Events[m.timelineState.cursor]
+		return m, loadDetail(ctx, m.services, m.requestGeneration, m.sessionsState.selected, event.ID)
 	}
 	return m, nil
 }
@@ -674,32 +772,84 @@ func (m *Model) refresh() (tea.Model, tea.Cmd) {
 func (m *Model) move(delta int) {
 	switch m.screen {
 	case sessionsScreen:
-		if len(m.sessions.Sessions) > 0 {
-			m.sessionCursor = clamp(m.sessionCursor+delta, 0, len(m.sessions.Sessions)-1)
-			m.selectedSession = m.sessions.Sessions[m.sessionCursor].ID
+		if len(m.sessionsState.page.Sessions) > 0 {
+			m.sessionsState.cursor = clamp(m.sessionsState.cursor+delta, 0, len(m.sessionsState.page.Sessions)-1)
+			m.sessionsState.selected = m.sessionsState.page.Sessions[m.sessionsState.cursor].ID
 		}
 	case timelineScreen:
-		if len(m.timeline.Events) > 0 {
-			m.eventCursor = clamp(m.eventCursor+delta, 0, len(m.timeline.Events)-1)
+		if len(m.timelineState.page.Events) > 0 {
+			m.timelineState.cursor = clamp(m.timelineState.cursor+delta, 0, len(m.timelineState.page.Events)-1)
 		}
 	case projectionsScreen:
-		if len(m.projectionStatus.Projections) > 0 {
-			m.projectionCursor = clamp(m.projectionCursor+delta, 0, len(m.projectionStatus.Projections)-1)
+		if len(m.projectionsState.status.Projections) > 0 {
+			m.projectionsState.cursor = clamp(m.projectionsState.cursor+delta, 0, len(m.projectionsState.status.Projections)-1)
 		}
 	case detailScreen, indexingScreen:
 		m.moveScroll(delta)
 	}
 }
 
-// moveScroll advances a logical line offset; rendering clamps it to available
-// content after wrapping.
+func (m *Model) moveToBoundary(last bool) {
+	switch m.screen {
+	case sessionsScreen:
+		if len(m.sessionsState.page.Sessions) == 0 {
+			return
+		}
+		m.sessionsState.cursor = 0
+		if last {
+			m.sessionsState.cursor = len(m.sessionsState.page.Sessions) - 1
+		}
+		m.sessionsState.selected = m.sessionsState.page.Sessions[m.sessionsState.cursor].ID
+	case timelineScreen:
+		if len(m.timelineState.page.Events) == 0 {
+			return
+		}
+		m.timelineState.cursor = 0
+		if last {
+			m.timelineState.cursor = len(m.timelineState.page.Events) - 1
+		}
+	case projectionsScreen:
+		if len(m.projectionsState.status.Projections) == 0 {
+			return
+		}
+		m.projectionsState.cursor = 0
+		if last {
+			m.projectionsState.cursor = len(m.projectionsState.status.Projections) - 1
+		}
+	case detailScreen:
+		m.syncViewports()
+		if last {
+			m.detailState.viewport.GotoBottom()
+		} else {
+			m.detailState.viewport.GotoTop()
+		}
+	case indexingScreen:
+		m.syncViewports()
+		if last {
+			m.indexingState.viewport.GotoBottom()
+		} else {
+			m.indexingState.viewport.GotoTop()
+		}
+	}
+}
+
+// moveScroll delegates to a viewport that clamps its stored offset.
 func (m *Model) moveScroll(delta int) {
-	m.scroll = max(0, m.scroll+delta)
+	m.syncViewports()
+	target := &m.detailState.viewport
+	if m.screen == indexingScreen {
+		target = &m.indexingState.viewport
+	}
+	if delta < 0 {
+		target.ScrollUp(-delta)
+	} else {
+		target.ScrollDown(delta)
+	}
 }
 
 // pageStep derives a usable viewport-sized scroll increment for PageUp/PageDown.
 func (m Model) pageStep() int {
-	return max(1, m.contentHeight()-2)
+	return max(1, m.contentHeight())
 }
 
 // nextPage records the opaque next cursor before requesting the following
@@ -707,31 +857,31 @@ func (m Model) pageStep() int {
 func (m *Model) nextPage() (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case sessionsScreen:
-		if m.sessions.NextCursor == "" || m.sessionsLoading {
+		if m.sessionsState.page.NextCursor == "" || m.sessionsState.loading {
 			return m, nil
 		}
-		if m.sessionPage+1 == len(m.sessionCursors) {
-			m.sessionCursors = append(m.sessionCursors, m.sessions.NextCursor)
+		if m.sessionsState.pageNumber+1 == len(m.sessionsState.cursors) {
+			m.sessionsState.cursors = append(m.sessionsState.cursors, m.sessionsState.page.NextCursor)
 		} else {
-			m.sessionCursors[m.sessionPage+1] = m.sessions.NextCursor
-			m.sessionCursors = m.sessionCursors[:m.sessionPage+2]
+			m.sessionsState.cursors[m.sessionsState.pageNumber+1] = m.sessionsState.page.NextCursor
+			m.sessionsState.cursors = m.sessionsState.cursors[:m.sessionsState.pageNumber+2]
 		}
-		m.sessionPage++
-		m.sessionCursor = 0
-		m.selectedSession = ""
+		m.sessionsState.pageNumber++
+		m.sessionsState.cursor = 0
+		m.sessionsState.selected = ""
 		return m, m.reloadSessions()
 	case timelineScreen:
-		if m.timeline.NextCursor == "" || m.timelineLoading {
+		if m.timelineState.page.NextCursor == "" || m.timelineState.loading {
 			return m, nil
 		}
-		if m.timelinePage+1 == len(m.timelineCursors) {
-			m.timelineCursors = append(m.timelineCursors, m.timeline.NextCursor)
+		if m.timelineState.pageNumber+1 == len(m.timelineState.cursors) {
+			m.timelineState.cursors = append(m.timelineState.cursors, m.timelineState.page.NextCursor)
 		} else {
-			m.timelineCursors[m.timelinePage+1] = m.timeline.NextCursor
-			m.timelineCursors = m.timelineCursors[:m.timelinePage+2]
+			m.timelineState.cursors[m.timelineState.pageNumber+1] = m.timelineState.page.NextCursor
+			m.timelineState.cursors = m.timelineState.cursors[:m.timelineState.pageNumber+2]
 		}
-		m.timelinePage++
-		m.eventCursor = 0
+		m.timelineState.pageNumber++
+		m.timelineState.cursor = 0
 		return m, m.reloadTimeline()
 	}
 	return m, nil
@@ -741,19 +891,19 @@ func (m *Model) nextPage() (tea.Model, tea.Cmd) {
 func (m *Model) previousPage() (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case sessionsScreen:
-		if m.sessionPage == 0 || m.sessionsLoading {
+		if m.sessionsState.pageNumber == 0 || m.sessionsState.loading {
 			return m, nil
 		}
-		m.sessionPage--
-		m.sessionCursor = 0
-		m.selectedSession = ""
+		m.sessionsState.pageNumber--
+		m.sessionsState.cursor = 0
+		m.sessionsState.selected = ""
 		return m, m.reloadSessions()
 	case timelineScreen:
-		if m.timelinePage == 0 || m.timelineLoading {
+		if m.timelineState.pageNumber == 0 || m.timelineState.loading {
 			return m, nil
 		}
-		m.timelinePage--
-		m.eventCursor = 0
+		m.timelineState.pageNumber--
+		m.timelineState.cursor = 0
 		return m, m.reloadTimeline()
 	}
 	return m, nil
@@ -764,32 +914,32 @@ func (m *Model) previousPage() (tea.Model, tea.Cmd) {
 func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case sessionsScreen:
-		if m.sessionsLoading || len(m.sessions.Sessions) == 0 {
+		if m.sessionsState.loading || len(m.sessionsState.page.Sessions) == 0 {
 			return m, nil
 		}
-		m.selectedSession = m.sessions.Sessions[m.sessionCursor].ID
+		m.sessionsState.selected = m.sessionsState.page.Sessions[m.sessionsState.cursor].ID
 		m.screen = timelineScreen
-		m.timeline = app.TimelinePage{}
-		m.timelineErr = nil
-		m.timelineLoading = true
-		m.timelinePage = 0
-		m.timelineCursors = []string{""}
-		m.eventCursor = 0
+		m.timelineState.page = app.TimelinePage{}
+		m.timelineState.err = nil
+		m.timelineState.loading = true
+		m.timelineState.pageNumber = 0
+		m.timelineState.cursors = []string{""}
+		m.timelineState.cursor = 0
 		m.stopObservation()
 		ctx := m.replaceRequest()
-		return m, loadTimeline(ctx, m.services, m.requestGeneration, m.selectedSession, "")
+		return m, loadTimeline(ctx, m.services, m.requestGeneration, m.sessionsState.selected, "")
 	case timelineScreen:
-		if m.timelineLoading || len(m.timeline.Events) == 0 {
+		if m.timelineState.loading || len(m.timelineState.page.Events) == 0 {
 			return m, nil
 		}
 		m.screen = detailScreen
-		m.detail = app.EventDetail{}
-		m.detailErr = nil
-		m.detailLoading = true
-		m.scroll = 0
+		m.detailState.detail = app.EventDetail{}
+		m.detailState.err = nil
+		m.detailState.loading = true
+		m.detailState.viewport.GotoTop()
 		ctx := m.replaceRequest()
-		event := m.timeline.Events[m.eventCursor]
-		return m, loadDetail(ctx, m.services, m.requestGeneration, m.selectedSession, event.ID)
+		event := m.timelineState.page.Events[m.timelineState.cursor]
+		return m, loadDetail(ctx, m.services, m.requestGeneration, m.sessionsState.selected, event.ID)
 	}
 	return m, nil
 }
@@ -805,49 +955,80 @@ func (m Model) View() tea.View {
 		height = 24
 	}
 
-	lines := []string{"AgentSession  ·  local · offline · read-only", m.indexSummary(), ""}
-	switch m.screen {
-	case sessionsScreen:
-		lines = append(lines, m.sessionsLines()...)
-	case indexingScreen:
-		lines = append(lines, m.indexingLines()...)
-	case timelineScreen:
-		lines = append(lines, m.timelineLines()...)
-	case detailScreen:
-		lines = append(lines, m.detailLines()...)
-	case projectionsScreen:
-		lines = append(lines, m.projectionLines()...)
+	copy := m
+	copy.syncViewports()
+	header := "AgentSession  /  " + copy.screenLabel() + "  ·  local · offline · read-only"
+	if width < 40 {
+		header = "AgentSession / " + copy.screenLabel()
 	}
-	lines = append(lines, "", m.helpLine(width))
+	lines := []string{header, copy.indexSummary(), ""}
+	var body []string
+	if copy.helpOpen {
+		body = strings.Split(copy.helpViewport.View(), "\n")
+	} else {
+		switch copy.screen {
+		case sessionsScreen:
+			body = copy.sessionsLines()
+		case indexingScreen:
+			body = strings.Split(copy.indexingState.viewport.View(), "\n")
+		case timelineScreen:
+			body = copy.timelineLines()
+		case detailScreen:
+			body = strings.Split(copy.detailState.viewport.View(), "\n")
+		case projectionsScreen:
+			body = copy.projectionLines()
+		}
+	}
+	lines = append(lines, body...)
+	lines = append(lines, "", copy.helpLine(width))
+	lines = copy.styleLines(lines)
 
 	view := terminalView(fit(lines, width, height))
 	view.AltScreen = true
+	view.WindowTitle = "AgentSession"
 	return view
+}
+
+func (m Model) screenLabel() string {
+	switch m.screen {
+	case sessionsScreen:
+		return "Sessions"
+	case indexingScreen:
+		return "Indexing"
+	case timelineScreen:
+		return "Timeline"
+	case detailScreen:
+		return "Event"
+	case projectionsScreen:
+		return "Projections"
+	default:
+		return "Explorer"
+	}
 }
 
 // indexSummary renders the last observed lifecycle state persistently across
 // every screen.
 func (m Model) indexSummary() string {
-	status := m.importStatus
+	status := m.indexingState.status
 	switch {
-	case m.importErr != nil:
-		return "Index: unavailable — " + m.importErr.Error()
+	case m.indexingState.err != nil:
+		return "CANONICAL INDEX · UNAVAILABLE — " + m.indexingState.err.Error()
 	case status.Active:
-		return fmt.Sprintf("Index: indexing · %d/%d sources · %d records · %d diagnostics",
-			status.SourcesCompleted, status.SourcesDiscovered, status.RecordsProcessed, status.DiagnosticsTotal)
+		return fmt.Sprintf("%s CANONICAL INDEX · INDEXING · %d/%d sources · %d records · %d diagnostics",
+			m.spinner.View(), status.SourcesCompleted, status.SourcesDiscovered, status.RecordsProcessed, status.DiagnosticsTotal)
 	case status.Phase == app.ImportAllUpToDate:
 		if status.SourcesDiscovered == 0 {
-			return "Index: complete · no supported sources found"
+			return "CANONICAL INDEX · COMPLETE · no supported sources found"
 		}
-		return fmt.Sprintf("Index: complete · %d sources · %d sessions", status.SourcesCompleted, status.SessionsObserved)
+		return fmt.Sprintf("CANONICAL INDEX · COMPLETE · %d sources · %d sessions", status.SourcesCompleted, status.SessionsObserved)
 	case status.Phase == app.ImportAllIssues:
-		return fmt.Sprintf("Index: completed with issues · %d failed · %d diagnostics",
+		return fmt.Sprintf("CANONICAL INDEX · COMPLETED WITH ISSUES · %d failed · %d diagnostics",
 			status.SourcesFailed, status.DiagnosticsTotal)
 	default:
 		if status.Failure != "" {
-			return "Index: unavailable — " + status.Failure
+			return "CANONICAL INDEX · UNAVAILABLE — " + status.Failure
 		}
-		return "Index: status unavailable"
+		return "CANONICAL INDEX · STATUS UNAVAILABLE"
 	}
 }
 
@@ -856,52 +1037,66 @@ func (m Model) indexSummary() string {
 func (m Model) sessionsLines() []string {
 	lines := []string{"Imported sessions"}
 	switch {
-	case m.sessionsLoading && len(m.sessions.Sessions) == 0:
-		return append(lines, "", "Loading imported sessions…")
-	case m.sessionsErr != nil:
-		return append(lines, "", "Could not load sessions: "+m.sessionsErr.Error(), "Press r to retry.")
-	case len(m.sessions.Sessions) == 0:
+	case m.sessionsState.loading && len(m.sessionsState.page.Sessions) == 0:
+		return append(lines, "", m.spinner.View()+" Loading imported sessions…")
+	case m.sessionsState.err != nil && len(m.sessionsState.page.Sessions) == 0:
+		return append(lines, "", "Could not load sessions: "+m.sessionsState.err.Error(), "Press r to retry.")
+	case len(m.sessionsState.page.Sessions) == 0:
 		lines = append(lines, "", "No imported sessions are available.")
-		if m.importStatus.Active {
+		if m.indexingState.status.Active {
 			lines = append(lines, "Indexing continues in the background; this list refreshes when it completes.")
-		} else if m.importStatus.SourcesDiscovered == 0 && m.importStatus.Phase == app.ImportAllUpToDate {
+		} else if m.indexingState.status.SourcesDiscovered == 0 && m.indexingState.status.Phase == app.ImportAllUpToDate {
 			lines = append(lines, "No supported sources were discovered. Press r to rescan.")
 		}
 		return lines
 	}
-	switch m.sessions.State {
+	if m.sessionsState.err != nil {
+		lines = append(lines, "Refresh failed; showing the last loaded page. Press r to retry.")
+	} else if m.sessionsState.loading {
+		lines = append(lines, m.spinner.View()+" Refreshing sessions; current evidence remains visible.")
+	}
+	switch m.sessionsState.page.State {
 	case app.EvidencePartial:
 		lines = append(lines, "Some sessions contain diagnostics; available evidence is still shown.")
 	case app.EvidenceUnavailable:
 		lines = append(lines, "Session evidence is unavailable.")
 	}
 	lines = append(lines, "")
-	visible := max(1, m.contentHeight()-len(lines))
-	start := windowStart(m.sessionCursor, len(m.sessions.Sessions), visible)
-	end := min(len(m.sessions.Sessions), start+visible)
+	rowHeight := 1
+	if m.renderWidth() < 72 {
+		rowHeight = 2
+	}
+	visible := max(1, (m.contentHeight()-len(lines)-1)/rowHeight)
+	start := windowStart(m.sessionsState.cursor, len(m.sessionsState.page.Sessions), visible)
+	end := min(len(m.sessionsState.page.Sessions), start+visible)
 	for i := start; i < end; i++ {
-		session := m.sessions.Sessions[i]
+		session := m.sessionsState.page.Sessions[i]
 		marker := " "
-		if i == m.sessionCursor {
+		if i == m.sessionsState.cursor {
 			marker = ">"
 		}
 		title := session.Title
 		if strings.TrimSpace(title) == "" {
 			title = string(session.ID)
 		}
-		lines = append(lines, fmt.Sprintf("%s %s  ·  %d events  ·  evidence %s  ·  projections %d/%d usable",
-			marker, title, session.EventCount, evidenceLabel(session.State), session.Projections.Usable,
-			session.Projections.Ready+session.Projections.Pending+session.Projections.Running+session.Projections.Failed))
+		if m.renderWidth() < 72 {
+			lines = append(lines, fmt.Sprintf("%s %s", marker, title))
+			lines = append(lines, fmt.Sprintf("  %d events · canonical %s · %d usable · %d not implemented",
+				session.EventCount, evidenceLabel(session.State), session.Projections.Usable, session.Projections.Unimplemented))
+		} else {
+			lines = append(lines, fmt.Sprintf("%s %-30s  %6d events  · canonical %-20s · derived %d usable · %d not implemented",
+				marker, title, session.EventCount, evidenceLabel(session.State), session.Projections.Usable, session.Projections.Unimplemented))
+		}
 	}
-	lines = append(lines, fmt.Sprintf("Page %d · %d shown%s", m.sessionPage+1, len(m.sessions.Sessions), nextLabel(m.sessions.NextCursor)))
+	lines = append(lines, fmt.Sprintf("Page %d · %d shown%s", m.sessionsState.pageNumber+1, len(m.sessionsState.page.Sessions), nextLabel(m.sessionsState.page.NextCursor)))
 	return lines
 }
 
 // timelineLines renders source-ordered lightweight event summaries.
 func (m Model) timelineLines() []string {
-	lines := []string{"Timeline · session " + string(m.selectedSession)}
-	for _, session := range m.sessions.Sessions {
-		if session.ID == m.selectedSession {
+	lines := []string{"Timeline · session " + string(m.sessionsState.selected)}
+	for _, session := range m.sessionsState.page.Sessions {
+		if session.ID == m.sessionsState.selected {
 			lines = append(lines, fmt.Sprintf("Canonical evidence: %s · projections: %d usable, %d pending, %d running, %d failed, %d stale",
 				evidenceLabel(session.State), session.Projections.Usable, session.Projections.Pending,
 				session.Projections.Running, session.Projections.Failed, session.Projections.Stale))
@@ -909,65 +1104,82 @@ func (m Model) timelineLines() []string {
 		}
 	}
 	switch {
-	case m.timelineLoading && len(m.timeline.Events) == 0:
-		return append(lines, "", "Loading event summaries…")
-	case m.timelineErr != nil:
-		return append(lines, "", "Could not load timeline: "+m.timelineErr.Error(), "Press r to retry.")
-	case m.timeline.State == app.EvidenceNotFound:
+	case m.timelineState.loading && len(m.timelineState.page.Events) == 0:
+		return append(lines, "", m.spinner.View()+" Loading event summaries…")
+	case m.timelineState.err != nil && len(m.timelineState.page.Events) == 0:
+		return append(lines, "", "Could not load timeline: "+m.timelineState.err.Error(), "Press r to retry.")
+	case m.timelineState.page.State == app.EvidenceNotFound:
 		return append(lines, "", "This session is no longer available.")
-	case len(m.timeline.Events) == 0:
-		if m.timeline.State == app.EvidenceUnavailable {
-			return append(lines, "", "Timeline evidence is unavailable.", diagnosticSummary(m.timeline.Diagnostics))
+	case len(m.timelineState.page.Events) == 0:
+		if m.timelineState.page.State == app.EvidenceUnavailable {
+			return append(lines, "", "Timeline evidence is unavailable.", diagnosticSummary(m.timelineState.page.Diagnostics))
 		}
 		return append(lines, "", "This session has no normalized events.")
 	}
-	if m.timeline.State == app.EvidencePartial {
-		lines = append(lines, diagnosticSummary(m.timeline.Diagnostics))
+	if m.timelineState.err != nil {
+		lines = append(lines, "Refresh failed; showing the last loaded timeline. Press r to retry.")
+	} else if m.timelineState.loading {
+		lines = append(lines, m.spinner.View()+" Refreshing timeline summaries.")
+	}
+	if m.timelineState.page.State == app.EvidencePartial {
+		lines = append(lines, diagnosticSummary(m.timelineState.page.Diagnostics))
 	}
 	lines = append(lines, "")
-	visible := max(1, m.contentHeight()-len(lines))
-	start := windowStart(m.eventCursor, len(m.timeline.Events), visible)
-	end := min(len(m.timeline.Events), start+visible)
+	visible := max(1, m.contentHeight()-len(lines)-1)
+	start := windowStart(m.timelineState.cursor, len(m.timelineState.page.Events), visible)
+	end := min(len(m.timelineState.page.Events), start+visible)
 	for i := start; i < end; i++ {
-		event := m.timeline.Events[i]
+		event := m.timelineState.page.Events[i]
 		marker := " "
-		if i == m.eventCursor {
+		if i == m.timelineState.cursor {
 			marker = ">"
 		}
 		lines = append(lines, fmt.Sprintf("%s #%d  %-13s  %s", marker, event.Sequence, event.Kind, event.Summary))
 	}
-	lines = append(lines, fmt.Sprintf("Page %d · %d shown%s", m.timelinePage+1, len(m.timeline.Events), nextLabel(m.timeline.NextCursor)))
+	lines = append(lines, fmt.Sprintf("Page %d · %d shown%s", m.timelineState.pageNumber+1, len(m.timelineState.page.Events), nextLabel(m.timelineState.page.NextCursor)))
 	return lines
 }
 
 // projectionLines renders canonical evidence availability independently from
 // derived-data readiness and shows only application-safe diagnostics.
 func (m Model) projectionLines() []string {
-	lines := []string{"Projection lifecycle · session " + string(m.selectedSession)}
-	if m.confirmRebuildAll {
-		lines = append(lines, "", "Rebuild every projection? This invalidates current derived output. [y/n]")
+	lines := []string{"Projection lifecycle · session " + string(m.sessionsState.selected)}
+	if m.projectionsState.confirmAll {
+		lines = append(lines, "",
+			"Rebuild every projection?",
+			"Confirm [y] / cancel [n or Esc]",
+			"This invalidates current derived output; all registered builders are available.")
 		return lines
 	}
 	switch {
-	case m.projectionLoading && len(m.projectionStatus.Projections) == 0:
-		return append(lines, "", "Loading projection status…")
-	case m.projectionErr != nil:
-		return append(lines, "", "Could not load projection status: "+m.projectionErr.Error())
-	case m.projectionStatus.State == app.EvidenceNotFound:
+	case m.projectionsState.loading && len(m.projectionsState.status.Projections) == 0:
+		return append(lines, "", m.spinner.View()+" Loading projection status…")
+	case m.projectionsState.err != nil && len(m.projectionsState.status.Projections) == 0:
+		return append(lines, "", "Could not load projection status: "+m.projectionsState.err.Error())
+	case m.projectionsState.status.State == app.EvidenceNotFound:
 		return append(lines, "", "This session is no longer available.")
 	}
-	summary := m.projectionStatus.Summary
+	summary := m.projectionsState.status.Summary
 	lines = append(lines,
-		fmt.Sprintf("Canonical evidence remains available · usable %d/%d · pending %d · running %d · failed %d · stale %d",
-			summary.Usable, len(m.projectionStatus.Projections), summary.Pending, summary.Running, summary.Failed, summary.Stale),
+		fmt.Sprintf("Canonical evidence remains available · derived usable %d/%d · pending %d · running %d · failed %d · stale %d · not implemented %d",
+			summary.Usable, len(m.projectionsState.status.Projections), summary.Pending, summary.Running, summary.Failed, summary.Stale,
+			summary.Unimplemented),
 		"",
 	)
-	if diagnostic := m.projectionStatus.OperationDiagnostic; diagnostic != nil {
+	if m.projectionsState.err != nil {
+		lines = append(lines, "Refresh failed; showing the last observed projection status.", "")
+	} else if m.projectionsState.loading {
+		lines = append(lines, m.spinner.View()+" Refreshing projection status.", "")
+	}
+	if m.projectionsState.actionNotice != "" {
+		lines = append(lines, m.projectionsState.actionNotice, "")
+	}
+	if diagnostic := m.projectionsState.status.OperationDiagnostic; diagnostic != nil {
 		lines = append(lines, diagnostic.Code+": "+diagnostic.Summary, "")
 	}
-	for index, state := range m.projectionStatus.Projections {
+	for index, state := range m.projectionsState.status.Projections {
 		marker := " "
-		if index == m.projectionCursor {
+		if index == m.projectionsState.cursor {
 			marker = ">"
 		}
 		flags := string(state.Status)
@@ -977,59 +1189,71 @@ func (m Model) projectionLines() []string {
 		if state.Stale {
 			flags += " · stale"
 		}
+		if !state.BuildAvailable {
+			if state.Status == app.ProjectionStatusPending {
+				flags = "not implemented in this build · remains pending"
+			} else {
+				flags += " · rebuild unavailable in this build"
+			}
+		}
 		lines = append(lines, fmt.Sprintf("%s %-16s  %s  · target %s/%d · attempts %d",
 			marker, state.Kind, flags, state.TargetVersion, state.TargetRevision, state.AttemptCount))
 		if state.Diagnostic != nil {
 			lines = append(lines, "    "+state.Diagnostic.Code+": "+state.Diagnostic.Summary)
 		}
 	}
-	if m.projectionStatus.Active || summary.Running > 0 {
+	if m.projectionsState.status.Active || summary.Running > 0 {
 		lines = append(lines, "", "Projection work is active and continues if you leave this panel.")
 	}
 	return lines
 }
 
-// detailLines renders normalized evidence as indented JSON and never renders
+// detailContentLines renders normalized evidence as indented JSON and never renders
 // the retained raw-record contents.
-func (m Model) detailLines() []string {
-	lines := []string{"Event detail · session " + string(m.selectedSession)}
+func (m Model) detailContentLines() []string {
+	lines := []string{"Event detail · session " + string(m.sessionsState.selected)}
 	switch {
-	case m.detailLoading:
-		return append(lines, "", "Loading normalized payload…")
-	case m.detailErr != nil:
-		return append(lines, "", "Could not load event: "+m.detailErr.Error(), "Press r to retry.")
-	case m.detail.State == app.EvidenceNotFound:
+	case m.detailState.loading && m.detailState.detail.Event.ID == "":
+		return append(lines, "", m.spinner.View()+" Loading normalized payload…")
+	case m.detailState.err != nil && m.detailState.detail.Event.ID == "":
+		return append(lines, "", "Could not load event: "+m.detailState.err.Error(), "Press r to retry.")
+	case m.detailState.detail.State == app.EvidenceNotFound:
 		return append(lines, "", "This event is no longer available.")
 	}
-	event := m.detail.Event
+	if m.detailState.err != nil {
+		lines = append(lines, "Refresh failed; showing the last loaded event. Press r to retry.", "")
+	} else if m.detailState.loading {
+		lines = append(lines, m.spinner.View()+" Refreshing normalized payload.", "")
+	}
+	event := m.detailState.detail.Event
 	lines = append(lines,
-		fmt.Sprintf("#%d · %s · %s", event.Sequence, event.Kind, evidenceLabel(m.detail.State)),
+		fmt.Sprintf("#%d · %s · %s", event.Sequence, event.Kind, evidenceLabel(m.detailState.detail.State)),
 		event.Summary,
 	)
-	if m.detail.Diagnostics.Total > 0 {
-		lines = append(lines, diagnosticSummary(m.detail.Diagnostics))
-		for _, diagnostic := range m.detail.Diagnostics.Diagnostics {
+	if m.detailState.detail.Diagnostics.Total > 0 {
+		lines = append(lines, diagnosticSummary(m.detailState.detail.Diagnostics))
+		for _, diagnostic := range m.detailState.detail.Diagnostics.Diagnostics {
 			lines = append(lines, fmt.Sprintf("[%s] %s: %s", diagnostic.Severity, diagnostic.Code, diagnostic.Message))
 		}
 	}
 	lines = append(lines, "", "Normalized payload")
-	if m.detail.State == app.EvidenceUnavailable || m.detail.Payload == nil {
+	if m.detailState.detail.State == app.EvidenceUnavailable || m.detailState.detail.Payload == nil {
 		lines = append(lines, "Payload evidence is unavailable.")
-		return scrollLines(wrapDetailLines(lines, m.renderWidth()), m.scroll, m.contentHeight())
+		return lines
 	}
-	payload, err := json.MarshalIndent(m.detail.Payload, "", "  ")
+	payload, err := json.MarshalIndent(m.detailState.detail.Payload, "", "  ")
 	if err != nil {
 		lines = append(lines, "Could not render normalized payload: "+err.Error())
 	} else {
 		lines = append(lines, strings.Split(string(payload), "\n")...)
 	}
-	return scrollLines(wrapDetailLines(lines, m.renderWidth()), m.scroll, m.contentHeight())
+	return lines
 }
 
-// indexingLines renders aggregate progress, per-source status, failures, and
+// indexingContentLines renders aggregate progress, per-source status, failures, and
 // the coordinator's bounded diagnostic synopsis.
-func (m Model) indexingLines() []string {
-	status := m.importStatus
+func (m Model) indexingContentLines() []string {
+	status := m.indexingState.status
 	lines := []string{"Indexing details", ""}
 	switch status.Phase {
 	case app.ImportAllIndexing:
@@ -1075,7 +1299,7 @@ func (m Model) indexingLines() []string {
 			lines = append(lines, fmt.Sprintf("[%s] %s · %s · %s", diagnostic.Severity, diagnostic.Code, where, diagnostic.Message))
 		}
 	}
-	return scrollLines(wrapDetailLines(lines, m.renderWidth()), m.scroll, m.contentHeight())
+	return lines
 }
 
 // contentHeight reserves rows for the title, persistent index summary, and
@@ -1085,7 +1309,7 @@ func (m Model) contentHeight() int {
 	if height <= 0 {
 		height = 24
 	}
-	return max(3, height-5)
+	return max(1, height-5)
 }
 
 // renderWidth supplies a deterministic fallback before the first resize event.
@@ -1098,20 +1322,32 @@ func (m Model) renderWidth() int {
 
 // helpLine uses compact controls when terminal dimensions are constrained.
 func (m Model) helpLine(width int) string {
-	if width < 55 || m.height > 0 && m.height < 12 {
-		return "↑↓ move · Enter open · Esc back · q quit"
+	if width < 40 || m.height > 0 && m.height < 8 {
+		return "↑↓ move · ? help · q quit"
+	}
+	if width < 96 || m.height > 0 && m.height < 18 {
+		switch m.screen {
+		case sessionsScreen:
+			return "↑↓ move · Enter open · i index · r rescan · ? help · q quit"
+		case timelineScreen:
+			return "↑↓ move · Enter detail · x projections · Esc back · ? help"
+		case projectionsScreen:
+			return "↑↓ select · t retry · b rebuild · Esc back · ? help"
+		default:
+			return "↑↓ scroll · PgUp/PgDn · Esc back · r refresh · ? help"
+		}
 	}
 	switch m.screen {
 	case sessionsScreen:
-		return "↑/↓ or j/k move · Enter open · n/p page · i indexing · r rescan · q quit"
+		return "↑/↓ or j/k move · g/G first/last · Enter open · n/p page · i indexing · r rescan · ? help · q quit"
 	case indexingScreen:
-		return "↑/↓ or j/k scroll · PgUp/PgDn scroll · Esc sessions · r rescan · q quit"
+		return "↑/↓ or j/k scroll · g/G top/bottom · PgUp/PgDn scroll · Esc sessions · r rescan · ? help · q quit"
 	case timelineScreen:
-		return "↑/↓ or j/k move · Enter detail · x projections · n/p page · Esc sessions · r reload · q quit"
+		return "↑/↓ or j/k move · g/G first/last · Enter detail · x projections · n/p page · Esc sessions · r reload · ? help"
 	case projectionsScreen:
-		return "↑/↓ select · r refresh · t retry pending/failed · b rebuild selected · a rebuild all · Esc timeline"
+		return "↑/↓ select · r refresh · t retry implemented · b rebuild selected · a rebuild all when available · Esc timeline · ? help"
 	default:
-		return "↑/↓ or j/k scroll · PgUp/PgDn scroll · Esc timeline · r reload · q quit"
+		return "↑/↓ or j/k scroll · g/G top/bottom · PgUp/PgDn scroll · Esc timeline · r reload · ? help · q quit"
 	}
 }
 
@@ -1153,24 +1389,6 @@ func nextLabel(cursor string) string {
 	return ""
 }
 
-// scrollLines returns a bounded viewport and marks hidden content in either
-// direction.
-func scrollLines(lines []string, offset, height int) []string {
-	if len(lines) <= height {
-		return lines
-	}
-	offset = clamp(offset, 0, max(0, len(lines)-height))
-	end := min(len(lines), offset+height)
-	result := append([]string(nil), lines[offset:end]...)
-	if offset > 0 && len(result) > 0 {
-		result[0] = "↑ more"
-	}
-	if end < len(lines) && len(result) > 0 {
-		result[len(result)-1] = "↓ more"
-	}
-	return result
-}
-
 // windowStart centers the selected row where possible while respecting bounds.
 func windowStart(selected, total, visible int) int {
 	if total <= visible {
@@ -1191,8 +1409,8 @@ func clamp(value, low, high int) int {
 	return value
 }
 
-// fit applies the terminal sanitization boundary before width measurement,
-// truncates by display cells, and preserves contextual help as the last row.
+// fit truncates already-sanitized, optionally styled lines by display cells
+// and preserves contextual help as the last row.
 func fit(lines []string, width, height int) string {
 	width = max(1, width)
 	height = max(1, height)
@@ -1203,9 +1421,6 @@ func fit(lines []string, width, height int) string {
 	}
 	fitted := make([]string, 0, min(len(selected), height))
 	for _, line := range selected {
-		// Sanitize before measuring: source-controlled escape sequences must not
-		// affect width calculations or composition.
-		line = sanitization.Terminal(line)
 		fitted = append(fitted, ansi.Truncate(line, width, "…"))
 		if len(fitted) == height {
 			break
@@ -1214,22 +1429,10 @@ func fit(lines []string, width, height int) string {
 	return strings.Join(fitted, "\n")
 }
 
-// wrapDetailLines wraps sanitized long-form evidence by display width before
-// viewport scrolling is applied.
-func wrapDetailLines(lines []string, width int) []string {
-	width = max(1, width)
-	wrapped := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = sanitization.Terminal(line)
-		parts := strings.Split(ansi.Wordwrap(line, width, " \t/"), "\n")
-		wrapped = append(wrapped, parts...)
-	}
-	return wrapped
-}
-
-// terminalView is the mandatory final sanitization boundary for TUI content.
+// terminalView receives content whose dynamic segments crossed sanitizeLines
+// before the application-owned Lip Gloss styles were applied.
 func terminalView(content string) tea.View {
-	return tea.NewView(sanitization.Terminal(content))
+	return tea.NewView(content)
 }
 
 // Run opens the interactive terminal interface over application-owned

@@ -38,7 +38,7 @@ func (runtimeExplorerStub) EventDetail(context.Context, EventDetailRequest) (Eve
 func TestRuntimeListSessionsPreservesCanonicalPageWhenProjectionStatusFails(t *testing.T) {
 	summary := ProjectionSummary{Ready: 1, Usable: 1}
 	readyRevision := int64(1)
-	controller := &projectionControllerStub{status: func(_ context.Context, sessionID model.SessionID) ([]projection.State, error) {
+	controller := &projectionControllerStub{builders: map[projection.Kind]bool{projection.KindSearch: true}, status: func(_ context.Context, sessionID model.SessionID) ([]projection.State, error) {
 		if sessionID == "session-2" {
 			return nil, errors.New("projection storage unavailable")
 		}

@@ -134,6 +134,9 @@ func RunConsumerContract(t *testing.T, consumer Consumer) {
 		if state.Stale {
 			detailed.Stale++
 		}
+		if !state.BuildAvailable {
+			detailed.Unimplemented++
+		}
 	}
 	if projections.Summary != detailed {
 		t.Fatalf("projection aggregate = %#v, detailed = %#v", projections.Summary, detailed)

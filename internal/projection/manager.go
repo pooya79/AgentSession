@@ -113,6 +113,13 @@ func (m *Manager) Status(ctx context.Context, sessionID model.SessionID) ([]Stat
 	return m.store.States(ctx, sessionID)
 }
 
+// BuildAvailable reports whether this runtime has an implementation for kind.
+// Registrations are immutable after construction, so this is safe to query
+// without coordinating with active projection flights.
+func (m *Manager) BuildAvailable(kind Kind) bool {
+	return m.builders[kind] != nil
+}
+
 func (m *Manager) run(ctx context.Context, sessionID model.SessionID) (error, bool) {
 	m.mu.Lock()
 	if existing := m.flights[sessionID]; existing != nil {
