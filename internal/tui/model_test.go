@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -163,6 +164,38 @@ func TestInitStartsImportAllAndLoadsSessions(t *testing.T) {
 	}
 	if got := m.View().Content; !strings.Contains(got, "Sessions dashboard") || strings.Contains(got, "Select source") {
 		t.Fatalf("startup view = %q", got)
+	}
+}
+
+func TestReloadSessionsRestartsStoppedSpinnerWithoutDuplicatingTickChain(t *testing.T) {
+	m := New(context.Background(), &servicesStub{})
+	m.sessionsState.loading = false
+	m.sessionsState.overviewLoading = false
+	m.spinnerActive = true
+	m, cmd := updateModel(t, m, spinner.TickMsg{})
+	if cmd != nil || m.spinnerActive {
+		t.Fatalf("idle tick = (cmd %v, active %v), want stopped chain", cmd != nil, m.spinnerActive)
+	}
+
+	cmd = m.reloadSessions()
+	if !m.spinnerActive {
+		t.Fatal("reloadSessions left spinner inactive")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatalf("reloadSessions command = %T with %d children, want work plus one tick", batch, len(batch))
+	}
+	if _, ok := batch[0]().(tea.BatchMsg); !ok {
+		t.Fatalf("restarted spinner first command = %T, want batched reload work", batch[0]())
+	}
+
+	cmd = m.reloadSessions()
+	batch, ok = cmd().(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatalf("active reload command = %T with %d children, want only session and overview work", batch, len(batch))
+	}
+	if _, ok := batch[0]().(sessionsLoadedMsg); !ok {
+		t.Fatalf("active spinner first command = %T, want session load without another tick wrapper", batch[0]())
 	}
 }
 

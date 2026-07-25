@@ -133,10 +133,11 @@ type Model struct {
 	indexingState
 	projectionsState
 
-	theme        theme
-	helpOpen     bool
-	helpViewport viewport.Model
-	spinner      spinner.Model
+	theme         theme
+	helpOpen      bool
+	helpViewport  viewport.Model
+	spinner       spinner.Model
+	spinnerActive bool
 }
 
 // New creates a terminal model over the shared application services.
@@ -176,6 +177,7 @@ func New(ctx context.Context, services app.Services) Model {
 		theme:            newTheme(true),
 		helpViewport:     helpViewport,
 		spinner:          spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+		spinnerActive:    services != nil,
 	}
 }
 
@@ -338,7 +340,7 @@ func (m *Model) startProjectionObservation() context.Context {
 	}
 	m.projectionsState.generation++
 	ctx, cancel := context.WithCancel(m.ctx)
-	m.projectionsState.ctx, m.projectionsState.cancel = ctx, cancel
+	m.projectionsState.cancel = cancel
 	return ctx
 }
 
@@ -349,7 +351,15 @@ func (m *Model) stopProjectionObservation() {
 		m.projectionsState.cancel()
 	}
 	m.projectionsState.generation++
-	m.projectionsState.ctx, m.projectionsState.cancel = nil, nil
+	m.projectionsState.cancel = nil
+}
+
+func (m *Model) startSpinner(cmd tea.Cmd) tea.Cmd {
+	if cmd == nil || m.spinnerActive {
+		return cmd
+	}
+	m.spinnerActive = true
+	return tea.Batch(cmd, m.spinner.Tick)
 }
 
 // observeProjectionsNow starts one immediate status read; subsequent reads are
@@ -357,7 +367,14 @@ func (m *Model) stopProjectionObservation() {
 func (m *Model) observeProjectionsNow() tea.Cmd {
 	ctx := m.startProjectionObservation()
 	m.projectionsState.loading, m.projectionsState.err = true, nil
-	return readProjectionStatus(ctx, m.services, m.projectionsState.generation, m.sessionsState.selected)
+	return m.startSpinner(readProjectionStatus(ctx, m.services, m.projectionsState.generation, m.sessionsState.selected))
+}
+
+func (m *Model) runProjectionAction(kind string, retry bool) tea.Cmd {
+	m.projectionsState.loading = true
+	return m.startSpinner(projectionAction(
+		m.services, m.projectionsState.generation, m.sessionsState.selected, kind, retry,
+	))
 }
 
 // reloadSessions replaces the current page request while retaining its cursor.
@@ -368,10 +385,10 @@ func (m *Model) reloadSessions() tea.Cmd {
 	m.sessionsState.overviewLoading = true
 	m.sessionsState.overviewErr = nil
 	cursor := m.sessionsState.cursors[m.sessionsState.pageNumber]
-	return tea.Batch(
+	return m.startSpinner(tea.Batch(
 		loadSessions(ctx, m.services, m.requestGeneration, cursor),
 		loadOverview(ctx, m.services, m.requestGeneration),
-	)
+	))
 }
 
 // reloadTimeline replaces the current timeline request while retaining its
@@ -381,7 +398,7 @@ func (m *Model) reloadTimeline() tea.Cmd {
 	m.timelineState.loading = true
 	m.timelineState.err = nil
 	cursor := m.timelineState.cursors[m.timelineState.pageNumber]
-	return loadTimeline(ctx, m.services, m.requestGeneration, m.sessionsState.selected, cursor)
+	return m.startSpinner(loadTimeline(ctx, m.services, m.requestGeneration, m.sessionsState.selected, cursor))
 }
 
 // observeNow starts a fresh observer and immediately reads indexing status.
@@ -404,9 +421,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner.Style = m.theme.info
 		return m, nil
 	case spinner.TickMsg:
+		if !m.spinnerActive {
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		if !m.busy() {
+			m.spinnerActive = false
 			cmd = nil
 		}
 		return m, cmd
@@ -468,7 +489,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.indexingState.status = msg.start.Status
 		m.syncViewports()
 		if m.indexingState.status.Active {
-			return m, pollImport(m.observeGeneration)
+			return m, m.startSpinner(pollImport(m.observeGeneration))
 		}
 		return m, nil
 	case pollImportMsg:
@@ -494,7 +515,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.indexingState.status = msg.status
 		m.syncViewports()
 		if msg.status.Active {
-			return m, pollImport(m.observeGeneration)
+			return m, m.startSpinner(pollImport(m.observeGeneration))
 		}
 		if wasActive && m.screen == sessionsScreen {
 			return m, m.reloadSessions()
@@ -513,7 +534,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.projectionsState.cursor = max(0, len(msg.status.Projections)-1)
 			}
 			if projectionPolling(msg.status) {
-				return m, pollProjections(m.projectionsState.generation)
+				return m, m.startSpinner(pollProjections(m.projectionsState.generation))
 			}
 		}
 		return m, nil
@@ -521,6 +542,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation != m.projectionsState.generation {
 			return m, nil
 		}
+		m.projectionsState.loading = false
 		m.projectionsState.err = visibleError(msg.err)
 		if msg.err == nil {
 			m.projectionsState.status = msg.action.Status
@@ -534,7 +556,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.projectionsState.actionNotice = "Projection work accepted; it continues after leaving this screen."
 			}
-			return m, pollProjections(m.projectionsState.generation)
+			return m, m.startSpinner(pollProjections(m.projectionsState.generation))
 		}
 		return m, nil
 	case pollProjectionsMsg:
@@ -542,7 +564,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		ctx := m.startProjectionObservation()
-		return m, readProjectionStatus(ctx, m.services, m.projectionsState.generation, m.sessionsState.selected)
+		m.projectionsState.loading = true
+		return m, m.startSpinner(readProjectionStatus(ctx, m.services, m.projectionsState.generation, m.sessionsState.selected))
 	case tea.KeyPressMsg:
 		updated, cmd := m.handleKey(msg.String())
 		if pointer, ok := updated.(*Model); ok {
@@ -555,7 +578,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) busy() bool {
 	return m.sessionsState.loading || m.sessionsState.overviewLoading || m.timelineState.loading || m.detailState.loading ||
-		m.projectionsState.loading || m.indexingState.status.Active
+		m.projectionsState.loading || m.projectionsState.status.Active || m.indexingState.status.Active
 }
 
 // visibleError suppresses expected cancellation from superseded presentation
@@ -636,7 +659,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "y":
 			m.projectionsState.confirmAll = false
-			return m, projectionAction(m.services, m.projectionsState.generation, m.sessionsState.selected, app.ProjectionKindAll, false)
+			return m, m.runProjectionAction(app.ProjectionKindAll, false)
 		}
 		return m, nil
 	}
@@ -671,7 +694,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 				m.projectionsState.actionNotice = "No implemented pending or failed projection can be retried."
 				return m, nil
 			}
-			return m, projectionAction(m.services, m.projectionsState.generation, m.sessionsState.selected, "", true)
+			return m, m.runProjectionAction("", true)
 		}
 	case "b":
 		if m.screen == projectionsScreen && len(m.projectionsState.status.Projections) > 0 {
@@ -681,7 +704,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			kind := selected.Kind
-			return m, projectionAction(m.services, m.projectionsState.generation, m.sessionsState.selected, kind, false)
+			return m, m.runProjectionAction(kind, false)
 		}
 	case "a":
 		if m.screen == projectionsScreen {
@@ -793,7 +816,7 @@ func (m *Model) refresh() (tea.Model, tea.Cmd) {
 		m.detailState.loading, m.detailState.err = true, nil
 		m.detailState.viewport.GotoTop()
 		event := m.timelineState.page.Events[m.timelineState.cursor]
-		return m, loadDetail(ctx, m.services, m.requestGeneration, m.sessionsState.selected, event.ID)
+		return m, m.startSpinner(loadDetail(ctx, m.services, m.requestGeneration, m.sessionsState.selected, event.ID))
 	}
 	return m, nil
 }
@@ -958,7 +981,7 @@ func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 		m.timelineState.cursor = 0
 		m.stopObservation()
 		ctx := m.replaceRequest()
-		return m, loadTimeline(ctx, m.services, m.requestGeneration, m.sessionsState.selected, "")
+		return m, m.startSpinner(loadTimeline(ctx, m.services, m.requestGeneration, m.sessionsState.selected, ""))
 	case timelineScreen:
 		if m.timelineState.loading || len(m.timelineState.page.Events) == 0 {
 			return m, nil
@@ -970,7 +993,7 @@ func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 		m.detailState.viewport.GotoTop()
 		ctx := m.replaceRequest()
 		event := m.timelineState.page.Events[m.timelineState.cursor]
-		return m, loadDetail(ctx, m.services, m.requestGeneration, m.sessionsState.selected, event.ID)
+		return m, m.startSpinner(loadDetail(ctx, m.services, m.requestGeneration, m.sessionsState.selected, event.ID))
 	}
 	return m, nil
 }
@@ -986,33 +1009,33 @@ func (m Model) View() tea.View {
 		height = 24
 	}
 
-	copy := m
-	copy.syncViewports()
-	header := "AgentSession  /  " + copy.screenLabel() + "  ·  local · offline · read-only"
+	snapshot := m
+	snapshot.syncViewports()
+	header := "AgentSession  /  " + snapshot.screenLabel() + "  ·  local · offline · read-only"
 	if width < 40 {
-		header = "AgentSession / " + copy.screenLabel()
+		header = "AgentSession / " + snapshot.screenLabel()
 	}
-	lines := []string{header, copy.indexSummary(), ""}
+	lines := []string{header, snapshot.indexSummary(), ""}
 	var body []string
-	if copy.helpOpen {
-		body = strings.Split(copy.helpViewport.View(), "\n")
+	if snapshot.helpOpen {
+		body = strings.Split(snapshot.helpViewport.View(), "\n")
 	} else {
-		switch copy.screen {
+		switch snapshot.screen {
 		case sessionsScreen:
-			body = copy.sessionsLines()
+			body = snapshot.sessionsLines()
 		case indexingScreen:
-			body = strings.Split(copy.indexingState.viewport.View(), "\n")
+			body = strings.Split(snapshot.indexingState.viewport.View(), "\n")
 		case timelineScreen:
-			body = copy.timelineLines()
+			body = snapshot.timelineLines()
 		case detailScreen:
-			body = strings.Split(copy.detailState.viewport.View(), "\n")
+			body = strings.Split(snapshot.detailState.viewport.View(), "\n")
 		case projectionsScreen:
-			body = copy.projectionLines()
+			body = snapshot.projectionLines()
 		}
 	}
 	lines = append(lines, body...)
-	lines = append(lines, "", copy.helpLine(width))
-	lines = copy.styleLines(lines)
+	lines = append(lines, "", snapshot.helpLine(width))
+	lines = snapshot.styleLines(lines)
 
 	view := terminalView(fit(lines, width, height))
 	view.AltScreen = true

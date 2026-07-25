@@ -174,7 +174,7 @@ func (s *explorationService) ListSessions(ctx context.Context, request ListSessi
 	if more && len(rows) > 0 {
 		last := rows[len(rows)-1]
 		page.NextCursor, err = encodeCursor(cursorEnvelope{
-			Kind: "sessions-last-activity", SessionID: last.ID,
+			Kind: sessionCursorKind, SessionID: last.ID,
 			LastActivityAt: formatCursorTime(last.LastActivityAt),
 		})
 		if err != nil {
@@ -277,6 +277,11 @@ type cursorEnvelope struct {
 	Sequence       int64           `json:"sequence,omitempty"`
 }
 
+const (
+	sessionCursorKind    = "sessions-last-activity"
+	sessionCursorVersion = 2
+)
+
 func pageLimit(limit int) (int, error) {
 	if limit == 0 {
 		return DefaultPageSize, nil
@@ -289,8 +294,8 @@ func pageLimit(limit int) (int, error) {
 
 func encodeCursor(cursor cursorEnvelope) (string, error) {
 	cursor.Version = 1
-	if cursor.Kind == "sessions-last-activity" {
-		cursor.Version = 2
+	if cursor.Kind == sessionCursorKind {
+		cursor.Version = sessionCursorVersion
 	}
 	encoded, err := json.Marshal(cursor)
 	if err != nil {
@@ -313,7 +318,7 @@ func decodeCursor(value string) (cursorEnvelope, error) {
 
 func decodeSessionCursor(value string) (storage.SessionCursor, error) {
 	cursor, err := decodeCursor(value)
-	if err != nil || cursor.Version != 2 || cursor.Kind != "sessions-last-activity" {
+	if err != nil || cursor.Version != sessionCursorVersion || cursor.Kind != sessionCursorKind {
 		return storage.SessionCursor{}, fmt.Errorf("%w: cursor does not belong to a session list", ErrInvalidRequest)
 	}
 	if err := validateIdentifier("session cursor", string(cursor.SessionID)); err != nil {

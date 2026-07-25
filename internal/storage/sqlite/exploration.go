@@ -14,16 +14,6 @@ import (
 
 var _ storagecontract.ExplorationReader = (*ImportStore)(nil)
 
-// Canonical timestamps are UTC RFC3339Nano text, whose optional fractional
-// component is not lexically sortable. The session_rows CTE exposes the
-// evidence-derived last_activity value and this expression pads its fraction
-// for chronological ordering and keyset comparisons.
-const sessionActivitySortKey = `CASE
-	WHEN r.last_activity IS NULL THEN NULL
-	WHEN instr(r.last_activity, '.') = 0 THEN substr(r.last_activity, 1, 19) || '.000000000Z'
-	ELSE substr(r.last_activity, 1, 20) || substr(substr(r.last_activity, 21, length(r.last_activity) - 21) || '000000000', 1, 9) || 'Z'
-END`
-
 func (s *ImportStore) LibraryOverview(ctx context.Context) (storagecontract.LibraryOverview, error) {
 	var overview storagecontract.LibraryOverview
 	err := s.db.QueryRowContext(ctx, `
@@ -48,45 +38,21 @@ func (s *ImportStore) ListSessions(ctx context.Context, after *storagecontract.S
 		return nil, false, errors.New("sqlite exploration: list sessions: limit must be positive")
 	}
 	query := `
-		WITH session_rows AS (
-			SELECT s.id, s.title, s.summary, s.started_at, s.ended_at, s.source_id,
-			       s.adapter_name, COUNT(e.id) AS event_count,
-			       COALESCE(
-			           s.ended_at,
-			           (SELECT latest.timestamp FROM events latest
-			            WHERE latest.session_id = s.id AND latest.timestamp IS NOT NULL
-			            ORDER BY CASE
-			                WHEN instr(latest.timestamp, '.') = 0 THEN substr(latest.timestamp, 1, 19) || '.000000000Z'
-			                ELSE substr(latest.timestamp, 1, 20) || substr(substr(latest.timestamp, 21, length(latest.timestamp) - 21) || '000000000', 1, 9) || 'Z'
-			            END DESC LIMIT 1),
-			           s.started_at
-			       ) AS last_activity,
-			       COALESCE((
-			           SELECT substr(first_user.searchable_text, 1, 1024)
-			           FROM events first_user
-			           WHERE first_user.session_id = s.id
-			             AND first_user.kind = 'message'
-			             AND first_user.summary = 'User message'
-			           ORDER BY first_user.sequence ASC LIMIT 1
-			       ), '') AS first_user_message
-			FROM sessions s LEFT JOIN events e ON e.session_id = s.id
-			GROUP BY s.id
-		)
-		SELECT r.id, r.title, r.summary, r.started_at, r.ended_at, r.last_activity,
-		       r.source_id, r.adapter_name, r.first_user_message, r.event_count
-		FROM session_rows r`
+		SELECT s.id, s.title, s.summary, s.started_at, s.ended_at, s.last_activity_at,
+		       s.source_id, s.adapter_name, s.first_user_message, s.event_count
+		FROM sessions s`
 	args := make([]any, 0, 4)
 	if after != nil {
 		if after.LastActivityAt == nil {
-			query += ` WHERE r.last_activity IS NULL AND r.id > ?`
+			query += ` WHERE s.last_activity_at IS NULL AND s.id > ?`
 			args = append(args, after.ID)
 		} else {
 			encoded := after.LastActivityAt.UTC().Format("2006-01-02T15:04:05.000000000Z")
-			query += ` WHERE r.last_activity IS NULL OR ` + sessionActivitySortKey + ` < ? OR (` + sessionActivitySortKey + ` = ? AND r.id > ?)`
+			query += ` WHERE s.last_activity_at IS NULL OR s.last_activity_at < ? OR (s.last_activity_at = ? AND s.id > ?)`
 			args = append(args, encoded, encoded, after.ID)
 		}
 	}
-	query += ` ORDER BY ` + sessionActivitySortKey + ` DESC NULLS LAST, r.id ASC LIMIT ?`
+	query += ` ORDER BY s.last_activity_at DESC NULLS LAST, s.id ASC LIMIT ?`
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

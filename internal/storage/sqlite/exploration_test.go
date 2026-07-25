@@ -34,6 +34,9 @@ func TestListSessionsOrdersVariablePrecisionTimestampsChronologicallyAcrossPages
 		if err != nil {
 			t.Fatalf("insert session %q: %v", row.id, err)
 		}
+		if err := refreshSessionExploration(ctx, store.db, row.id); err != nil {
+			t.Fatalf("refresh session %q: %v", row.id, err)
+		}
 	}
 
 	first, hasMore, err := store.ListSessions(ctx, nil, 2)
@@ -69,6 +72,9 @@ func TestListSessionsUsesLastActivityAndEarliestUserPreview(t *testing.T) {
 	insertExplorationEvent(t, store, "event-a", 1, "2026-07-24T00:00:00Z", "message", "  first user request  ", `{"Role":"user","Text":"first user request"}`)
 	insertExplorationEvent(t, store, "event-a", 2, nil, "message", "later user request", `{"Role":"user","Text":"later user request"}`)
 	insertExplorationEvent(t, store, "event-b", 0, "2026-07-24T00:00:00Z", "summary", "system summary", `{"Text":"system summary"}`)
+	if _, err := store.db.ExecContext(ctx, `UPDATE events SET summary = 'adapter wording changed' WHERE id = 'event-event-a-1'`); err != nil {
+		t.Fatal(err)
+	}
 
 	var all []storagecontract.SessionSummary
 	var cursor *storagecontract.SessionCursor
@@ -134,6 +140,30 @@ func TestLibraryOverviewCountsExactDistinctAndDeduplicatedTotals(t *testing.T) {
 	}
 }
 
+func TestEventForStoragePreservesMessageRoleWhenPayloadIsDetached(t *testing.T) {
+	t.Parallel()
+
+	stored, err := eventForStorage(model.Event{
+		ID:             "event",
+		SessionID:      "session",
+		Sequence:       0,
+		Kind:           model.EventKindMessage,
+		Summary:        "adapter-specific wording",
+		SearchableText: strings.Repeat("x", storagecontract.InlinePayloadThresholdBytes+1),
+		Data: model.MessageData{
+			Role: model.MessageRoleUser,
+			Text: strings.Repeat("x", storagecontract.InlinePayloadThresholdBytes+1),
+		},
+		RawRecord: model.RawRecordRef{ID: "raw", SourceID: "source", ContentHash: "hash"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Payload == nil || stored.DataJSON != "" || stored.MessageRole != string(model.MessageRoleUser) {
+		t.Fatalf("detached event = payload %v, inline %d bytes, role %q", stored.Payload != nil, len(stored.DataJSON), stored.MessageRole)
+	}
+}
+
 func insertExplorationSession(t *testing.T, store *ImportStore, id, agent string, startedAt, endedAt any) {
 	t.Helper()
 	_, err := store.db.Exec(`
@@ -145,6 +175,9 @@ func insertExplorationSession(t *testing.T, store *ImportStore, id, agent string
 	if err != nil {
 		t.Fatalf("insert session %q: %v", id, err)
 	}
+	if err := refreshSessionExploration(context.Background(), store.db, model.SessionID(id)); err != nil {
+		t.Fatalf("refresh session %q: %v", id, err)
+	}
 }
 
 func insertExplorationEvent(t *testing.T, store *ImportStore, sessionID string, sequence int64, timestamp any, kind, searchable, data string) {
@@ -152,10 +185,14 @@ func insertExplorationEvent(t *testing.T, store *ImportStore, sessionID string, 
 	rawID := fmt.Sprintf("raw-%s-%d", sessionID, sequence)
 	eventID := fmt.Sprintf("event-%s-%d", sessionID, sequence)
 	summary := "Summary"
+	messageRole := ""
 	if kind == "message" {
 		summary = "Assistant message"
 		if strings.Contains(data, `"Role":"user"`) {
 			summary = "User message"
+			messageRole = "user"
+		} else {
+			messageRole = "assistant"
 		}
 	}
 	if _, err := store.db.Exec(`
@@ -169,10 +206,13 @@ func insertExplorationEvent(t *testing.T, store *ImportStore, sessionID string, 
 	if _, err := store.db.Exec(`
 		INSERT INTO events (
 			id, session_id, sequence, timestamp, kind, summary, searchable_text,
-			data_json, raw_record_id, raw_source_id, raw_record_sequence, raw_content_hash
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'source-' || ?, ?, 'hash')
-	`, eventID, sessionID, sequence, timestamp, kind, summary, searchable, data, rawID, sessionID, sequence); err != nil {
+			data_json, message_role, raw_record_id, raw_source_id, raw_record_sequence, raw_content_hash
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'source-' || ?, ?, 'hash')
+	`, eventID, sessionID, sequence, timestamp, kind, summary, searchable, data, messageRole, rawID, sessionID, sequence); err != nil {
 		t.Fatalf("insert event %q: %v", eventID, err)
+	}
+	if err := refreshSessionExploration(context.Background(), store.db, model.SessionID(sessionID)); err != nil {
+		t.Fatalf("refresh session %q: %v", sessionID, err)
 	}
 }
 

@@ -49,7 +49,6 @@ type indexingState struct {
 
 type projectionsState struct {
 	generation   uint64
-	ctx          context.Context
 	cancel       context.CancelFunc
 	status       app.ProjectionStatus
 	err          error
