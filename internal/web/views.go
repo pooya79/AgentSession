@@ -25,6 +25,12 @@ func eventFragmentURL(sessionID model.SessionID, eventID model.EventID) string {
 	return "/fragments/event?" + url.Values{"session": {string(sessionID)}, "event": {string(eventID)}}.Encode()
 }
 
+// projectionsFragmentURL encodes the untrusted session identifier as a query
+// value rather than interpolating it into an htmx URL.
+func projectionsFragmentURL(sessionID model.SessionID) string {
+	return "/fragments/projections?" + url.Values{"session": {string(sessionID)}}.Encode()
+}
+
 func eventAnchorURL(eventID model.EventID) string {
 	return "#" + url.PathEscape("event-"+string(eventID))
 }

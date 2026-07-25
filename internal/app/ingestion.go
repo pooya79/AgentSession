@@ -46,6 +46,7 @@ type Ingestion interface {
 type Services interface {
 	Explorer
 	Ingestion
+	Projections
 }
 
 func (r *Runtime) DiscoverSources(ctx context.Context) (SourceDiscovery, error) {

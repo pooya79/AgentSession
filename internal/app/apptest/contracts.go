@@ -19,6 +19,9 @@ type Consumer interface {
 	ListSessions(context.Context, app.ListSessionsRequest) (app.SessionPage, error)
 	Timeline(context.Context, app.TimelineRequest) (app.TimelinePage, error)
 	EventDetail(context.Context, app.EventDetailRequest) (app.EventDetail, error)
+	ProjectionStatus(context.Context, model.SessionID) (app.ProjectionStatus, error)
+	RetryProjections(context.Context, model.SessionID) (app.ProjectionAction, error)
+	RebuildProjections(context.Context, model.SessionID, string) (app.ProjectionAction, error)
 }
 
 // Fixture is a runtime populated through discovery and the composed import path.
@@ -108,5 +111,42 @@ func RunConsumerContract(t *testing.T, consumer Consumer) {
 	cancel()
 	if _, err := consumer.ListSessions(canceled, app.ListSessionsRequest{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("ListSessions(canceled) error = %v, want canceled", err)
+	}
+	projections, err := consumer.ProjectionStatus(ctx, sessionID)
+	if err != nil || projections.State != app.EvidenceComplete || len(projections.Projections) == 0 {
+		t.Fatalf("ProjectionStatus() = (%#v, %v)", projections, err)
+	}
+	var detailed app.ProjectionSummary
+	for _, state := range projections.Projections {
+		switch state.Status {
+		case "pending":
+			detailed.Pending++
+		case "running":
+			detailed.Running++
+		case "failed":
+			detailed.Failed++
+		case "ready":
+			detailed.Ready++
+		}
+		if state.Usable {
+			detailed.Usable++
+		}
+		if state.Stale {
+			detailed.Stale++
+		}
+	}
+	if projections.Summary != detailed {
+		t.Fatalf("projection aggregate = %#v, detailed = %#v", projections.Summary, detailed)
+	}
+	action, err := consumer.RetryProjections(ctx, sessionID)
+	if err != nil || action.State != app.EvidenceComplete || !action.Active {
+		t.Fatalf("RetryProjections() = (%#v, %v)", action, err)
+	}
+	if _, err := consumer.RebuildProjections(ctx, sessionID, "invalid"); !errors.Is(err, app.ErrInvalidRequest) {
+		t.Fatalf("RebuildProjections(invalid) error = %v", err)
+	}
+	missingProjection, err := consumer.ProjectionStatus(ctx, "missing-session")
+	if err != nil || missingProjection.State != app.EvidenceNotFound {
+		t.Fatalf("ProjectionStatus(missing) = (%#v, %v)", missingProjection, err)
 	}
 }

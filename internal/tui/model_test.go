@@ -16,22 +16,29 @@ import (
 type servicesStub struct {
 	mu sync.Mutex
 
-	start       app.ImportAllStart
-	startErr    error
-	status      app.ImportAllStatus
-	statusErr   error
-	sessionPage app.SessionPage
-	sessionErr  error
-	timeline    app.TimelinePage
-	timelineErr error
-	detail      app.EventDetail
-	detailErr   error
+	start               app.ImportAllStart
+	startErr            error
+	status              app.ImportAllStatus
+	statusErr           error
+	sessionPage         app.SessionPage
+	sessionErr          error
+	timeline            app.TimelinePage
+	timelineErr         error
+	detail              app.EventDetail
+	detailErr           error
+	projections         app.ProjectionStatus
+	projectionErr       error
+	projectionAction    app.ProjectionAction
+	projectionActionErr error
 
-	startCalls    int
-	sessionCalls  []app.ListSessionsRequest
-	timelineCalls []app.TimelineRequest
-	detailCalls   []app.EventDetailRequest
-	statusCtx     context.Context
+	startCalls            int
+	sessionCalls          []app.ListSessionsRequest
+	timelineCalls         []app.TimelineRequest
+	detailCalls           []app.EventDetailRequest
+	statusCtx             context.Context
+	projectionStatusCalls int
+	retryCalls            int
+	rebuildCalls          []string
 }
 
 func (s *servicesStub) DiscoverSources(context.Context) (app.SourceDiscovery, error) {
@@ -75,6 +82,27 @@ func (s *servicesStub) EventDetail(_ context.Context, request app.EventDetailReq
 	defer s.mu.Unlock()
 	s.detailCalls = append(s.detailCalls, request)
 	return s.detail, s.detailErr
+}
+
+func (s *servicesStub) ProjectionStatus(context.Context, model.SessionID) (app.ProjectionStatus, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.projectionStatusCalls++
+	return s.projections, s.projectionErr
+}
+
+func (s *servicesStub) RetryProjections(context.Context, model.SessionID) (app.ProjectionAction, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retryCalls++
+	return s.projectionAction, s.projectionActionErr
+}
+
+func (s *servicesStub) RebuildProjections(_ context.Context, _ model.SessionID, kind string) (app.ProjectionAction, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rebuildCalls = append(s.rebuildCalls, kind)
+	return s.projectionAction, s.projectionActionErr
 }
 
 func testSession(id string) app.SessionSummary {
@@ -378,6 +406,69 @@ func TestRequestFailuresAndUnavailableEvidence(t *testing.T) {
 	}
 	if got := m.View().Content; !strings.Contains(got, "Timeline evidence is unavailable") {
 		t.Fatalf("unavailable timeline view = %q", got)
+	}
+}
+
+func TestProjectionPanelControlsPollingConfirmationAndSafeDiagnostics(t *testing.T) {
+	hostile := "unsafe\x1b]8;;https://attacker.invalid\x07link\x1b]8;;\x07"
+	status := app.ProjectionStatus{
+		State: app.EvidenceComplete, SessionID: "session-1", Active: true,
+		Summary: app.ProjectionSummary{Pending: 1},
+		Projections: []app.ProjectionState{{
+			Kind: "search", Status: "pending", TargetVersion: "1", TargetRevision: 2,
+			Diagnostic: &app.ProjectionDiagnostic{Code: hostile, Summary: hostile},
+		}},
+	}
+	services := &servicesStub{projections: status, projectionAction: app.ProjectionAction{
+		State: app.EvidenceComplete, Active: true, Status: status,
+	}}
+	m := New(context.Background(), services)
+	m.screen, m.selectedSession = timelineScreen, "session-1"
+
+	m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if m.screen != projectionsScreen || cmd == nil {
+		t.Fatalf("open projections = screen %d cmd %v", m.screen, cmd != nil)
+	}
+	m, poll := updateModel(t, m, cmd().(projectionStatusMsg))
+	if poll == nil || !strings.Contains(m.View().Content, "Canonical evidence remains available") {
+		t.Fatalf("projection status did not render or poll: %q", m.View().Content)
+	}
+	if strings.Contains(m.View().Content, "\x1b") {
+		t.Fatalf("projection diagnostic was not terminal-safe: %q", m.View().Content)
+	}
+
+	m, cmd = updateModel(t, m, tea.KeyPressMsg{Code: 'b', Text: "b"})
+	if cmd == nil {
+		t.Fatal("rebuild selected returned no command")
+	}
+	_ = cmd()
+	if len(services.rebuildCalls) != 1 || services.rebuildCalls[0] != "search" {
+		t.Fatalf("selected rebuild calls = %v", services.rebuildCalls)
+	}
+
+	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'a', Text: "a"})
+	if !m.confirmRebuildAll || !strings.Contains(m.View().Content, "[y/n]") {
+		t.Fatal("rebuild-all confirmation was not shown")
+	}
+	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'n', Text: "n"})
+	if m.confirmRebuildAll || len(services.rebuildCalls) != 1 {
+		t.Fatal("declining rebuild-all started work")
+	}
+	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'a', Text: "a"})
+	m, cmd = updateModel(t, m, tea.KeyPressMsg{Code: 'y', Text: "y"})
+	_ = cmd()
+	if got := services.rebuildCalls[len(services.rebuildCalls)-1]; got != app.ProjectionKindAll {
+		t.Fatalf("confirmed rebuild kind = %q", got)
+	}
+
+	generation := m.projectionGeneration
+	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.screen != timelineScreen || m.projectionCancel != nil {
+		t.Fatal("leaving projection panel did not stop observation")
+	}
+	updated, staleCmd := updateModel(t, m, pollProjectionsMsg{generation: generation})
+	if staleCmd != nil || updated.screen != timelineScreen {
+		t.Fatal("stale projection poll revived observation")
 	}
 }
 

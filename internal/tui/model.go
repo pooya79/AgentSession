@@ -34,6 +34,7 @@ const (
 	indexingScreen
 	timelineScreen
 	detailScreen
+	projectionsScreen
 )
 
 // sessionsLoadedMsg carries one bounded sessions page and the generation of
@@ -77,6 +78,23 @@ type importStatusMsg struct {
 // pollImportMsg schedules one status read. It does not represent a repeating
 // timer; another tick is scheduled only while the observed run remains active.
 type pollImportMsg struct{ generation uint64 }
+
+// projectionStatusMsg carries an observer-owned snapshot and generation.
+type projectionStatusMsg struct {
+	generation uint64
+	status     app.ProjectionStatus
+	err        error
+}
+
+// projectionActionMsg acknowledges work transferred to the application.
+type projectionActionMsg struct {
+	generation uint64
+	action     app.ProjectionAction
+	err        error
+}
+
+// pollProjectionsMsg schedules one observation; it is not a repeating timer.
+type pollProjectionsMsg struct{ generation uint64 }
 
 // Model is the sessions-first AgentSession terminal interface.
 type Model struct {
@@ -122,6 +140,15 @@ type Model struct {
 
 	importStatus app.ImportAllStatus
 	importErr    error
+
+	projectionGeneration uint64
+	projectionCtx        context.Context
+	projectionCancel     context.CancelFunc
+	projectionStatus     app.ProjectionStatus
+	projectionErr        error
+	projectionLoading    bool
+	projectionCursor     int
+	confirmRebuildAll    bool
 }
 
 // New creates a terminal model over the shared application services.
@@ -132,18 +159,19 @@ func New(ctx context.Context, services app.Services) Model {
 	requestCtx, requestCancel := context.WithCancel(ctx)
 	observeCtx, observeCancel := context.WithCancel(ctx)
 	return Model{
-		ctx:               ctx,
-		services:          services,
-		requestGeneration: 1,
-		requestCtx:        requestCtx,
-		requestCancel:     requestCancel,
-		observeGeneration: 1,
-		observeCtx:        observeCtx,
-		observeCancel:     observeCancel,
-		sessionsLoading:   services != nil,
-		sessionCursors:    []string{""},
-		timelineCursors:   []string{""},
-		importStatus:      app.ImportAllStatus{Phase: app.ImportAllUnavailable},
+		ctx:                  ctx,
+		services:             services,
+		requestGeneration:    1,
+		requestCtx:           requestCtx,
+		requestCancel:        requestCancel,
+		observeGeneration:    1,
+		observeCtx:           observeCtx,
+		observeCancel:        observeCancel,
+		sessionsLoading:      services != nil,
+		sessionCursors:       []string{""},
+		timelineCursors:      []string{""},
+		importStatus:         app.ImportAllStatus{Phase: app.ImportAllUnavailable},
+		projectionGeneration: 1,
 	}
 }
 
@@ -213,6 +241,35 @@ func pollImport(generation uint64) tea.Cmd {
 	})
 }
 
+func readProjectionStatus(ctx context.Context, services app.Services, generation uint64, sessionID model.SessionID) tea.Cmd {
+	return func() tea.Msg {
+		status, err := services.ProjectionStatus(ctx, sessionID)
+		return projectionStatusMsg{generation: generation, status: status, err: err}
+	}
+}
+
+// projectionAction uses a detached presentation context because the
+// application validates and takes ownership of admitted work. Panel navigation
+// must not cancel that admission request.
+func projectionAction(services app.Services, generation uint64, sessionID model.SessionID, kind string, retry bool) tea.Cmd {
+	return func() tea.Msg {
+		var action app.ProjectionAction
+		var err error
+		if retry {
+			action, err = services.RetryProjections(context.Background(), sessionID)
+		} else {
+			action, err = services.RebuildProjections(context.Background(), sessionID, kind)
+		}
+		return projectionActionMsg{generation: generation, action: action, err: err}
+	}
+}
+
+func pollProjections(generation uint64) tea.Cmd {
+	return tea.Tick(pollInterval, func(time.Time) tea.Msg {
+		return pollProjectionsMsg{generation: generation}
+	})
+}
+
 // replaceRequest cancels the previous evidence read and advances its
 // generation before returning a context for the replacement request.
 func (m *Model) replaceRequest() context.Context {
@@ -257,6 +314,36 @@ func (m *Model) startObservation() context.Context {
 	m.observeCtx = ctx
 	m.observeCancel = cancel
 	return ctx
+}
+
+// startProjectionObservation replaces the panel's prior read context and
+// advances its generation so delayed responses cannot overwrite newer state.
+func (m *Model) startProjectionObservation() context.Context {
+	if m.projectionCancel != nil {
+		m.projectionCancel()
+	}
+	m.projectionGeneration++
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.projectionCtx, m.projectionCancel = ctx, cancel
+	return ctx
+}
+
+// stopProjectionObservation detaches the panel without stopping application
+// projection work.
+func (m *Model) stopProjectionObservation() {
+	if m.projectionCancel != nil {
+		m.projectionCancel()
+	}
+	m.projectionGeneration++
+	m.projectionCtx, m.projectionCancel = nil, nil
+}
+
+// observeProjectionsNow starts one immediate status read; subsequent reads are
+// scheduled only while projectionPolling reports active work.
+func (m *Model) observeProjectionsNow() tea.Cmd {
+	ctx := m.startProjectionObservation()
+	m.projectionLoading, m.projectionErr = true, nil
+	return readProjectionStatus(ctx, m.services, m.projectionGeneration, m.selectedSession)
 }
 
 // reloadSessions replaces the current page request while retaining its cursor.
@@ -367,6 +454,39 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.reloadSessions()
 		}
 		return m, nil
+	case projectionStatusMsg:
+		if msg.generation != m.projectionGeneration {
+			return m, nil
+		}
+		m.projectionLoading = false
+		m.projectionErr = visibleError(msg.err)
+		if msg.err == nil {
+			m.projectionStatus = msg.status
+			if m.projectionCursor >= len(msg.status.Projections) {
+				m.projectionCursor = max(0, len(msg.status.Projections)-1)
+			}
+			if projectionPolling(msg.status) {
+				return m, pollProjections(m.projectionGeneration)
+			}
+		}
+		return m, nil
+	case projectionActionMsg:
+		if msg.generation != m.projectionGeneration {
+			return m, nil
+		}
+		m.projectionErr = visibleError(msg.err)
+		if msg.err == nil {
+			m.projectionStatus = msg.action.Status
+			m.projectionStatus.Active = msg.action.Active
+			return m, pollProjections(m.projectionGeneration)
+		}
+		return m, nil
+	case pollProjectionsMsg:
+		if msg.generation != m.projectionGeneration || m.projectionCancel == nil || m.screen != projectionsScreen {
+			return m, nil
+		}
+		ctx := m.startProjectionObservation()
+		return m, readProjectionStatus(ctx, m.services, m.projectionGeneration, m.selectedSession)
 	case tea.KeyPressMsg:
 		updated, cmd := m.handleKey(msg.String())
 		if pointer, ok := updated.(*Model); ok {
@@ -414,6 +534,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 			m.requestCancel()
 		}
 		m.stopObservation()
+		m.stopProjectionObservation()
 		return m, tea.Quit
 	}
 	if m.services == nil {
@@ -431,8 +552,41 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 				return m, m.observeNow()
 			}
 		}
+	case "x":
+		if m.screen == timelineScreen {
+			m.screen = projectionsScreen
+			m.projectionCursor = 0
+			m.confirmRebuildAll = false
+			return m, m.observeProjectionsNow()
+		}
 	case "r":
 		return m.refresh()
+	case "t":
+		if m.screen == projectionsScreen {
+			m.confirmRebuildAll = false
+			return m, projectionAction(m.services, m.projectionGeneration, m.selectedSession, "", true)
+		}
+	case "b":
+		if m.screen == projectionsScreen && len(m.projectionStatus.Projections) > 0 {
+			m.confirmRebuildAll = false
+			kind := m.projectionStatus.Projections[m.projectionCursor].Kind
+			return m, projectionAction(m.services, m.projectionGeneration, m.selectedSession, kind, false)
+		}
+	case "a":
+		if m.screen == projectionsScreen {
+			m.confirmRebuildAll = true
+		}
+	case "y":
+		if m.screen == projectionsScreen && m.confirmRebuildAll {
+			m.confirmRebuildAll = false
+			return m, projectionAction(m.services, m.projectionGeneration, m.selectedSession, app.ProjectionKindAll, false)
+		}
+	case "n":
+		if m.screen == projectionsScreen && m.confirmRebuildAll {
+			m.confirmRebuildAll = false
+			return m, nil
+		}
+		return m.nextPage()
 	case "up", "k":
 		m.move(-1)
 	case "down", "j":
@@ -451,8 +605,6 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case "p":
 		return m.previousPage()
-	case "n":
-		return m.nextPage()
 	case "enter":
 		return m.openSelection()
 	}
@@ -479,6 +631,12 @@ func (m *Model) back() (tea.Model, tea.Cmd) {
 		m.detailErr = nil
 		m.detailLoading = false
 		m.scroll = 0
+	case projectionsScreen:
+		m.stopProjectionObservation()
+		m.screen = timelineScreen
+		m.projectionStatus = app.ProjectionStatus{}
+		m.projectionErr = nil
+		m.confirmRebuildAll = false
 	}
 	return m, nil
 }
@@ -493,6 +651,8 @@ func (m *Model) refresh() (tea.Model, tea.Cmd) {
 		return m, tea.Batch(load, startImportAll(m.services, m.observeGeneration))
 	case timelineScreen:
 		return m, m.reloadTimeline()
+	case projectionsScreen:
+		return m, m.observeProjectionsNow()
 	case detailScreen:
 		if len(m.timeline.Events) == 0 {
 			return m, nil
@@ -517,6 +677,10 @@ func (m *Model) move(delta int) {
 	case timelineScreen:
 		if len(m.timeline.Events) > 0 {
 			m.eventCursor = clamp(m.eventCursor+delta, 0, len(m.timeline.Events)-1)
+		}
+	case projectionsScreen:
+		if len(m.projectionStatus.Projections) > 0 {
+			m.projectionCursor = clamp(m.projectionCursor+delta, 0, len(m.projectionStatus.Projections)-1)
 		}
 	case detailScreen, indexingScreen:
 		m.moveScroll(delta)
@@ -647,6 +811,8 @@ func (m Model) View() tea.View {
 		lines = append(lines, m.timelineLines()...)
 	case detailScreen:
 		lines = append(lines, m.detailLines()...)
+	case projectionsScreen:
+		lines = append(lines, m.projectionLines()...)
 	}
 	lines = append(lines, "", m.helpLine(width))
 
@@ -719,7 +885,9 @@ func (m Model) sessionsLines() []string {
 		if strings.TrimSpace(title) == "" {
 			title = string(session.ID)
 		}
-		lines = append(lines, fmt.Sprintf("%s %s  ·  %d events  ·  %s", marker, title, session.EventCount, evidenceLabel(session.State)))
+		lines = append(lines, fmt.Sprintf("%s %s  ·  %d events  ·  evidence %s  ·  projections %d/%d usable",
+			marker, title, session.EventCount, evidenceLabel(session.State), session.Projections.Usable,
+			session.Projections.Ready+session.Projections.Pending+session.Projections.Running+session.Projections.Failed))
 	}
 	lines = append(lines, fmt.Sprintf("Page %d · %d shown%s", m.sessionPage+1, len(m.sessions.Sessions), nextLabel(m.sessions.NextCursor)))
 	return lines
@@ -728,6 +896,14 @@ func (m Model) sessionsLines() []string {
 // timelineLines renders source-ordered lightweight event summaries.
 func (m Model) timelineLines() []string {
 	lines := []string{"Timeline · session " + string(m.selectedSession)}
+	for _, session := range m.sessions.Sessions {
+		if session.ID == m.selectedSession {
+			lines = append(lines, fmt.Sprintf("Canonical evidence: %s · projections: %d usable, %d pending, %d running, %d failed, %d stale",
+				evidenceLabel(session.State), session.Projections.Usable, session.Projections.Pending,
+				session.Projections.Running, session.Projections.Failed, session.Projections.Stale))
+			break
+		}
+	}
 	switch {
 	case m.timelineLoading && len(m.timeline.Events) == 0:
 		return append(lines, "", "Loading event summaries…")
@@ -757,6 +933,55 @@ func (m Model) timelineLines() []string {
 		lines = append(lines, fmt.Sprintf("%s #%d  %-13s  %s", marker, event.Sequence, event.Kind, event.Summary))
 	}
 	lines = append(lines, fmt.Sprintf("Page %d · %d shown%s", m.timelinePage+1, len(m.timeline.Events), nextLabel(m.timeline.NextCursor)))
+	return lines
+}
+
+// projectionLines renders canonical evidence availability independently from
+// derived-data readiness and shows only application-safe diagnostics.
+func (m Model) projectionLines() []string {
+	lines := []string{"Projection lifecycle · session " + string(m.selectedSession)}
+	if m.confirmRebuildAll {
+		lines = append(lines, "", "Rebuild every projection? This invalidates current derived output. [y/n]")
+		return lines
+	}
+	switch {
+	case m.projectionLoading && len(m.projectionStatus.Projections) == 0:
+		return append(lines, "", "Loading projection status…")
+	case m.projectionErr != nil:
+		return append(lines, "", "Could not load projection status: "+m.projectionErr.Error())
+	case m.projectionStatus.State == app.EvidenceNotFound:
+		return append(lines, "", "This session is no longer available.")
+	}
+	summary := m.projectionStatus.Summary
+	lines = append(lines,
+		fmt.Sprintf("Canonical evidence remains available · usable %d/%d · pending %d · running %d · failed %d · stale %d",
+			summary.Usable, len(m.projectionStatus.Projections), summary.Pending, summary.Running, summary.Failed, summary.Stale),
+		"",
+	)
+	if diagnostic := m.projectionStatus.OperationDiagnostic; diagnostic != nil {
+		lines = append(lines, diagnostic.Code+": "+diagnostic.Summary, "")
+	}
+	for index, state := range m.projectionStatus.Projections {
+		marker := " "
+		if index == m.projectionCursor {
+			marker = ">"
+		}
+		flags := string(state.Status)
+		if state.Usable {
+			flags += " · usable"
+		}
+		if state.Stale {
+			flags += " · stale"
+		}
+		lines = append(lines, fmt.Sprintf("%s %-16s  %s  · target %s/%d · attempts %d",
+			marker, state.Kind, flags, state.TargetVersion, state.TargetRevision, state.AttemptCount))
+		if state.Diagnostic != nil {
+			lines = append(lines, "    "+state.Diagnostic.Code+": "+state.Diagnostic.Summary)
+		}
+	}
+	if m.projectionStatus.Active || summary.Running > 0 {
+		lines = append(lines, "", "Projection work is active and continues if you leave this panel.")
+	}
 	return lines
 }
 
@@ -878,10 +1103,18 @@ func (m Model) helpLine(width int) string {
 	case indexingScreen:
 		return "↑/↓ or j/k scroll · PgUp/PgDn scroll · Esc sessions · r rescan · q quit"
 	case timelineScreen:
-		return "↑/↓ or j/k move · Enter detail · n/p page · Esc sessions · r reload · q quit"
+		return "↑/↓ or j/k move · Enter detail · x projections · n/p page · Esc sessions · r reload · q quit"
+	case projectionsScreen:
+		return "↑/↓ select · r refresh · t retry pending/failed · b rebuild selected · a rebuild all · Esc timeline"
 	default:
 		return "↑/↓ or j/k scroll · PgUp/PgDn scroll · Esc timeline · r reload · q quit"
 	}
+}
+
+// projectionPolling keeps observation alive for application-owned work and
+// for durable running state that may belong to an importer or another caller.
+func projectionPolling(status app.ProjectionStatus) bool {
+	return status.Active || status.Summary.Running > 0
 }
 
 // evidenceLabel maps application evidence states to conservative UI wording.
