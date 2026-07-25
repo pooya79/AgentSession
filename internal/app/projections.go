@@ -31,6 +31,7 @@ const (
 // projection manager. Presentation layers never invalidate storage directly.
 type ProjectionController interface {
 	Status(context.Context, model.SessionID) ([]projection.State, error)
+	BuildAvailable(projection.Kind) bool
 	Retry(context.Context, model.SessionID) error
 	Rebuild(context.Context, model.SessionID, *projection.Kind) error
 }
@@ -56,6 +57,8 @@ type ProjectionState struct {
 	AttemptCount   int64
 	Usable         bool
 	Stale          bool
+	// BuildAvailable is a transient runtime capability, not a durable status.
+	BuildAvailable bool
 	StartedAt      *time.Time
 	UpdatedAt      time.Time
 	Diagnostic     *ProjectionDiagnostic
@@ -70,6 +73,9 @@ type ProjectionSummary struct {
 	Running int64
 	Failed  int64
 	Stale   int64
+	// Unimplemented overlaps lifecycle counts and reports kinds whose current
+	// runtime has no builder.
+	Unimplemented int64
 }
 
 // ProjectionStatus combines durable per-kind state with transient
@@ -159,7 +165,7 @@ func (s *ProjectionService) ProjectionStatus(ctx context.Context, sessionID mode
 	}
 	status.Projections = make([]ProjectionState, 0, len(states))
 	for _, state := range states {
-		item := projectionStateDTO(state)
+		item := projectionStateDTO(state, s.controller.BuildAvailable(state.Kind))
 		status.Projections = append(status.Projections, item)
 		switch state.Status {
 		case projection.StatusReady:
@@ -176,6 +182,9 @@ func (s *ProjectionService) ProjectionStatus(ctx context.Context, sessionID mode
 		}
 		if item.Stale {
 			status.Summary.Stale++
+		}
+		if !item.BuildAvailable {
+			status.Summary.Unimplemented++
 		}
 	}
 	s.mu.Lock()
@@ -311,7 +320,7 @@ func (s *ProjectionService) Shutdown(ctx context.Context) error {
 	}
 }
 
-func projectionStateDTO(state projection.State) ProjectionState {
+func projectionStateDTO(state projection.State, buildAvailable bool) ProjectionState {
 	// Retained ready identity is useful for diagnosis after invalidation, but
 	// identity mismatch can never satisfy Usable for the current target.
 	stale := state.ReadyRevision != nil &&
@@ -321,7 +330,8 @@ func projectionStateDTO(state projection.State) ProjectionState {
 		TargetVersion: state.TargetVersion, TargetRevision: state.TargetRevision,
 		ReadyVersion: state.ReadyVersion, ReadyRevision: state.ReadyRevision,
 		AttemptCount: state.AttemptCount, Usable: state.Usable(), Stale: stale,
-		StartedAt: state.StartedAt, UpdatedAt: state.UpdatedAt,
+		BuildAvailable: buildAvailable,
+		StartedAt:      state.StartedAt, UpdatedAt: state.UpdatedAt,
 	}
 	if state.Diagnostic != nil {
 		item.Diagnostic = &ProjectionDiagnostic{

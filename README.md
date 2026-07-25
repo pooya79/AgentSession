@@ -56,19 +56,39 @@ go run ./cmd/agentsession
 The TUI immediately starts or joins an asynchronous scan of every supported
 source and loads already imported sessions at the same time. Indexing is
 application-owned, so it continues while you browse timelines and event
-details. The sessions list refreshes when an observed scan finishes and whenever
-you return from a timeline.
+details. The sessions dashboard reports exact indexed session, event, agent,
+and evidence-issue totals independently of the paginated list. Sessions are
+ordered by newest recorded activity (session end, latest timestamped event, or
+session start), with unknown activity last. Each row identifies the source
+agent, such as `CODEX`, `CLAUDE`, or `OPENCODE`, and uses the normalized
+session summary or first user message as a bounded preview when available.
+The dashboard refreshes when an observed scan finishes and whenever you return
+from a timeline.
 
-Use `↑`/`↓` or `j`/`k` to move, `Enter` to open a session or event, `n`/`p` or
-PageDown/PageUp to change pages, `i` to inspect source-level indexing progress
-and diagnostics, and `Esc` to go back. From a timeline, press `x` to inspect
-projection readiness separately from canonical evidence. In that panel, use
-`t` to retry pending or failed projections, `b` to rebuild the selected kind,
-and `a` followed by `y` to confirm rebuilding every kind. Projection work is
-application-owned and continues after leaving the panel. Press `r` on the sessions or indexing
-screen to rescan all sources and reload sessions; on timeline and event screens
-it reloads the current evidence, and in the projection panel it refreshes
-status. Press `q` or Ctrl-C to exit. Event lists fetch
+Use `↑`/`↓` or `j`/`k` to move, Home/End or `g`/`G` to jump to the first or
+last item, `Enter` to open a session or event, and `n`/`p` or
+PageDown/PageUp to change bounded pages. Press `?` for complete,
+screen-specific keyboard help and `Esc` to close help or return to the parent
+screen. The interface adapts the metric cards and session table for wide,
+narrow, and short terminals while keeping every action available through the
+help panel. Times on the terminal dashboard are displayed deterministically in
+UTC.
+
+Press `i` to inspect source-level indexing progress and diagnostics. From a
+timeline, press `x` to inspect derived projection readiness separately from
+canonical evidence. The projection panel distinguishes durable lifecycle state
+from builders that are not implemented in the current executable. Use `t` to
+retry implemented pending or failed projections and `b` to rebuild an
+implemented selected kind. Rebuild-all is offered only when every registered
+projection has a builder, preventing invalidation of output the current runtime
+cannot reconstruct. Projection work is application-owned and continues after
+leaving the panel.
+
+Press `r` on the sessions or indexing screen to rescan all sources and reload
+sessions; on timeline and event screens it reloads the current evidence, and
+in the projection panel it refreshes status. Refresh failures retain the last
+successfully loaded evidence and expose a retry action. Press `q` or Ctrl-C to
+exit. Event lists fetch
 only lightweight summaries; normalized payload JSON is loaded when an event is
 opened, and retained raw record contents are never displayed.
 

@@ -11,6 +11,9 @@ import (
 
 type contractConsumer struct{ services app.Services }
 
+func (c contractConsumer) LibraryOverview(ctx context.Context) (app.LibraryOverview, error) {
+	return c.services.LibraryOverview(ctx)
+}
 func (c contractConsumer) ListSessions(ctx context.Context, request app.ListSessionsRequest) (app.SessionPage, error) {
 	return c.services.ListSessions(ctx, request)
 }

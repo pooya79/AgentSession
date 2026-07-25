@@ -10,20 +10,34 @@ import (
 // SessionCursor is the storage-level keyset for the deterministic session list.
 // Application cursors encode this value opaquely for presentation consumers.
 type SessionCursor struct {
-	StartedAt *time.Time
-	ID        model.SessionID
+	LastActivityAt *time.Time
+	ID             model.SessionID
 }
 
 // SessionSummary is lightweight imported-session metadata. It deliberately
-// excludes producer metadata and retained evidence.
+// excludes producer version metadata, normalized payloads, and retained
+// evidence.
 type SessionSummary struct {
-	ID         model.SessionID
-	Title      string
-	Summary    string
-	StartedAt  *time.Time
-	EndedAt    *time.Time
-	SourceID   model.SourceID
-	EventCount int64
+	ID               model.SessionID
+	Title            string
+	Summary          string
+	StartedAt        *time.Time
+	EndedAt          *time.Time
+	LastActivityAt   *time.Time
+	SourceID         model.SourceID
+	AgentName        string
+	FirstUserMessage string
+	EventCount       int64
+}
+
+// LibraryOverview contains exact aggregate counts over committed canonical
+// evidence. IssueSessions counts a session once even when diagnostics exist at
+// both the session and record level.
+type LibraryOverview struct {
+	Sessions      int64
+	Events        int64
+	Agents        int64
+	IssueSessions int64
 }
 
 // EventEnvelope is event detail that is safe to fetch without normalized or
@@ -42,6 +56,7 @@ type DiagnosticPage struct {
 // ExplorationReader is the narrow authoritative read contract consumed by
 // the shared application explorer.
 type ExplorationReader interface {
+	LibraryOverview(context.Context) (LibraryOverview, error)
 	ListSessions(context.Context, *SessionCursor, int) ([]SessionSummary, bool, error)
 	SessionExists(context.Context, model.SessionID) (bool, error)
 	EventSummaryPage(context.Context, model.SessionID, *int64, int) ([]model.EventSummary, bool, error)

@@ -48,6 +48,9 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	if err := db.PingContext(ctx); err != nil {
 		return nil, closeAfterError(db, fmt.Errorf("sqlite: initialize connection: %w", err))
 	}
+	if err := enableWriteAheadLogging(ctx, db); err != nil {
+		return nil, closeAfterError(db, fmt.Errorf("sqlite: initialize connection: %w", err))
+	}
 
 	migrationFS, err := fs.Sub(embeddedMigrations, "migrations")
 	if err != nil {
@@ -72,8 +75,23 @@ func dataSourceName(path string) (string, error) {
 	}
 	query := u.Query()
 	query.Add("_pragma", "foreign_keys(1)")
+	query.Add("_pragma", "busy_timeout(5000)")
 	u.RawQuery = query.Encode()
 	return u.String(), nil
+}
+
+// enableWriteAheadLogging permits exploration reads to continue while an
+// importer commits a batch. The bounded busy timeout in dataSourceName handles
+// the remaining short-lived writer contention.
+func enableWriteAheadLogging(ctx context.Context, db *sql.DB) error {
+	var journalMode string
+	if err := db.QueryRowContext(ctx, `PRAGMA journal_mode = WAL`).Scan(&journalMode); err != nil {
+		return fmt.Errorf("enable WAL journal mode: %w", err)
+	}
+	if !strings.EqualFold(journalMode, "wal") {
+		return fmt.Errorf("enable WAL journal mode: SQLite selected %q", journalMode)
+	}
+	return nil
 }
 
 func closeAfterError(db *sql.DB, cause error) error {

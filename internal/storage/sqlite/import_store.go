@@ -213,12 +213,70 @@ func persistImportBatchWithRevisionBase(ctx context.Context, tx *sql.Tx, batch i
 		return fmt.Errorf("persist checkpoint: %w", err)
 	}
 	changed = changed || checkpointChanged
+	if err := refreshSessionExploration(ctx, tx, batch.Session.ID); err != nil {
+		return fmt.Errorf("refresh session exploration fields: %w", err)
+	}
 	if changed {
 		if err := advanceCanonicalRevision(ctx, tx, batch.Session.ID); err != nil {
 			return fmt.Errorf("advance canonical revision: %w", err)
 		}
 	}
 	return nil
+}
+
+type contextExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+// refreshSessionExploration maintains the bounded, sortable fields used by
+// session-list reads. It runs in the import transaction so readers never see
+// canonical evidence and its exploration metadata at different revisions.
+//
+// Last activity prefers the explicit session end, then the latest timestamped
+// event, then the session start. Timestamps are padded to nanosecond precision
+// because RFC3339 values with optional fractional seconds do not sort
+// chronologically as plain text.
+func refreshSessionExploration(ctx context.Context, db contextExecer, sessionID model.SessionID) error {
+	_, err := db.ExecContext(ctx, `
+		UPDATE sessions
+		SET last_activity_at = (
+		        SELECT CASE
+		            WHEN activity.value IS NULL THEN NULL
+		            WHEN instr(activity.value, '.') = 0 THEN substr(activity.value, 1, 19) || '.000000000Z'
+		            ELSE substr(activity.value, 1, 20) ||
+		                 substr(substr(activity.value, 21, length(activity.value) - 21) || '000000000', 1, 9) || 'Z'
+		        END
+		        FROM (
+		            SELECT COALESCE(
+		                sessions.ended_at,
+		                (SELECT events.timestamp
+		                 FROM events
+		                 WHERE events.session_id = sessions.id AND events.timestamp IS NOT NULL
+		                 ORDER BY CASE
+		                     WHEN instr(events.timestamp, '.') = 0 THEN substr(events.timestamp, 1, 19) || '.000000000Z'
+		                     ELSE substr(events.timestamp, 1, 20) ||
+		                          substr(substr(events.timestamp, 21, length(events.timestamp) - 21) || '000000000', 1, 9) || 'Z'
+		                 END DESC
+		                 LIMIT 1),
+		                sessions.started_at
+		            ) AS value
+		        ) AS activity
+		    ),
+		    first_user_message = COALESCE((
+		        SELECT substr(events.searchable_text, 1, 1024)
+		        FROM events
+		        WHERE events.session_id = sessions.id
+		          AND events.kind = 'message'
+		          AND events.message_role = 'user'
+		        ORDER BY events.sequence
+		        LIMIT 1
+		    ), ''),
+		    event_count = (
+		        SELECT COUNT(*) FROM events WHERE events.session_id = sessions.id
+		    )
+		WHERE id = ?
+	`, sessionID)
+	return err
 }
 
 func advanceCanonicalRevision(ctx context.Context, tx *sql.Tx, sessionID model.SessionID) error {
@@ -467,7 +525,7 @@ func canonicalSourceDigest(ctx context.Context, tx *sql.Tx, sourceID model.Sourc
 	queries := []string{
 		`SELECT id, title, summary, started_at, ended_at, source_id, adapter_name, adapter_version, format_version, model_version, normalization_version FROM sessions WHERE source_id = ? ORDER BY id`,
 		`SELECT id, session_id, source_id, record_sequence, byte_offset, byte_length, content_hash, storage_encoding, original_size, content, retention_policy_version FROM raw_records WHERE source_id = ? ORDER BY id`,
-		`SELECT e.id, e.session_id, e.sequence, e.timestamp, e.kind, e.summary, e.searchable_text, e.data_json, e.raw_record_id, e.raw_source_id, e.raw_record_sequence, e.raw_byte_offset, e.raw_byte_length, e.raw_content_hash, e.retention_policy_version, e.payload_storage FROM events e JOIN sessions s ON s.id = e.session_id WHERE s.source_id = ? ORDER BY e.id`,
+		`SELECT e.id, e.session_id, e.sequence, e.timestamp, e.kind, e.summary, e.searchable_text, e.data_json, e.message_role, e.raw_record_id, e.raw_source_id, e.raw_record_sequence, e.raw_byte_offset, e.raw_byte_length, e.raw_content_hash, e.retention_policy_version, e.payload_storage FROM events e JOIN sessions s ON s.id = e.session_id WHERE s.source_id = ? ORDER BY e.id`,
 		`SELECT p.event_id, p.retention_policy_version, p.storage_encoding, p.original_size, p.content FROM event_payloads p JOIN events e ON e.id = p.event_id JOIN sessions s ON s.id = e.session_id WHERE s.source_id = ? ORDER BY p.event_id`,
 		`SELECT d.session_id, d.position, d.code, d.severity, d.message, d.event_ids_json, d.raw_record_ids_json FROM session_diagnostics d JOIN sessions s ON s.id = d.session_id WHERE s.source_id = ? ORDER BY d.session_id, d.position`,
 		`SELECT d.session_id, d.raw_record_id, d.ordinal, d.code, d.severity, d.message, d.event_ids_json, d.raw_record_ids_json FROM record_diagnostics d JOIN sessions s ON s.id = d.session_id WHERE s.source_id = ? ORDER BY d.session_id, d.raw_record_id, d.ordinal`,
@@ -815,6 +873,7 @@ type storedEvent struct {
 	Summary           string
 	SearchableText    string
 	DataJSON          string
+	MessageRole       string
 	PolicyVersion     int
 	PayloadStorage    string
 	Payload           *storedEventPayload
@@ -853,6 +912,9 @@ func eventForStorage(event model.Event) (storedEvent, error) {
 		RawSourceID:    string(event.RawRecord.SourceID),
 		RawContentHash: event.RawRecord.ContentHash,
 	}
+	if message, ok := event.Data.(model.MessageData); ok {
+		stored.MessageRole = string(message.Role)
+	}
 	if len(dataJSON) > storagecontract.InlinePayloadThresholdBytes {
 		encoded, err := storagecontract.EncodePayload(dataJSON)
 		if err != nil {
@@ -884,10 +946,10 @@ func persistEvent(ctx context.Context, tx *sql.Tx, event model.Event) (bool, err
 	}
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO events (
-			id, session_id, sequence, timestamp, kind, summary, searchable_text, data_json,
+			id, session_id, sequence, timestamp, kind, summary, searchable_text, data_json, message_role,
 			raw_record_id, raw_source_id, raw_record_sequence, raw_byte_offset, raw_byte_length, raw_content_hash,
 			retention_policy_version, payload_storage
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING
 	`, stored.values()...)
 	if err != nil {
@@ -918,7 +980,7 @@ func persistEvent(ctx context.Context, tx *sql.Tx, event model.Event) (bool, err
 
 func (e storedEvent) values() []any {
 	return []any{
-		e.ID, e.SessionID, e.Sequence, nullIfEmpty(e.Timestamp), e.Kind, e.Summary, e.SearchableText, e.DataJSON,
+		e.ID, e.SessionID, e.Sequence, nullIfEmpty(e.Timestamp), e.Kind, e.Summary, e.SearchableText, e.DataJSON, e.MessageRole,
 		e.RawRecordID, e.RawSourceID, nullableInt(e.RawRecordSequence), nullableInt(e.RawByteOffset),
 		nullableInt(e.RawByteLength), e.RawContentHash, e.PolicyVersion, e.PayloadStorage,
 	}
@@ -955,7 +1017,7 @@ func selectStoredEvent(ctx context.Context, queryer rowQueryer, eventID model.Ev
 }
 
 const storedEventSelect = `
-	SELECT e.id, e.session_id, e.sequence, e.timestamp, e.kind, e.summary, e.searchable_text, e.data_json,
+	SELECT e.id, e.session_id, e.sequence, e.timestamp, e.kind, e.summary, e.searchable_text, e.data_json, e.message_role,
 	       e.raw_record_id, e.raw_source_id, e.raw_record_sequence, e.raw_byte_offset, e.raw_byte_length,
 	       e.raw_content_hash, e.retention_policy_version, e.payload_storage,
 	       p.retention_policy_version, p.storage_encoding, p.original_size, p.content
@@ -972,7 +1034,7 @@ func scanStoredEvent(scanner rowScanner) (storedEvent, error) {
 	var payloadContent []byte
 	if err := scanner.Scan(
 		&event.ID, &event.SessionID, &event.Sequence, &timestamp, &event.Kind, &event.Summary,
-		&event.SearchableText, &event.DataJSON, &event.RawRecordID, &event.RawSourceID,
+		&event.SearchableText, &event.DataJSON, &event.MessageRole, &event.RawRecordID, &event.RawSourceID,
 		&event.RawRecordSequence, &event.RawByteOffset, &event.RawByteLength, &event.RawContentHash,
 		&event.PolicyVersion, &event.PayloadStorage, &payloadPolicy, &payloadEncoding, &payloadSize, &payloadContent,
 	); err != nil {

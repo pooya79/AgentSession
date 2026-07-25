@@ -37,6 +37,7 @@ func TestOpenMigratesFreshDatabaseAndReopenIsIdempotent(t *testing.T) {
 		{version: 7, name: "0007_container_membership.sql"},
 		{version: 8, name: "0008_projection_lifecycle.sql"},
 		{version: 9, name: "0009_exploration_indexes.sql"},
+		{version: 10, name: "0010_session_exploration_fields.sql"},
 	}
 	assertMigrationHistory(t, db, wantMigrations)
 	if err := db.Close(); err != nil {
@@ -186,7 +187,7 @@ func TestProjectionMigrationCreatesPendingStatesForExistingSessions(t *testing.T
 	}
 }
 
-func TestOpenEnablesForeignKeysOnEveryConnection(t *testing.T) {
+func TestOpenConfiguresEveryConnectionForConcurrentAccess(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -224,6 +225,22 @@ func TestOpenEnablesForeignKeysOnEveryConnection(t *testing.T) {
 		}
 		if enabled != 1 {
 			t.Errorf("connection %d foreign_keys = %d, want 1", i, enabled)
+		}
+
+		var busyTimeout int
+		if err := connection.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+			t.Fatalf("connection %d PRAGMA busy_timeout error = %v", i, err)
+		}
+		if busyTimeout != 5000 {
+			t.Errorf("connection %d busy_timeout = %d, want 5000", i, busyTimeout)
+		}
+
+		var journalMode string
+		if err := connection.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+			t.Fatalf("connection %d PRAGMA journal_mode error = %v", i, err)
+		}
+		if !strings.EqualFold(journalMode, "wal") {
+			t.Errorf("connection %d journal_mode = %q, want WAL", i, journalMode)
 		}
 	}
 

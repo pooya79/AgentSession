@@ -13,13 +13,14 @@ import (
 )
 
 type projectionControllerStub struct {
-	mu      sync.Mutex
-	states  []projection.State
-	status  func(context.Context, model.SessionID) ([]projection.State, error)
-	started chan string
-	release chan struct{}
-	calls   []string
-	errors  map[string]error
+	mu       sync.Mutex
+	states   []projection.State
+	status   func(context.Context, model.SessionID) ([]projection.State, error)
+	started  chan string
+	release  chan struct{}
+	calls    []string
+	errors   map[string]error
+	builders map[projection.Kind]bool
 }
 
 func (s *projectionControllerStub) Status(ctx context.Context, sessionID model.SessionID) ([]projection.State, error) {
@@ -30,6 +31,10 @@ func (s *projectionControllerStub) Status(ctx context.Context, sessionID model.S
 		return nil, err
 	}
 	return append([]projection.State(nil), s.states...), nil
+}
+
+func (s *projectionControllerStub) BuildAvailable(kind projection.Kind) bool {
+	return s.builders[kind]
 }
 
 func (s *projectionControllerStub) Retry(ctx context.Context, _ model.SessionID) error {
@@ -65,13 +70,15 @@ func TestProjectionStatusDerivesUsableStaleAndSafeDiagnostics(t *testing.T) {
 	readyRevision := int64(7)
 	staleRevision := int64(6)
 	now := time.Now().UTC()
-	controller := &projectionControllerStub{states: []projection.State{
-		{Kind: projection.KindSearch, Status: projection.StatusReady, TargetVersion: "1", TargetRevision: 7, ReadyVersion: "1", ReadyRevision: &readyRevision, UpdatedAt: now},
-		{Kind: projection.KindFindings, Status: projection.StatusPending, TargetVersion: "2", TargetRevision: 7, ReadyVersion: "1", ReadyRevision: &staleRevision, UpdatedAt: now},
-		{Kind: projection.KindOutcomes, Status: projection.StatusFailed, TargetVersion: "1", TargetRevision: 7, UpdatedAt: now, Diagnostic: &projection.Diagnostic{
-			Code: strings.Repeat("c", 80), Summary: strings.Repeat("s", 300), Attempt: 3,
-		}},
-	}}
+	controller := &projectionControllerStub{
+		builders: map[projection.Kind]bool{projection.KindSearch: true, projection.KindOutcomes: true},
+		states: []projection.State{
+			{Kind: projection.KindSearch, Status: projection.StatusReady, TargetVersion: "1", TargetRevision: 7, ReadyVersion: "1", ReadyRevision: &readyRevision, UpdatedAt: now},
+			{Kind: projection.KindFindings, Status: projection.StatusPending, TargetVersion: "2", TargetRevision: 7, ReadyVersion: "1", ReadyRevision: &staleRevision, UpdatedAt: now},
+			{Kind: projection.KindOutcomes, Status: projection.StatusFailed, TargetVersion: "1", TargetRevision: 7, UpdatedAt: now, Diagnostic: &projection.Diagnostic{
+				Code: strings.Repeat("c", 80), Summary: strings.Repeat("s", 300), Attempt: 3,
+			}},
+		}}
 	service := NewProjectionService(controller)
 	defer service.Shutdown(context.Background())
 
@@ -79,8 +86,11 @@ func TestProjectionStatusDerivesUsableStaleAndSafeDiagnostics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Summary != (ProjectionSummary{Ready: 1, Usable: 1, Pending: 1, Failed: 1, Stale: 1}) {
+	if status.Summary != (ProjectionSummary{Ready: 1, Usable: 1, Pending: 1, Failed: 1, Stale: 1, Unimplemented: 1}) {
 		t.Fatalf("summary = %#v", status.Summary)
+	}
+	if !status.Projections[0].BuildAvailable || status.Projections[1].BuildAvailable || !status.Projections[2].BuildAvailable {
+		t.Fatalf("builder capabilities = %#v", status.Projections)
 	}
 	if !status.Projections[0].Usable || status.Projections[0].Stale || status.Projections[1].Usable || !status.Projections[1].Stale {
 		t.Fatalf("derived projection states = %#v", status.Projections)
