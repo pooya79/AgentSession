@@ -154,13 +154,13 @@ func (m Model) Init() tea.Cmd {
 		return nil
 	}
 	return tea.Batch(
-		loadSessions(m.services, m.requestCtx, m.requestGeneration, ""),
+		loadSessions(m.requestCtx, m.services, m.requestGeneration, ""),
 		startImportAll(m.services, m.observeGeneration),
 	)
 }
 
 // loadSessions requests one opaque-cursor page of imported session summaries.
-func loadSessions(services app.Services, ctx context.Context, generation uint64, cursor string) tea.Cmd {
+func loadSessions(ctx context.Context, services app.Services, generation uint64, cursor string) tea.Cmd {
 	return func() tea.Msg {
 		page, err := services.ListSessions(ctx, app.ListSessionsRequest{Cursor: cursor, Limit: pageSize})
 		return sessionsLoadedMsg{generation: generation, page: page, err: err}
@@ -169,7 +169,7 @@ func loadSessions(services app.Services, ctx context.Context, generation uint64,
 
 // loadTimeline requests summaries only; payload retrieval belongs exclusively
 // to loadDetail.
-func loadTimeline(services app.Services, ctx context.Context, generation uint64, sessionID model.SessionID, cursor string) tea.Cmd {
+func loadTimeline(ctx context.Context, services app.Services, generation uint64, sessionID model.SessionID, cursor string) tea.Cmd {
 	return func() tea.Msg {
 		page, err := services.Timeline(ctx, app.TimelineRequest{SessionID: sessionID, Cursor: cursor, Limit: pageSize})
 		return timelineLoadedMsg{generation: generation, page: page, err: err}
@@ -178,7 +178,7 @@ func loadTimeline(services app.Services, ctx context.Context, generation uint64,
 
 // loadDetail requests a normalized payload for the selected event. Raw record
 // contents are intentionally absent from the exploration response and UI.
-func loadDetail(services app.Services, ctx context.Context, generation uint64, sessionID model.SessionID, eventID model.EventID) tea.Cmd {
+func loadDetail(ctx context.Context, services app.Services, generation uint64, sessionID model.SessionID, eventID model.EventID) tea.Cmd {
 	return func() tea.Msg {
 		detail, err := services.EventDetail(ctx, app.EventDetailRequest{
 			SessionID: sessionID, EventID: eventID, IncludePayload: true,
@@ -199,7 +199,7 @@ func startImportAll(services app.Services, generation uint64) tea.Cmd {
 }
 
 // readImportStatus obtains one snapshot using an observer-owned context.
-func readImportStatus(services app.Services, ctx context.Context, generation uint64) tea.Cmd {
+func readImportStatus(ctx context.Context, services app.Services, generation uint64) tea.Cmd {
 	return func() tea.Msg {
 		status, err := services.ImportAllStatus(ctx)
 		return importStatusMsg{generation: generation, status: status, err: err}
@@ -265,7 +265,7 @@ func (m *Model) reloadSessions() tea.Cmd {
 	m.sessionsLoading = true
 	m.sessionsErr = nil
 	cursor := m.sessionCursors[m.sessionPage]
-	return loadSessions(m.services, ctx, m.requestGeneration, cursor)
+	return loadSessions(ctx, m.services, m.requestGeneration, cursor)
 }
 
 // reloadTimeline replaces the current timeline request while retaining its
@@ -275,13 +275,13 @@ func (m *Model) reloadTimeline() tea.Cmd {
 	m.timelineLoading = true
 	m.timelineErr = nil
 	cursor := m.timelineCursors[m.timelinePage]
-	return loadTimeline(m.services, ctx, m.requestGeneration, m.selectedSession, cursor)
+	return loadTimeline(ctx, m.services, m.requestGeneration, m.selectedSession, cursor)
 }
 
 // observeNow starts a fresh observer and immediately reads indexing status.
 func (m *Model) observeNow() tea.Cmd {
 	ctx := m.startObservation()
-	return readImportStatus(m.services, ctx, m.observeGeneration)
+	return readImportStatus(ctx, m.services, m.observeGeneration)
 }
 
 // Update handles navigation, bounded page requests, refreshes, and import
@@ -348,7 +348,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.observeCancel()
 		m.observeCtx = ctx
 		m.observeCancel = cancel
-		return m, readImportStatus(m.services, ctx, m.observeGeneration)
+		return m, readImportStatus(ctx, m.services, m.observeGeneration)
 	case importStatusMsg:
 		if msg.generation != m.observeGeneration {
 			return m, nil
@@ -415,6 +415,9 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		}
 		m.stopObservation()
 		return m, tea.Quit
+	}
+	if m.services == nil {
+		return m, nil
 	}
 
 	switch key {
@@ -497,7 +500,7 @@ func (m *Model) refresh() (tea.Model, tea.Cmd) {
 		ctx := m.replaceRequest()
 		m.detailLoading, m.detailErr, m.scroll = true, nil, 0
 		event := m.timeline.Events[m.eventCursor]
-		return m, loadDetail(m.services, ctx, m.requestGeneration, m.selectedSession, event.ID)
+		return m, loadDetail(ctx, m.services, m.requestGeneration, m.selectedSession, event.ID)
 	}
 	return m, nil
 }
@@ -606,7 +609,7 @@ func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 		m.eventCursor = 0
 		m.stopObservation()
 		ctx := m.replaceRequest()
-		return m, loadTimeline(m.services, ctx, m.requestGeneration, m.selectedSession, "")
+		return m, loadTimeline(ctx, m.services, m.requestGeneration, m.selectedSession, "")
 	case timelineScreen:
 		if m.timelineLoading || len(m.timeline.Events) == 0 {
 			return m, nil
@@ -618,7 +621,7 @@ func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 		m.scroll = 0
 		ctx := m.replaceRequest()
 		event := m.timeline.Events[m.eventCursor]
-		return m, loadDetail(m.services, ctx, m.requestGeneration, m.selectedSession, event.ID)
+		return m, loadDetail(ctx, m.services, m.requestGeneration, m.selectedSession, event.ID)
 	}
 	return m, nil
 }
@@ -696,9 +699,10 @@ func (m Model) sessionsLines() []string {
 		}
 		return lines
 	}
-	if m.sessions.State == app.EvidencePartial {
+	switch m.sessions.State {
+	case app.EvidencePartial:
 		lines = append(lines, "Some sessions contain diagnostics; available evidence is still shown.")
-	} else if m.sessions.State == app.EvidenceUnavailable {
+	case app.EvidenceUnavailable:
 		lines = append(lines, "Session evidence is unavailable.")
 	}
 	lines = append(lines, "")

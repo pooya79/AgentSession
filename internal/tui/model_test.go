@@ -151,6 +151,82 @@ func TestImportCompletionRefreshesSessions(t *testing.T) {
 	}
 }
 
+func TestPollImportObservationLifecycle(t *testing.T) {
+	t.Run("current poll replaces observer context", func(t *testing.T) {
+		services := &servicesStub{}
+		m := New(context.Background(), services)
+		m.observeGeneration = 7
+		previousCtx := m.observeCtx
+
+		updated, cmd := updateModel(t, m, pollImportMsg{generation: 7})
+		if cmd == nil || updated.observeCtx == previousCtx {
+			t.Fatal("current poll did not replace the observer context")
+		}
+		select {
+		case <-previousCtx.Done():
+		default:
+			t.Fatal("replaced observer context was not canceled")
+		}
+
+		_ = cmd()
+		if services.statusCtx != updated.observeCtx {
+			t.Fatal("status read did not use the replacement observer context")
+		}
+		select {
+		case <-services.statusCtx.Done():
+			t.Fatal("replacement observer context was unexpectedly canceled")
+		default:
+		}
+	})
+
+	t.Run("stale and stopped polls do not restart observation", func(t *testing.T) {
+		services := &servicesStub{}
+		m := New(context.Background(), services)
+		observeCtx := m.observeCtx
+		generation := m.observeGeneration
+
+		updated, cmd := updateModel(t, m, pollImportMsg{generation: generation - 1})
+		if cmd != nil || updated.observeCtx != observeCtx {
+			t.Fatal("stale poll replaced or restarted the observer")
+		}
+
+		updated.stopObservation()
+		stoppedGeneration := updated.observeGeneration
+		updated, cmd = updateModel(t, updated, pollImportMsg{generation: stoppedGeneration})
+		if cmd != nil || updated.observeCancel != nil || updated.observeGeneration != stoppedGeneration {
+			t.Fatal("poll after stopObservation restarted observation")
+		}
+		if services.statusCtx != nil {
+			t.Fatal("ignored polls read import status")
+		}
+	})
+}
+
+func TestNilServicesKeyCommandsAreNoOps(t *testing.T) {
+	for _, key := range []tea.KeyPressMsg{
+		{Code: 'r', Text: "r"},
+		{Code: tea.KeyEnter},
+		{Code: 'n', Text: "n"},
+		{Code: 'p', Text: "p"},
+	} {
+		m := New(context.Background(), nil)
+		m.sessions = app.SessionPage{
+			Sessions:   []app.SessionSummary{testSession("session-1")},
+			NextCursor: "next",
+		}
+		m.sessionPage = 1
+		m.sessionCursors = []string{"", "next"}
+
+		updated, cmd := updateModel(t, m, key)
+		if cmd != nil {
+			t.Errorf("key %q with nil services returned a command", key.String())
+		}
+		if updated.requestGeneration != m.requestGeneration || updated.observeGeneration != m.observeGeneration {
+			t.Errorf("key %q with nil services changed request generations", key.String())
+		}
+	}
+}
+
 func TestNavigationUsesSummaryThenPayloadDetail(t *testing.T) {
 	services := &servicesStub{
 		timeline: app.TimelinePage{
