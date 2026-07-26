@@ -105,20 +105,32 @@ go run ./cmd/agentsession web --addr 127.0.0.1:9000
 ```
 
 Starting the web server triggers one asynchronous discovery and incremental
-import of every supported source. The dashboard reports live aggregate
-progress, per-source details, failures, and bounded diagnostics while indexing
-continues independently of browser connections. Use **Rescan all sources** to
-run the same idempotent workflow again after local histories change; there is no
-filesystem watcher or periodic background scan.
+import of every supported source. `GET /` is the sessions operations console:
+it renders the canonical-index status, exact Sessions, Events, Agents, and
+Evidence Issues totals, and a bounded previous/next session page. `GET
+/indexing` is the detailed latest-scan view for sources, phases, totals,
+failures, omissions, and bounded diagnostics. Its rescan form starts the same
+idempotent workflow after local histories change; there is no filesystem
+watcher or periodic background scan.
 
-Open an indexed session to browse its paginated evidence timeline. Session and
-timeline diagnostics remain visible when evidence is partial or unavailable.
-Normalized payloads are fetched only when an event detail is opened; retained
-raw record contents are not exposed by the web UI. Timeline pages also show
-per-kind projection state and bounded diagnostics. Retry and rebuild actions
-return immediately and poll while application-owned work is active; closing
-the page stops observation without stopping the operation. Rebuilding all
-kinds requires an explicit confirmation.
+Session timelines use `GET /sessions/{session}`. Event links focus and expand a
+bounded timeline window through `?event={event}`; `GET /events/{event}` resolves
+the canonical destination and redirects there. Timeline pagination, event
+inspection, rescans, projection actions, and rebuild-all confirmation all work
+through ordinary links and forms when JavaScript is disabled. When htmx is
+available it only refreshes bounded page regions and conditionally polls while
+an import or projection operation is active. Polling is the production update
+mechanism; there is no event-stream endpoint.
+
+Session and timeline diagnostics remain visible when evidence is partial or
+unavailable. Resolved canonical event references link to their focused
+timeline; missing or mismatched references and raw-record references remain
+non-links. Normalized payloads are fetched only for an opened event, and
+retained raw record contents are never exposed by the web UI. Projection
+readiness is secondary to canonical evidence and distinguishes usable, pending,
+running, failed, stale, and unavailable-in-this-build states. Rebuilding every
+projection is offered only when all registered builders are available and uses
+a separate server-rendered confirmation page.
 
 The web command accepts the same repeatable, typed source flags as the import
 command. Explicit paths supplement default discovery locations:

@@ -57,6 +57,30 @@ func TestListSessionsOrdersVariablePrecisionTimestampsChronologicallyAcrossPages
 	}
 }
 
+func TestListSessionsSupportsBackwardKeysetPages(t *testing.T) {
+	t.Parallel()
+
+	store := openImportStore(t)
+	ctx := context.Background()
+	for index, id := range []model.SessionID{"one", "two", "three", "four", "five"} {
+		insertExplorationSession(t, store, string(id), "codex", fmt.Sprintf("2026-07-%02dT00:00:00Z", 25-index), nil)
+	}
+	first, more, err := store.ListSessions(ctx, nil, 2)
+	if err != nil || !more {
+		t.Fatalf("first page = (%v, %v, %v)", sessionSummaryIDs(first), more, err)
+	}
+	forward := storagecontract.SessionCursor{LastActivityAt: first[1].LastActivityAt, ID: first[1].ID}
+	second, more, err := store.ListSessions(ctx, &forward, 2)
+	if err != nil || !more || fmt.Sprint(sessionSummaryIDs(second)) != fmt.Sprint([]model.SessionID{"three", "four"}) {
+		t.Fatalf("second page = (%v, %v, %v)", sessionSummaryIDs(second), more, err)
+	}
+	backward := storagecontract.SessionCursor{LastActivityAt: second[0].LastActivityAt, ID: second[0].ID, Before: true}
+	previous, more, err := store.ListSessions(ctx, &backward, 2)
+	if err != nil || more || fmt.Sprint(sessionSummaryIDs(previous)) != fmt.Sprint([]model.SessionID{"one", "two"}) {
+		t.Fatalf("previous page = (%v, %v, %v)", sessionSummaryIDs(previous), more, err)
+	}
+}
+
 func TestListSessionsUsesLastActivityAndEarliestUserPreview(t *testing.T) {
 	t.Parallel()
 
@@ -137,6 +161,29 @@ func TestLibraryOverviewCountsExactDistinctAndDeduplicatedTotals(t *testing.T) {
 	want := storagecontract.LibraryOverview{Sessions: 3, Events: 2, Agents: 2, IssueSessions: 2}
 	if overview != want {
 		t.Fatalf("LibraryOverview() = %#v, want %#v", overview, want)
+	}
+}
+
+func TestEventWindowAndBatchLocationsStayBoundedAndLightweight(t *testing.T) {
+	t.Parallel()
+
+	store := openImportStore(t)
+	ctx := context.Background()
+	insertExplorationSession(t, store, "window", "codex", nil, nil)
+	for sequence := int64(0); sequence < 6; sequence++ {
+		insertExplorationEvent(t, store, "window", sequence, nil, "message", strings.Repeat("payload", 100), `{"Role":"user","Text":"retained payload"}`)
+	}
+	window, later, err := store.EventSummaryWindow(ctx, "window", 4, 3)
+	if err != nil || !later || len(window) != 3 || window[0].Sequence != 2 || window[2].Sequence != 4 {
+		t.Fatalf("window = (%#v, later %v, %v)", window, later, err)
+	}
+	ids := []model.EventID{"event-window-1", "event-window-4", "missing"}
+	locations, err := store.EventLocations(ctx, ids)
+	if err != nil || len(locations) != 2 || locations["event-window-4"].Sequence != 4 {
+		t.Fatalf("locations = (%#v, %v)", locations, err)
+	}
+	if _, exists := locations["missing"]; exists {
+		t.Fatal("missing event received a location")
 	}
 }
 

@@ -1,0 +1,113 @@
+package web
+
+import (
+	"github.com/pooya79/AgentSession/internal/app"
+	"github.com/pooya79/AgentSession/internal/model"
+)
+
+// indexingPage renders the detailed source scan without triggering discovery.
+templ indexingPage(view indexingView) {
+	@document("Indexing · AgentSession") {
+		<main id="main">
+			<nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Sessions</a><span aria-hidden="true">/</span><span aria-current="page">Indexing</span></nav>
+			<header class="page-heading">
+				<div>
+					<p class="eyebrow">Discovery and import</p>
+					<h1>Canonical indexing</h1>
+					<p class="muted">The latest application-owned scan. Opening this page does not start discovery.</p>
+				</div>
+			</header>
+			@notice(view.Notice)
+			<div id="index-status">
+				@indexStatus(view.Status, view.CSRF, view.DiagnosticRefs)
+			</div>
+		</main>
+	}
+}
+
+// indexStatus renders bounded import progress and diagnostics for full pages or fragments.
+templ indexStatus(status app.ImportAllStatus, csrf string, refs map[model.EventID]eventReference) {
+	<section class={ "index-console phase-" + string(status.Phase) } aria-labelledby="index-state-title" aria-live="polite">
+		<div class="section-heading">
+			<div>
+				<h2 id="index-state-title">
+					if status.Active {
+						Indexing in progress
+					} else if status.Phase == app.ImportAllUpToDate {
+						Index up to date
+					} else if status.Phase == app.ImportAllIssues {
+						Completed with issues
+					} else {
+						Index unavailable
+					}
+				</h2>
+				if status.Failure != "" {
+					<p class="notice warning">The scan failed. Previously indexed evidence remains available.</p>
+				}
+			</div>
+			<form method="post" action="/indexing/rescan" hx-post="/indexing/rescan" hx-target="#index-status" hx-swap="innerHTML">
+				<input type="hidden" name="csrf" value={ csrf }/>
+				<button type="submit" disabled?={ status.Active }>
+					if status.Active {
+						Scanning…
+					} else {
+						Rescan all sources
+					}
+				</button>
+			</form>
+		</div>
+		<div class="metric-grid six" aria-label="Index totals">
+			<div><strong>{ strconvFormatInt(status.SourcesCompleted) }/{ strconvFormatInt(status.SourcesDiscovered) }</strong><span>Sources complete</span></div>
+			<div><strong>{ strconvFormatInt(status.RecordsProcessed) }</strong><span>Records</span></div>
+			<div><strong>{ strconvFormatInt(status.EventsProcessed) }</strong><span>Events</span></div>
+			<div><strong>{ strconvFormatInt(status.SessionsObserved) }</strong><span>Sessions</span></div>
+			<div><strong>{ strconvFormatInt(status.UnchangedSessions) }</strong><span>Unchanged</span></div>
+			<div><strong>{ strconvFormatInt(status.DiagnosticsTotal) }</strong><span>Diagnostics</span></div>
+		</div>
+		if len(status.Sources) == 0 {
+			<p class="empty-state">No supported sources were discovered in the latest scan.</p>
+		} else {
+			<div class="source-table" role="table" aria-label="Discovered sources">
+				<div class="source-row source-header" role="row">
+					<span role="columnheader">Source</span><span role="columnheader">Origin</span><span role="columnheader">Phase</span><span role="columnheader">Totals</span>
+				</div>
+				for _, source := range status.Sources {
+					<div class="source-row" role="row">
+						<span role="cell" data-label="Source"><strong>{ source.Kind }</strong><code>{ source.Path }</code></span>
+						<span role="cell" data-label="Origin">{ source.Origin }</span>
+						<span role="cell" data-label="Phase">
+							<span class="badge">{ string(source.Phase) }</span>
+							if source.Failure != "" {
+								<small>Failed; available evidence was retained.</small>
+							}
+						</span>
+						<span role="cell" data-label="Totals">{ formatCount(source.Records, "record") } · { formatCount(source.Events, "event") } · { formatCount(source.Diagnostics, "diagnostic") }</span>
+					</div>
+				}
+			</div>
+		}
+		if len(status.RecentDiagnostics) > 0 {
+			<details class="diagnostics" open>
+				<summary>Latest bounded diagnostics ({ strconvFormatInt(status.DiagnosticsTotal) } total)</summary>
+				<ul>
+					for _, diagnostic := range status.RecentDiagnostics {
+						<li>
+							<strong>{ string(diagnostic.Severity) }: { diagnostic.Code }</strong>
+							<span>{ diagnostic.Message }</span>
+							if diagnostic.SourceID != "" {
+								<code>source { string(diagnostic.SourceID) }</code>
+							}
+							@resolvedEvidenceChips(diagnostic.EventIDs, diagnostic.RawRecordIDs, refs)
+						</li>
+					}
+				</ul>
+				if status.DiagnosticsOmitted > 0 {
+					<p class="muted">{ formatCount(status.DiagnosticsOmitted, "diagnostic") } omitted from this bounded view.</p>
+				}
+			</details>
+		}
+		if status.Active {
+			<span class="poller" hx-get="/fragments/index-status" hx-trigger="load delay:1s" hx-target="#index-status" hx-swap="innerHTML"></span>
+		}
+	</section>
+}

@@ -59,6 +59,7 @@ type BatchImportError struct {
 // discovery catalog.
 var ErrSourceNotFound = errors.New("discovered source was not found")
 
+// Error returns a presentation-safe count of discovery and import failures.
 func (e *BatchImportError) Error() string {
 	return fmt.Sprintf("import completed with %d discovery failure(s) and %d source failure(s)", e.DiscoveryFailures, e.ImportFailures)
 }
@@ -163,6 +164,7 @@ func OpenRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 	return runtime, nil
 }
 
+// currentPathInputs captures the current process environment for runtime path resolution.
 func currentPathInputs() (PathInputs, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -175,19 +177,33 @@ func currentPathInputs() (PathInputs, error) {
 	return PathInputs{GOOS: runtime.GOOS, HomeDir: home, WorkingDir: working, LookupEnv: os.LookupEnv}, nil
 }
 
-func (r *Runtime) Paths() RuntimePaths                      { return r.paths }
-func (r *Runtime) ImportManager() *ImportManager            { return r.imports }
-func (r *Runtime) Reader() storage.SessionReader            { return r.store }
+// Paths returns the private index and configuration paths owned by AgentSession.
+func (r *Runtime) Paths() RuntimePaths { return r.paths }
+
+// ImportManager returns the runtime-owned incremental import coordinator.
+func (r *Runtime) ImportManager() *ImportManager { return r.imports }
+
+// Reader returns read-only access to retained canonical session evidence.
+func (r *Runtime) Reader() storage.SessionReader { return r.store }
+
+// AuthoritativeReader returns the canonical reader shared with projection builders.
 func (r *Runtime) AuthoritativeReader() AuthoritativeReader { return r.store }
-func (r *Runtime) ProjectionService() *ProjectionService    { return r.projections }
-func (r *Runtime) Projections() *ProjectionService          { return r.projections }
-func (r *Runtime) Explorer() Explorer                       { return r.explorer }
+
+// ProjectionService returns the runtime-owned derived-data coordinator.
+func (r *Runtime) ProjectionService() *ProjectionService { return r.projections }
+
+// Projections returns the shared projection application service.
+func (r *Runtime) Projections() *ProjectionService { return r.projections }
+
+// Explorer returns the shared bounded canonical exploration service.
+func (r *Runtime) Explorer() Explorer { return r.explorer }
 
 // LibraryOverview reports aggregate counts over committed canonical evidence.
 func (r *Runtime) LibraryOverview(ctx context.Context) (LibraryOverview, error) {
 	return r.explorer.LibraryOverview(ctx)
 }
 
+// ListSessions delegates bounded session exploration to the shared service.
 func (r *Runtime) ListSessions(ctx context.Context, request ListSessionsRequest) (SessionPage, error) {
 	page, err := r.explorer.ListSessions(ctx, request)
 	if err != nil {
@@ -206,12 +222,19 @@ func (r *Runtime) ListSessions(ctx context.Context, request ListSessionsRequest)
 	return page, nil
 }
 
+// Timeline delegates bounded canonical timeline reads to the shared service.
 func (r *Runtime) Timeline(ctx context.Context, request TimelineRequest) (TimelinePage, error) {
 	return r.explorer.Timeline(ctx, request)
 }
 
+// EventDetail delegates explicit event payload reads to the shared service.
 func (r *Runtime) EventDetail(ctx context.Context, request EventDetailRequest) (EventDetail, error) {
 	return r.explorer.EventDetail(ctx, request)
+}
+
+// EventLocations resolves bounded diagnostic references without loading payloads.
+func (r *Runtime) EventLocations(ctx context.Context, eventIDs []model.EventID) (map[model.EventID]EventLocation, error) {
+	return r.explorer.EventLocations(ctx, eventIDs)
 }
 
 // ProjectionStatus exposes the runtime-owned projection lifecycle service.
@@ -335,6 +358,7 @@ func (r *Runtime) DiscoverAndImport(ctx context.Context) (BatchImportResult, err
 	return result, nil
 }
 
+// waitForTerminal observes import progress until completion or caller cancellation.
 func waitForTerminal(ctx context.Context, subscription *ImportSubscription) ImportProgress {
 	var last ImportProgress
 	for {
@@ -352,6 +376,7 @@ func waitForTerminal(ctx context.Context, subscription *ImportSubscription) Impo
 	}
 }
 
+// importerSource converts a discovered, allowlisted source into an adapter input.
 func importerSource(source discovery.Source) (importer.Source, error) {
 	info, err := os.Stat(source.Path)
 	if err != nil {
@@ -380,6 +405,7 @@ func importerSource(source discovery.Source) (importer.Source, error) {
 	}, nil
 }
 
+// accepting rejects new work once runtime shutdown begins.
 func (r *Runtime) accepting() error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -419,6 +445,7 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// sortDiscoverySources establishes deterministic source ordering for presentation and imports.
 func sortDiscoverySources(sources []discovery.Source) {
 	for i := 1; i < len(sources); i++ {
 		for j := i; j > 0 && (sources[j].Kind < sources[j-1].Kind || (sources[j].Kind == sources[j-1].Kind && sources[j].Path < sources[j-1].Path)); j-- {

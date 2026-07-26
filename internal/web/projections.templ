@@ -1,0 +1,84 @@
+package web
+
+import (
+	"github.com/pooya79/AgentSession/internal/app"
+	"github.com/pooya79/AgentSession/internal/model"
+)
+
+// projectionStatus renders secondary projection state and guarded mutation controls.
+templ projectionStatus(status app.ProjectionStatus, csrf string, feedback string) {
+	<div class="projection-status" aria-live="polite">
+		if feedback != "" {
+			<p class="notice success" role="status">{ feedback }</p>
+		}
+		<details>
+			<summary>{ strconvFormatInt(status.Summary.Usable) } usable · { strconvFormatInt(status.Summary.Pending) } pending · { strconvFormatInt(status.Summary.Running) } running · { strconvFormatInt(status.Summary.Failed) } failed · { strconvFormatInt(status.Summary.Stale) } stale · { strconvFormatInt(status.Summary.Unimplemented) } unavailable in this build</summary>
+			if status.OperationDiagnostic != nil {
+				<p class="notice warning"><strong>{ status.OperationDiagnostic.Code }</strong>: { status.OperationDiagnostic.Summary }</p>
+			}
+			<div class="projection-list">
+				for _, projection := range status.Projections {
+					<article class="projection-row">
+						<div>
+							<strong>{ projection.Kind }</strong>
+							if !projection.BuildAvailable {
+								<span class="badge warning">unavailable in this build</span>
+							} else if projection.Usable {
+								<span class="badge state-complete">usable</span>
+							} else if projection.Stale {
+								<span class="badge warning">stale</span>
+							} else {
+								<span class="badge">{ projection.Status }</span>
+							}
+							if projection.Diagnostic != nil {
+								<p class="notice warning"><strong>{ projection.Diagnostic.Code }</strong>: { projection.Diagnostic.Summary }</p>
+							}
+						</div>
+						if projection.BuildAvailable {
+							<form method="post" action={ templ.URL(projectionActionURL(status.SessionID, "rebuild")) } hx-post={ projectionActionURL(status.SessionID, "rebuild") } hx-target="#projection-status" hx-swap="innerHTML">
+								<input type="hidden" name="csrf" value={ csrf }/>
+								<input type="hidden" name="kind" value={ projection.Kind }/>
+								<button class="quiet" type="submit">Rebuild</button>
+							</form>
+						}
+					</article>
+				}
+			</div>
+			<div class="projection-actions">
+				<form method="post" action={ templ.URL(projectionActionURL(status.SessionID, "retry")) } hx-post={ projectionActionURL(status.SessionID, "retry") } hx-target="#projection-status" hx-swap="innerHTML">
+					<input type="hidden" name="csrf" value={ csrf }/>
+					<button type="submit" disabled?={ status.Active || status.Summary.Unimplemented == int64(len(status.Projections)) }>Retry pending and failed</button>
+				</form>
+				if allBuildersAvailable(status) {
+					<a class="button danger" href={ templ.URL(projectionActionURL(status.SessionID, "rebuild-all")) }>Rebuild all…</a>
+				}
+			</div>
+		</details>
+		if status.Active || status.Summary.Running > 0 {
+			<p class="muted">Projection work continues if this page is closed.</p>
+			<span class="poller" hx-get={ projectionsFragmentURL(status.SessionID) } hx-trigger="load delay:1s" hx-target="#projection-status" hx-swap="innerHTML"></span>
+		}
+	</div>
+}
+
+// rebuildAllPage requires an explicit non-HTMX confirmation before rebuilding every projection.
+templ rebuildAllPage(sessionID model.SessionID, status app.ProjectionStatus, csrf string) {
+	@document("Confirm rebuild · AgentSession") {
+		<main id="main" class="narrow">
+			<nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Sessions</a><span aria-hidden="true">/</span><a href={ templ.URL(sessionURL(sessionID)) }>Timeline</a><span aria-hidden="true">/</span><span aria-current="page">Rebuild all</span></nav>
+			<section class="confirmation" aria-labelledby="confirm-title">
+				<p class="eyebrow">Confirmation required</p>
+				<h1 id="confirm-title">Rebuild all projections?</h1>
+				<p>This invalidates and schedules every registered derived-data projection for this session. Canonical evidence is not modified.</p>
+				<p><strong>{ formatCount(int64(len(status.Projections)), "projection") }</strong> will be rebuilt.</p>
+				<div class="projection-actions">
+					<form method="post" action={ templ.URL(projectionActionURL(sessionID, "rebuild-all")) }>
+						<input type="hidden" name="csrf" value={ csrf }/>
+						<button class="danger" type="submit">Confirm rebuild all</button>
+					</form>
+					<a class="button secondary" href={ templ.URL(sessionURL(sessionID)) }>Cancel</a>
+				</div>
+			</section>
+		</main>
+	}
+}

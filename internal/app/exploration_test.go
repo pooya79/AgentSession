@@ -19,16 +19,23 @@ type explorationReaderStub struct {
 	payload      model.NormalizedData
 	payloadReads int
 	sessions     []storage.SessionSummary
+	sessionMore  bool
+	lastCursor   *storage.SessionCursor
 	overview     storage.LibraryOverview
 	overviewErr  error
+	locations    map[model.EventID]storage.EventLocation
+	windowEnd    int64
+	windowReads  int
+	windowErr    error
 }
 
 func (s *explorationReaderStub) LibraryOverview(context.Context) (storage.LibraryOverview, error) {
 	return s.overview, s.overviewErr
 }
 
-func (s *explorationReaderStub) ListSessions(context.Context, *storage.SessionCursor, int) ([]storage.SessionSummary, bool, error) {
-	return s.sessions, false, nil
+func (s *explorationReaderStub) ListSessions(_ context.Context, cursor *storage.SessionCursor, _ int) ([]storage.SessionSummary, bool, error) {
+	s.lastCursor = cursor
+	return s.sessions, s.sessionMore, nil
 }
 
 func TestSessionPreviewPrecedenceNormalizationAndRuneBound(t *testing.T) {
@@ -106,6 +113,86 @@ func (s *explorationReaderStub) SessionExists(context.Context, model.SessionID) 
 }
 func (s *explorationReaderStub) EventSummaryPage(context.Context, model.SessionID, *int64, int) ([]model.EventSummary, bool, error) {
 	return s.events, false, nil
+}
+func (s *explorationReaderStub) EventSummaryWindow(_ context.Context, _ model.SessionID, endingAt int64, _ int) ([]model.EventSummary, bool, error) {
+	s.windowEnd = endingAt
+	s.windowReads++
+	return s.events, false, s.windowErr
+}
+func (s *explorationReaderStub) EventLocations(context.Context, []model.EventID) (map[model.EventID]storage.EventLocation, error) {
+	if s.locations != nil {
+		return s.locations, nil
+	}
+	result := make(map[model.EventID]storage.EventLocation)
+	for _, event := range s.events {
+		result[event.ID] = storage.EventLocation{EventID: event.ID, SessionID: event.SessionID, Sequence: event.Sequence}
+	}
+	return result, nil
+}
+
+func TestSessionCursorDirectionsAndFocusedTimeline(t *testing.T) {
+	eventID := model.EventID("evt_" + strings.Repeat("b", 64))
+	activity := time.Date(2026, 7, 26, 8, 0, 0, 0, time.UTC)
+	stub := &explorationReaderStub{
+		exists: true, sessionMore: true,
+		sessions: []storage.SessionSummary{{ID: "one", LastActivityAt: &activity}, {ID: "two"}},
+		events:   []model.EventSummary{{ID: eventID, SessionID: "one", Sequence: 9}},
+		locations: map[model.EventID]storage.EventLocation{
+			eventID: {EventID: eventID, SessionID: "one", Sequence: 9},
+		},
+	}
+	explorer, _ := NewExplorer(stub)
+	first, err := explorer.ListSessions(context.Background(), ListSessionsRequest{Limit: 2})
+	if err != nil || first.PreviousCursor != "" || first.NextCursor == "" {
+		t.Fatalf("first page = (%#v, %v)", first, err)
+	}
+	stub.sessionMore = false
+	next, err := explorer.ListSessions(context.Background(), ListSessionsRequest{Cursor: first.NextCursor, Limit: 2})
+	if err != nil || stub.lastCursor == nil || stub.lastCursor.Before || next.PreviousCursor == "" {
+		t.Fatalf("next page/cursor = (%#v, %#v, %v)", next, stub.lastCursor, err)
+	}
+	previousToken := next.PreviousCursor
+	stub.sessionMore = true
+	_, err = explorer.ListSessions(context.Background(), ListSessionsRequest{Cursor: previousToken, Limit: 2})
+	if err != nil || stub.lastCursor == nil || !stub.lastCursor.Before {
+		t.Fatalf("previous cursor = (%#v, %v)", stub.lastCursor, err)
+	}
+
+	timeline, err := explorer.Timeline(context.Background(), TimelineRequest{SessionID: "one", FocusedEvent: eventID, Limit: 10})
+	if err != nil || timeline.FocusedEvent != eventID || stub.windowReads != 1 || stub.windowEnd != 9 {
+		t.Fatalf("focused timeline = (%#v, %v), window reads/end %d/%d", timeline, err, stub.windowReads, stub.windowEnd)
+	}
+	stub.windowErr = errors.New("window unavailable")
+	if _, err := explorer.Timeline(context.Background(), TimelineRequest{SessionID: "one", FocusedEvent: eventID}); err == nil || !strings.Contains(err.Error(), `read timeline for "one"`) {
+		t.Fatalf("focused timeline storage error = %v", err)
+	}
+	stub.windowErr = nil
+	stub.locations[eventID] = storage.EventLocation{EventID: eventID, SessionID: "other", Sequence: 9}
+	missing, err := explorer.Timeline(context.Background(), TimelineRequest{SessionID: "one", FocusedEvent: eventID})
+	if err != nil || missing.State != EvidenceNotFound || stub.windowReads != 2 {
+		t.Fatalf("wrong-session focus = (%#v, %v), reads %d", missing, err, stub.windowReads)
+	}
+	if _, err := explorer.Timeline(context.Background(), TimelineRequest{SessionID: "one", Cursor: "cursor", FocusedEvent: eventID}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("focus plus cursor error = %v", err)
+	}
+}
+
+func TestEventLocationsAreBoundedAndPreserveMissing(t *testing.T) {
+	id := model.EventID("evt_" + strings.Repeat("c", 64))
+	explorer, _ := NewExplorer(&explorationReaderStub{locations: map[model.EventID]storage.EventLocation{
+		id: {EventID: id, SessionID: "session", Sequence: 3},
+	}})
+	found, err := explorer.EventLocations(context.Background(), []model.EventID{id})
+	if err != nil || found[id].SessionID != "session" || found[id].Sequence != 3 {
+		t.Fatalf("EventLocations() = (%#v, %v)", found, err)
+	}
+	tooMany := make([]model.EventID, MaximumPageSize+1)
+	for i := range tooMany {
+		tooMany[i] = id
+	}
+	if _, err := explorer.EventLocations(context.Background(), tooMany); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("oversized lookup error = %v", err)
+	}
 }
 func (s *explorationReaderStub) EventEnvelope(context.Context, model.SessionID, model.EventID) (storage.EventEnvelope, bool, error) {
 	return s.envelope, s.envelope.ID != "", nil

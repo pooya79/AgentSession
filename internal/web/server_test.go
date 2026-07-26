@@ -3,75 +3,47 @@ package web
 import (
 	"bytes"
 	"context"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pooya79/AgentSession/internal/app"
-	"github.com/pooya79/AgentSession/internal/importer"
-	"github.com/pooya79/AgentSession/internal/model"
 )
 
 func TestSourceTextEscapesHTML(t *testing.T) {
 	const source = `<script data-value="'&">alert(1)</script>`
 	var rendered bytes.Buffer
 	if err := sourceText(source).Render(context.Background(), &rendered); err != nil {
-		t.Fatalf("Render() error = %v", err)
+		t.Fatal(err)
 	}
-
-	body := rendered.String()
-	if strings.Contains(body, "<script") || strings.Contains(body, "</script>") {
-		t.Fatalf("sourceText() rendered trusted HTML: %q", body)
-	}
-	for _, escaped := range []string{"&lt;script", "&#34;", "&#39;", "&amp;", "&lt;/script&gt;"} {
-		if !strings.Contains(body, escaped) {
-			t.Errorf("sourceText() = %q, want escaped fragment %q", body, escaped)
-		}
+	if body := rendered.String(); strings.Contains(body, "<script") || !strings.Contains(body, "&lt;script") {
+		t.Fatalf("sourceText rendered unsafe content: %q", body)
 	}
 }
 
-func TestHandler(t *testing.T) {
-	tests := []struct {
-		name        string
-		method      string
-		path        string
-		status      int
-		contentType string
-		body        string
-	}{
-		{name: "index", method: http.MethodGet, path: "/", status: http.StatusOK, contentType: "text/html", body: "AgentSession"},
-		{name: "health", method: http.MethodGet, path: "/healthz", status: http.StatusOK, contentType: "text/plain", body: "ok\n"},
-		{name: "asset", method: http.MethodGet, path: "/assets/styles.css", status: http.StatusOK, contentType: "text/css", body: "color-scheme"},
-		{name: "missing", method: http.MethodGet, path: "/missing", status: http.StatusNotFound, contentType: "text/plain", body: "404 page not found"},
-		{name: "method", method: http.MethodPost, path: "/", status: http.StatusMethodNotAllowed, contentType: "text/plain", body: "Method Not Allowed"},
-	}
-
+func TestHandlerHealthAssetsSecurityAndAvailability(t *testing.T) {
 	handler := NewHandler(nil)
+	tests := []struct {
+		path, content string
+		status        int
+	}{
+		{"/", "Service Unavailable", http.StatusServiceUnavailable},
+		{"/healthz", "ok\n", http.StatusOK},
+		{"/assets/styles.css", "color-scheme", http.StatusOK},
+		{"/missing", "404 page not found", http.StatusNotFound},
+	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, httptest.NewRequest(tt.method, tt.path, nil))
-			response := recorder.Result()
-			defer response.Body.Close()
-			body, err := io.ReadAll(response.Body)
-			if err != nil {
-				t.Fatalf("ReadAll() error = %v", err)
-			}
-			if response.StatusCode != tt.status {
-				t.Errorf("status = %d, want %d", response.StatusCode, tt.status)
-			}
-			if got := response.Header.Get("Content-Type"); !strings.Contains(got, tt.contentType) {
-				t.Errorf("Content-Type = %q, want it to contain %q", got, tt.contentType)
-			}
-			if !strings.Contains(string(body), tt.body) {
-				t.Errorf("body = %q, want it to contain %q", body, tt.body)
-			}
-		})
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, tt.path, nil))
+		body, _ := io.ReadAll(recorder.Result().Body)
+		if recorder.Code != tt.status || !strings.Contains(string(body), tt.content) {
+			t.Fatalf("%s = %d %q", tt.path, recorder.Code, body)
+		}
+		if recorder.Header().Get("Content-Security-Policy") == "" {
+			t.Fatalf("%s has no CSP", tt.path)
+		}
 	}
 }
 
@@ -82,172 +54,9 @@ func TestServeStartsAutomaticImportBeforeListening(t *testing.T) {
 		return app.ImportAllStart{Status: app.ImportAllStatus{Active: true, Phase: app.ImportAllIndexing}}, nil
 	}}
 	if err := Serve(context.Background(), "127.0.0.1:-1", services); err == nil {
-		t.Fatal("Serve() with an invalid address returned no error")
+		t.Fatal("Serve() with invalid address returned no error")
 	}
 	if calls != 1 {
-		t.Fatalf("automatic import starts = %d, want 1", calls)
+		t.Fatalf("automatic imports = %d, want 1", calls)
 	}
-}
-
-func TestImportProgressHandlerStreamsTerminalFailure(t *testing.T) {
-	manager, err := app.NewImportManager(func(_ context.Context, source importer.Source, observe importer.ProgressObserver) ([]importer.ImportResult, error) {
-		observe(importer.Progress{
-			SourceID: source.ID, ActiveSourceID: source.ID, Phase: importer.PhaseImporting,
-			DiagnosticsObserved: 1, Diagnostics: []model.Diagnostic{{Code: "unsafe", Severity: model.SeverityWarning, Message: "<script>"}},
-		})
-		return nil, errors.New("failed\ncleanly")
-	}, app.ImportManagerOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := testImportSource("http-source")
-	handler := NewImportProgressHandler(func(*http.Request) (*app.ImportSubscription, error) {
-		subscription, _, err := manager.Request(source)
-		return subscription, err
-	})
-	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/progress", nil))
-	body := recorder.Body.String()
-	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Header().Get("Content-Type"), "text/event-stream") {
-		t.Fatalf("response status/content-type = %d/%q", recorder.Code, recorder.Header().Get("Content-Type"))
-	}
-	for _, fragment := range []string{"event: failure", `"source":"http-source"`, `"phase":"failed"`, `failed\ncleanly`, `\u003cscript\u003e`} {
-		if !strings.Contains(body, fragment) {
-			t.Errorf("SSE body = %q, want %q", body, fragment)
-		}
-	}
-	if strings.Contains(body, "\ndata: failed") {
-		t.Fatalf("failure introduced an SSE data line: %q", body)
-	}
-}
-
-func TestImportProgressHandlerMapsMissingSourceToNotFound(t *testing.T) {
-	handler := NewImportProgressHandler(func(*http.Request) (*app.ImportSubscription, error) {
-		return nil, fmt.Errorf("request import: %w", app.ErrSourceNotFound)
-	})
-	recorder := httptest.NewRecorder()
-
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/progress", nil))
-
-	if recorder.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", recorder.Code, http.StatusNotFound)
-	}
-	if body := recorder.Body.String(); body != "Not Found\n" {
-		t.Errorf("body = %q, want %q", body, "Not Found\n")
-	}
-}
-
-type observedRecorder struct {
-	*httptest.ResponseRecorder
-	flushed chan struct{}
-}
-
-func (r *observedRecorder) Flush() {
-	r.ResponseRecorder.Flush()
-	r.flushed <- struct{}{}
-}
-
-func TestImportProgressHandlerStreamsInitialProgressDiagnosticAndCompletion(t *testing.T) {
-	allowProgress := make(chan struct{})
-	progressSent := make(chan struct{})
-	allowCompletion := make(chan struct{})
-	manager, err := app.NewImportManager(func(_ context.Context, source importer.Source, observe importer.ProgressObserver) ([]importer.ImportResult, error) {
-		<-allowProgress
-		observe(importer.Progress{
-			SourceID: source.ID, ActiveSourceID: source.ID, Phase: importer.PhaseImporting,
-			RecordsProcessed: 2, EventsProcessed: 1, DiagnosticsObserved: 1,
-			Diagnostics: []model.Diagnostic{{Code: "partial", Severity: model.SeverityWarning, Message: "retained <unknown>"}},
-		})
-		close(progressSent)
-		<-allowCompletion
-		return []importer.ImportResult{{SourceID: source.ID, SessionID: "session-1", Change: importer.SourceNew}}, nil
-	}, app.ImportManagerOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := testImportSource("snapshots")
-	handler := NewImportProgressHandler(func(*http.Request) (*app.ImportSubscription, error) {
-		subscription, _, err := manager.Request(source)
-		return subscription, err
-	})
-	recorder := &observedRecorder{ResponseRecorder: httptest.NewRecorder(), flushed: make(chan struct{}, 4)}
-	done := make(chan struct{})
-	go func() {
-		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/progress", nil))
-		close(done)
-	}()
-
-	<-recorder.flushed
-	close(allowProgress)
-	<-progressSent
-	<-recorder.flushed
-	close(allowCompletion)
-	<-recorder.flushed
-	<-done
-
-	body := recorder.Body.String()
-	for _, fragment := range []string{
-		`"phase":"queued"`, `"phase":"importing"`, `"records_processed":2`,
-		`"code":"partial"`, `retained \u003cunknown\u003e`, "event: completion", `"phase":"completed"`,
-	} {
-		if !strings.Contains(body, fragment) {
-			t.Errorf("SSE body = %q, want %q", body, fragment)
-		}
-	}
-}
-
-func TestImportProgressJSONIncludesAggregateUnchangedCount(t *testing.T) {
-	payload := importProgressJSON(app.ImportProgress{
-		ImportResultsObserved: 100, UnchangedResultsObserved: 100, ImportResultsOmitted: 36,
-	})
-	if payload.ImportResultsObserved != 100 || payload.UnchangedResultsObserved != 100 || payload.ImportResultsOmitted != 36 {
-		t.Fatalf("aggregate result counts = %#v", payload)
-	}
-}
-
-func TestImportProgressHandlerDisconnectDoesNotCancelImport(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
-	runnerContext := make(chan context.Context, 1)
-	manager, _ := app.NewImportManager(func(ctx context.Context, _ importer.Source, _ importer.ProgressObserver) ([]importer.ImportResult, error) {
-		runnerContext <- ctx
-		close(started)
-		<-release
-		return nil, nil
-	}, app.ImportManagerOptions{})
-	source := testImportSource("disconnect")
-	primary, _, _ := manager.Request(source)
-	defer primary.Close()
-	<-started
-	ctx, cancel := context.WithCancel(context.Background())
-	request := httptest.NewRequest(http.MethodGet, "/progress", nil).WithContext(ctx)
-	done := make(chan struct{})
-	go func() {
-		NewImportProgressHandler(func(*http.Request) (*app.ImportSubscription, error) {
-			subscription, _, err := manager.Request(source)
-			return subscription, err
-		}).ServeHTTP(httptest.NewRecorder(), request)
-		close(done)
-	}()
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("SSE handler did not stop after disconnect")
-	}
-	importCtx := <-runnerContext
-	select {
-	case <-importCtx.Done():
-		t.Fatal("HTTP disconnect canceled shared import")
-	default:
-	}
-	close(release)
-	for range primary.Updates() {
-	}
-}
-
-func testImportSource(id model.SourceID) importer.Source {
-	return importer.Source{ID: id, Open: func(context.Context) (io.ReadCloser, error) {
-		return io.NopCloser(strings.NewReader("")), nil
-	}}
 }

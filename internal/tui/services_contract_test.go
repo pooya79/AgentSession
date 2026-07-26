@@ -23,6 +23,9 @@ func (c contractConsumer) Timeline(ctx context.Context, request app.TimelineRequ
 func (c contractConsumer) EventDetail(ctx context.Context, request app.EventDetailRequest) (app.EventDetail, error) {
 	return c.services.EventDetail(ctx, request)
 }
+func (c contractConsumer) EventLocations(ctx context.Context, ids []model.EventID) (map[model.EventID]app.EventLocation, error) {
+	return c.services.EventLocations(ctx, ids)
+}
 func (c contractConsumer) ProjectionStatus(ctx context.Context, sessionID model.SessionID) (app.ProjectionStatus, error) {
 	return c.services.ProjectionStatus(ctx, sessionID)
 }
