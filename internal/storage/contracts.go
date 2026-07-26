@@ -12,21 +12,23 @@ import (
 type SessionCursor struct {
 	LastActivityAt *time.Time
 	ID             model.SessionID
-	Before         bool
+	// Before reverses the keyset comparison while results remain in canonical display order.
+	Before bool
 }
 
 // SessionSummary is lightweight imported-session metadata. It deliberately
 // excludes producer version metadata, normalized payloads, and retained
 // evidence.
 type SessionSummary struct {
-	ID               model.SessionID
-	Title            string
-	Summary          string
-	StartedAt        *time.Time
-	EndedAt          *time.Time
-	LastActivityAt   *time.Time
-	SourceID         model.SourceID
-	AgentName        string
+	ID             model.SessionID
+	Title          string
+	Summary        string
+	StartedAt      *time.Time
+	EndedAt        *time.Time
+	LastActivityAt *time.Time
+	SourceID       model.SourceID
+	AgentName      string
+	// FirstUserMessage supports presentation previews without loading event payloads.
 	FirstUserMessage string
 	EventCount       int64
 }
@@ -64,14 +66,23 @@ type DiagnosticPage struct {
 // ExplorationReader is the narrow authoritative read contract consumed by
 // the shared application explorer.
 type ExplorationReader interface {
+	// LibraryOverview returns exact committed counts.
 	LibraryOverview(context.Context) (LibraryOverview, error)
+	// ListSessions returns a keyset page plus whether more rows exist in the requested direction.
 	ListSessions(context.Context, *SessionCursor, int) ([]SessionSummary, bool, error)
+	// SessionExists checks canonical metadata without loading events.
 	SessionExists(context.Context, model.SessionID) (bool, error)
+	// EventSummaryPage returns ordered summaries after an optional sequence.
 	EventSummaryPage(context.Context, model.SessionID, *int64, int) ([]model.EventSummary, bool, error)
+	// EventSummaryWindow returns an ordered page ending at the requested sequence.
 	EventSummaryWindow(context.Context, model.SessionID, int64, int) ([]model.EventSummary, bool, error)
+	// EventLocations resolves ownership and order for a bounded set of IDs.
 	EventLocations(context.Context, []model.EventID) (map[model.EventID]EventLocation, error)
+	// EventEnvelope returns lightweight detail without normalized payload content.
 	EventEnvelope(context.Context, model.SessionID, model.EventID) (EventEnvelope, bool, error)
+	// EventPayload returns normalized data only for an explicitly selected event.
 	EventPayload(context.Context, model.SessionID, model.EventID) (model.NormalizedData, bool, error)
+	// Diagnostics returns an exact total with at most the requested number of entries.
 	Diagnostics(context.Context, model.SessionID, *model.EventID, int) (DiagnosticPage, error)
 }
 

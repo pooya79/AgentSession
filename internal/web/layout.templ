@@ -1,0 +1,41 @@
+package web
+
+// sourceText renders untrusted source text through templ's HTML escaping.
+templ sourceText(content string) {
+	{ content }
+}
+
+// document provides the shared, offline-capable HTML shell for full pages.
+templ document(title string) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<meta name="color-scheme" content="light dark"/>
+			<meta name="htmx-config" content="{&quot;includeIndicatorStyles&quot;:false}"/>
+			<title>{ title }</title>
+			<link rel="stylesheet" href="/assets/styles.css"/>
+			<script src="/assets/htmx.min.js" defer></script>
+		</head>
+		<body>
+			<a class="skip-link" href="#main">Skip to content</a>
+			<header class="site-header">
+				<a class="brand" href="/">AgentSession <span>Operations console</span></a>
+				<nav aria-label="Primary">
+					<a href="/">Sessions</a>
+					<a href="/indexing">Indexing</a>
+				</nav>
+				<span class="privacy-mark">Local · offline · read-only</span>
+			</header>
+			{ children... }
+		</body>
+	</html>
+}
+
+// notice renders a recognized success notice when one is present.
+templ notice(message string) {
+	if message != "" {
+		<p class="notice success" role="status">{ message }</p>
+	}
+}

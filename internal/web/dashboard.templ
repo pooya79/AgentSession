@@ -1,0 +1,141 @@
+package web
+
+import "github.com/pooya79/AgentSession/internal/app"
+
+// dashboardPage renders the bounded session library and current index summary.
+templ dashboardPage(view dashboardView) {
+	@document("Sessions · AgentSession") {
+		<main id="main">
+			<nav class="breadcrumbs" aria-label="Breadcrumb"><span aria-current="page">Sessions</span></nav>
+			@indexStrip(view.Import, view.ImportErr)
+			<header class="page-heading">
+				<div>
+					<p class="eyebrow">Canonical evidence library</p>
+					<h1>Sessions</h1>
+				</div>
+				<a class="button secondary" href="/indexing">Indexing details</a>
+			</header>
+			@notice(view.Notice)
+			<section aria-labelledby="metrics-title">
+				<h2 id="metrics-title" class="visually-hidden">Exact library metrics</h2>
+				if view.OverviewErr != nil {
+					<p class="notice warning" role="status">Exact library metrics are temporarily unavailable. Indexed sessions remain usable below.</p>
+				} else {
+					<div class="metric-grid">
+						<div><strong>{ strconvFormatInt(view.Overview.Sessions) }</strong><span>Sessions</span></div>
+						<div><strong>{ strconvFormatInt(view.Overview.Events) }</strong><span>Events</span></div>
+						<div><strong>{ strconvFormatInt(view.Overview.Agents) }</strong><span>Agents</span></div>
+						<div><strong>{ strconvFormatInt(view.Overview.IssueSessions) }</strong><span>Evidence issues</span></div>
+					</div>
+				}
+			</section>
+			<section aria-labelledby="session-list-title">
+				<div class="section-heading">
+					<div>
+						<h2 id="session-list-title">Recent sessions</h2>
+						<p class="muted">Ordered by canonical last activity; unknown activity appears last.</p>
+					</div>
+				</div>
+				if view.SessionsErr != nil {
+					<p class="notice warning" role="alert">Sessions are temporarily unavailable.</p>
+				} else {
+					@sessionsTable(view.Sessions)
+				}
+			</section>
+			@dashboardIndexSummary(view.Import, view.ImportErr)
+		</main>
+	}
+}
+
+// indexStrip renders the compact index state used on the dashboard and by polling.
+templ indexStrip(status app.ImportAllStatus, statusErr error) {
+	<section class="index-strip" aria-label="Canonical index status" aria-live="polite">
+		if statusErr != nil {
+			<span class="status-dot unavailable" aria-hidden="true"></span>
+			<strong>Index status unavailable</strong>
+			<span>Already indexed sessions remain readable.</span>
+		} else {
+			<span class={ "status-dot phase-" + string(status.Phase) } aria-hidden="true"></span>
+			if status.Active {
+				<strong>Indexing canonical evidence</strong>
+				<span>{ strconvFormatInt(status.SourcesCompleted) }/{ strconvFormatInt(status.SourcesDiscovered) } sources · { formatCount(status.EventsProcessed, "event") }</span>
+			} else if status.Phase == app.ImportAllUpToDate {
+				<strong>Canonical index up to date</strong>
+				<span>{ formatCount(status.SourcesDiscovered, "source") } in the latest scan</span>
+			} else if status.Phase == app.ImportAllIssues {
+				<strong>Index completed with issues</strong>
+				<span>{ formatCount(status.DiagnosticsTotal, "diagnostic") }; usable evidence is preserved</span>
+			} else {
+				<strong>Index unavailable</strong>
+				<span>Review the detailed indexing view.</span>
+			}
+			if status.Active {
+				<span class="poller" hx-get="/fragments/index-strip" hx-trigger="load delay:1s" hx-target="closest .index-strip" hx-swap="outerHTML"></span>
+			}
+		}
+		<a href="/indexing">View indexing</a>
+	</section>
+}
+
+// sessionsTable renders one bounded page of sessions with opaque pagination links.
+templ sessionsTable(page app.SessionPage) {
+	if len(page.Sessions) == 0 {
+		<p class="empty-state" role="status">No indexed sessions are available yet.</p>
+	} else {
+		<div class="session-table" role="table" aria-label="Indexed sessions">
+			<div class="session-row session-header" role="row">
+				<span role="columnheader">Activity</span>
+				<span role="columnheader">Agent</span>
+				<span role="columnheader">Session</span>
+				<span role="columnheader">Events</span>
+				<span role="columnheader">Evidence</span>
+			</div>
+			for _, session := range page.Sessions {
+				<article class="session-row" role="row">
+					<span role="cell" data-label="Activity">{ formatTime(session.LastActivityAt) }</span>
+					<span role="cell" data-label="Agent" class="agent">{ session.AgentName }</span>
+					<span role="cell" data-label="Session" class="session-copy">
+						<a href={ templ.URL(sessionURL(session.ID)) }>{ sessionTitle(session) }</a>
+						if session.Preview != "" {
+							<small>{ session.Preview }</small>
+						}
+						<details class="projection-summary">
+							<summary>Derived data</summary>
+							<span>{ strconvFormatInt(session.Projections.Usable) } usable · { strconvFormatInt(session.Projections.Pending) } pending · { strconvFormatInt(session.Projections.Running) } running · { strconvFormatInt(session.Projections.Failed) } failed · { strconvFormatInt(session.Projections.Stale) } stale · { strconvFormatInt(session.Projections.Unimplemented) } unavailable</span>
+						</details>
+					</span>
+					<span role="cell" data-label="Events">{ strconvFormatInt(session.EventCount) }</span>
+					<span role="cell" data-label="Evidence">
+						<span class={ "badge state-" + string(session.State) }>{ string(session.State) }</span>
+						if session.Diagnostics.Total > 0 {
+							<small>{ formatCount(session.Diagnostics.Total, "diagnostic") }</small>
+						}
+					</span>
+				</article>
+			}
+		</div>
+		<nav class="pagination" aria-label="Session pages">
+			if page.PreviousCursor != "" {
+				<a class="button secondary" rel="prev" href={ templ.URL(sessionPageURL(page.PreviousCursor)) }>Previous</a>
+			}
+			if page.NextCursor != "" {
+				<a class="button secondary" rel="next" href={ templ.URL(sessionPageURL(page.NextCursor)) }>Next</a>
+			}
+		</nav>
+	}
+}
+
+// dashboardIndexSummary renders the latest application-owned scan totals.
+templ dashboardIndexSummary(status app.ImportAllStatus, statusErr error) {
+	<section class="compact-panel" aria-labelledby="index-summary-title">
+		<div>
+			<h2 id="index-summary-title">Latest source scan</h2>
+			if statusErr != nil {
+				<p class="muted">Status unavailable.</p>
+			} else {
+				<p class="muted">{ formatCount(status.SourcesDiscovered, "source") } · { formatCount(status.SourcesFailed, "failure") } · { formatCount(status.DiagnosticsTotal, "diagnostic") }</p>
+			}
+		</div>
+		<a href="/indexing">Inspect sources and diagnostics</a>
+	</section>
+}

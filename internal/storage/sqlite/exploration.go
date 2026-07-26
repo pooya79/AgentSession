@@ -35,6 +35,8 @@ func (s *ImportStore) LibraryOverview(ctx context.Context) (storagecontract.Libr
 	return overview, nil
 }
 
+// ListSessions returns a bounded keyset page ordered by activity descending,
+// placing sessions with unknown activity last and preserving stable ID ordering.
 func (s *ImportStore) ListSessions(ctx context.Context, after *storagecontract.SessionCursor, limit int) ([]storagecontract.SessionSummary, bool, error) {
 	if limit <= 0 {
 		return nil, false, errors.New("sqlite exploration: list sessions: limit must be positive")
@@ -113,6 +115,7 @@ func (s *ImportStore) ListSessions(ctx context.Context, after *storagecontract.S
 	return items, hasMore, nil
 }
 
+// SessionExists checks retained canonical metadata without loading session events.
 func (s *ImportStore) SessionExists(ctx context.Context, sessionID model.SessionID) (bool, error) {
 	var exists int
 	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM sessions WHERE id = ?`, sessionID).Scan(&exists)
@@ -125,6 +128,7 @@ func (s *ImportStore) SessionExists(ctx context.Context, sessionID model.Session
 	return true, nil
 }
 
+// EventSummaryPage returns canonical events in source order without normalized payloads.
 func (s *ImportStore) EventSummaryPage(ctx context.Context, sessionID model.SessionID, after *int64, limit int) ([]model.EventSummary, bool, error) {
 	if limit <= 0 {
 		return nil, false, errors.New("sqlite exploration: timeline: limit must be positive")
@@ -164,6 +168,7 @@ func (s *ImportStore) EventSummaryPage(ctx context.Context, sessionID model.Sess
 	return items, hasMore, nil
 }
 
+// EventSummaryWindow returns an ordered bounded window ending at a focused sequence.
 func (s *ImportStore) EventSummaryWindow(ctx context.Context, sessionID model.SessionID, endingAt int64, limit int) ([]model.EventSummary, bool, error) {
 	if limit <= 0 {
 		return nil, false, errors.New("sqlite exploration: timeline window: limit must be positive")
@@ -202,6 +207,7 @@ func (s *ImportStore) EventSummaryWindow(ctx context.Context, sessionID model.Se
 	return items, later != 0, nil
 }
 
+// EventLocations resolves event ownership and ordering in one bounded query.
 func (s *ImportStore) EventLocations(ctx context.Context, eventIDs []model.EventID) (map[model.EventID]storagecontract.EventLocation, error) {
 	locations := make(map[model.EventID]storagecontract.EventLocation, len(eventIDs))
 	if len(eventIDs) == 0 {
@@ -230,6 +236,7 @@ func (s *ImportStore) EventLocations(ctx context.Context, eventIDs []model.Event
 	return locations, nil
 }
 
+// EventEnvelope reads lightweight event and raw-record references without payload content.
 func (s *ImportStore) EventEnvelope(ctx context.Context, sessionID model.SessionID, eventID model.EventID) (storagecontract.EventEnvelope, bool, error) {
 	var item storagecontract.EventEnvelope
 	var timestamp sql.NullString
@@ -261,6 +268,7 @@ func (s *ImportStore) EventEnvelope(ctx context.Context, sessionID model.Session
 	return item, true, nil
 }
 
+// EventPayload loads and decodes normalized data only for an explicitly selected event.
 func (s *ImportStore) EventPayload(ctx context.Context, sessionID model.SessionID, eventID model.EventID) (model.NormalizedData, bool, error) {
 	var kind model.EventKind
 	var encoded, payloadStorage string
@@ -302,6 +310,7 @@ func (s *ImportStore) EventPayload(ctx context.Context, sessionID model.SessionI
 	return data, true, nil
 }
 
+// Diagnostics returns an exact total and a bounded, deterministically ordered sample.
 func (s *ImportStore) Diagnostics(ctx context.Context, sessionID model.SessionID, eventID *model.EventID, limit int) (storagecontract.DiagnosticPage, error) {
 	if limit < 0 {
 		return storagecontract.DiagnosticPage{}, errors.New("sqlite exploration: diagnostics: limit must not be negative")

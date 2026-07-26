@@ -16,13 +16,21 @@ import (
 
 // Consumer is the exploration portion every presentation integration exposes.
 type Consumer interface {
+	// LibraryOverview exposes exact committed library counts.
 	LibraryOverview(context.Context) (app.LibraryOverview, error)
+	// ListSessions exposes bounded canonical session pages.
 	ListSessions(context.Context, app.ListSessionsRequest) (app.SessionPage, error)
+	// Timeline exposes bounded ordered canonical events.
 	Timeline(context.Context, app.TimelineRequest) (app.TimelinePage, error)
+	// EventDetail exposes explicit normalized payload reads.
 	EventDetail(context.Context, app.EventDetailRequest) (app.EventDetail, error)
+	// EventLocations resolves bounded evidence references.
 	EventLocations(context.Context, []model.EventID) (map[model.EventID]app.EventLocation, error)
+	// ProjectionStatus reports secondary derived-data readiness separately.
 	ProjectionStatus(context.Context, model.SessionID) (app.ProjectionStatus, error)
+	// RetryProjections schedules retryable derived-data work.
 	RetryProjections(context.Context, model.SessionID) (app.ProjectionAction, error)
+	// RebuildProjections schedules a validated projection rebuild.
 	RebuildProjections(context.Context, model.SessionID, string) (app.ProjectionAction, error)
 }
 
@@ -31,6 +39,7 @@ type Fixture struct {
 	Services app.Services
 }
 
+// NewFixture creates an isolated runtime backed by sanitized test session data.
 func NewFixture(t *testing.T) Fixture {
 	t.Helper()
 	root := t.TempDir()

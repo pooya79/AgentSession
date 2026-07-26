@@ -25,26 +25,35 @@ const (
 	// SessionPreviewMaxRunes bounds human-readable session previews without
 	// splitting a UTF-8 code point.
 	SessionPreviewMaxRunes = 240
-	maximumIdentifierSize  = 512
+	// maximumIdentifierSize bounds untrusted route and cursor identifiers.
+	maximumIdentifierSize = 512
 )
 
+// ErrInvalidRequest marks exploration input rejected before a storage read.
 var ErrInvalidRequest = errors.New("invalid exploration request")
 
+// EvidenceState describes how completely retained canonical evidence supports a view.
 type EvidenceState string
 
 const (
-	EvidenceComplete    EvidenceState = "complete"
-	EvidencePartial     EvidenceState = "partial"
+	// EvidenceComplete means the requested canonical evidence is available without diagnostics.
+	EvidenceComplete EvidenceState = "complete"
+	// EvidencePartial means usable evidence is accompanied by retained diagnostics.
+	EvidencePartial EvidenceState = "partial"
+	// EvidenceUnavailable means a known session or event lacks the requested normalized evidence.
 	EvidenceUnavailable EvidenceState = "unavailable"
-	EvidenceNotFound    EvidenceState = "not_found"
+	// EvidenceNotFound means the requested canonical identifier is not retained.
+	EvidenceNotFound EvidenceState = "not_found"
 )
 
+// DiagnosticSynopsis is a bounded diagnostic sample with an exact total.
 type DiagnosticSynopsis struct {
 	Diagnostics []model.Diagnostic
 	Total       int64
 	Omitted     int64
 }
 
+// SessionSummary is the presentation-safe canonical evidence summary for one session.
 type SessionSummary struct {
 	ID             model.SessionID
 	Title          string
@@ -72,11 +81,13 @@ type LibraryOverview struct {
 	IssueSessions int64
 }
 
+// ListSessionsRequest carries an opaque cursor and bounded page size.
 type ListSessionsRequest struct {
 	Cursor string
 	Limit  int
 }
 
+// SessionPage contains activity-ordered summaries and opaque navigation cursors.
 type SessionPage struct {
 	State          EvidenceState
 	Sessions       []SessionSummary
@@ -84,6 +95,7 @@ type SessionPage struct {
 	NextCursor     string
 }
 
+// TimelineRequest selects an ordered page or a window focused on one event.
 type TimelineRequest struct {
 	SessionID    model.SessionID
 	Cursor       string
@@ -91,6 +103,7 @@ type TimelineRequest struct {
 	FocusedEvent model.EventID
 }
 
+// TimelinePage contains bounded canonical event summaries and their evidence state.
 type TimelinePage struct {
 	State        EvidenceState
 	Events       []model.EventSummary
@@ -99,18 +112,21 @@ type TimelinePage struct {
 	FocusedEvent model.EventID
 }
 
+// EventLocation identifies the retained session and ordering position of an event.
 type EventLocation struct {
 	EventID   model.EventID
 	SessionID model.SessionID
 	Sequence  int64
 }
 
+// EventDetailRequest selects one event and whether its normalized payload is needed.
 type EventDetailRequest struct {
 	SessionID      model.SessionID
 	EventID        model.EventID
 	IncludePayload bool
 }
 
+// EventDetail combines a lightweight envelope, optional payload, and bounded diagnostics.
 type EventDetail struct {
 	State       EvidenceState
 	Event       model.EventSummary
@@ -119,16 +135,24 @@ type EventDetail struct {
 	Diagnostics DiagnosticSynopsis
 }
 
+// Explorer exposes bounded, validated reads over retained canonical evidence.
 type Explorer interface {
+	// LibraryOverview returns exact committed library counts.
 	LibraryOverview(context.Context) (LibraryOverview, error)
+	// ListSessions returns one activity-ordered page.
 	ListSessions(context.Context, ListSessionsRequest) (SessionPage, error)
+	// Timeline returns ordered summaries or a window containing a focused event.
 	Timeline(context.Context, TimelineRequest) (TimelinePage, error)
+	// EventDetail returns an event envelope and optionally its normalized payload.
 	EventDetail(context.Context, EventDetailRequest) (EventDetail, error)
+	// EventLocations resolves a bounded set of event IDs without loading payloads.
 	EventLocations(context.Context, []model.EventID) (map[model.EventID]EventLocation, error)
 }
 
+// explorationService validates presentation requests before delegating to storage.
 type explorationService struct{ reader storage.ExplorationReader }
 
+// NewExplorer creates the shared read service used by both presentation layers.
 func NewExplorer(reader storage.ExplorationReader) (Explorer, error) {
 	if reader == nil {
 		return nil, errors.New("application explorer: reader is required")
@@ -136,6 +160,7 @@ func NewExplorer(reader storage.ExplorationReader) (Explorer, error) {
 	return &explorationService{reader: reader}, nil
 }
 
+// LibraryOverview returns exact counts from committed canonical storage.
 func (s *explorationService) LibraryOverview(ctx context.Context) (LibraryOverview, error) {
 	if err := ctx.Err(); err != nil {
 		return LibraryOverview{}, err
@@ -150,6 +175,7 @@ func (s *explorationService) LibraryOverview(ctx context.Context) (LibraryOvervi
 	}, nil
 }
 
+// ListSessions returns a bounded keyset page ordered by canonical last activity.
 func (s *explorationService) ListSessions(ctx context.Context, request ListSessionsRequest) (SessionPage, error) {
 	if err := ctx.Err(); err != nil {
 		return SessionPage{}, err
@@ -208,6 +234,7 @@ func (s *explorationService) ListSessions(ctx context.Context, request ListSessi
 	return page, nil
 }
 
+// Timeline returns bounded summaries and never treats missing or partial evidence as success.
 func (s *explorationService) Timeline(ctx context.Context, request TimelineRequest) (TimelinePage, error) {
 	if err := validateIdentifier("session", string(request.SessionID)); err != nil {
 		return TimelinePage{}, err
@@ -277,6 +304,7 @@ func (s *explorationService) Timeline(ctx context.Context, request TimelineReque
 	return page, nil
 }
 
+// EventLocations validates and resolves at most MaximumPageSize event IDs.
 func (s *explorationService) EventLocations(ctx context.Context, eventIDs []model.EventID) (map[model.EventID]EventLocation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -300,6 +328,7 @@ func (s *explorationService) EventLocations(ctx context.Context, eventIDs []mode
 	return result, nil
 }
 
+// EventDetail reads normalized payload data only when explicitly requested.
 func (s *explorationService) EventDetail(ctx context.Context, request EventDetailRequest) (EventDetail, error) {
 	if err := validateIdentifier("session", string(request.SessionID)); err != nil {
 		return EventDetail{}, err
@@ -336,6 +365,7 @@ func (s *explorationService) EventDetail(ctx context.Context, request EventDetai
 	return detail, nil
 }
 
+// cursorEnvelope is the versioned, opaque wire representation for exploration cursors.
 type cursorEnvelope struct {
 	Version        int             `json:"v"`
 	Kind           string          `json:"kind"`
@@ -346,10 +376,13 @@ type cursorEnvelope struct {
 }
 
 const (
-	sessionCursorKind    = "sessions-last-activity"
+	// sessionCursorKind separates session cursors from timeline cursors.
+	sessionCursorKind = "sessions-last-activity"
+	// sessionCursorVersion invalidates cursors created under obsolete ordering.
 	sessionCursorVersion = 3
 )
 
+// pageLimit applies the default and rejects unbounded exploration reads.
 func pageLimit(limit int) (int, error) {
 	if limit == 0 {
 		return DefaultPageSize, nil
@@ -360,6 +393,7 @@ func pageLimit(limit int) (int, error) {
 	return limit, nil
 }
 
+// encodeCursor serializes a versioned cursor without exposing storage details.
 func encodeCursor(cursor cursorEnvelope) (string, error) {
 	// Session pagination changed from start time to maintained activity time.
 	// Giving that cursor its own version prevents an older cursor from
@@ -375,6 +409,7 @@ func encodeCursor(cursor cursorEnvelope) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(encoded), nil
 }
 
+// decodeCursor parses only supported cursor versions.
 func decodeCursor(value string) (cursorEnvelope, error) {
 	decoded, err := base64.RawURLEncoding.DecodeString(value)
 	if err != nil {
@@ -387,6 +422,7 @@ func decodeCursor(value string) (cursorEnvelope, error) {
 	return cursor, nil
 }
 
+// decodeSessionCursor validates cursor kind, version, direction, and activity time.
 func decodeSessionCursor(value string) (storage.SessionCursor, error) {
 	cursor, err := decodeCursor(value)
 	if err != nil || cursor.Version != sessionCursorVersion || cursor.Kind != sessionCursorKind {
@@ -410,6 +446,7 @@ func decodeSessionCursor(value string) (storage.SessionCursor, error) {
 	return result, nil
 }
 
+// encodeSessionCursor captures a keyset boundary and navigation direction.
 func encodeSessionCursor(row storage.SessionSummary, before bool) (string, error) {
 	direction := "next"
 	if before {
@@ -436,6 +473,7 @@ func sessionPreview(summary, firstUserMessage string) string {
 	return string(runes[:SessionPreviewMaxRunes-1]) + "…"
 }
 
+// decodeTimelineCursor ensures a cursor belongs to the requested session timeline.
 func decodeTimelineCursor(value string, sessionID model.SessionID) (int64, error) {
 	cursor, err := decodeCursor(value)
 	if err != nil || cursor.Kind != "timeline" || cursor.SessionID != sessionID || cursor.Sequence < 0 {
@@ -444,6 +482,7 @@ func decodeTimelineCursor(value string, sessionID model.SessionID) (int64, error
 	return cursor.Sequence, nil
 }
 
+// validateIdentifier rejects empty, oversized, malformed, or control-bearing identifiers.
 func validateIdentifier(kind, value string) error {
 	if value == "" || strings.TrimSpace(value) != value || len(value) > maximumIdentifierSize || !utf8.ValidString(value) {
 		return fmt.Errorf("%w: %s ID is malformed", ErrInvalidRequest, kind)
@@ -456,6 +495,7 @@ func validateIdentifier(kind, value string) error {
 	return nil
 }
 
+// validateEventID enforces the stable hexadecimal canonical event ID shape.
 func validateEventID(id model.EventID) error {
 	value := string(id)
 	if len(value) != 68 || !strings.HasPrefix(value, "evt_") {
@@ -469,6 +509,7 @@ func validateEventID(id model.EventID) error {
 	return nil
 }
 
+// diagnosticSynopsis preserves exact totals while returning only the bounded sample.
 func diagnosticSynopsis(page storage.DiagnosticPage) DiagnosticSynopsis {
 	omitted := page.Total - int64(len(page.Diagnostics))
 	if omitted < 0 {
@@ -477,6 +518,7 @@ func diagnosticSynopsis(page storage.DiagnosticPage) DiagnosticSynopsis {
 	return DiagnosticSynopsis{Diagnostics: page.Diagnostics, Total: page.Total, Omitted: omitted}
 }
 
+// formatCursorTime normalizes keyset timestamps to an exact UTC representation.
 func formatCursorTime(value *time.Time) *string {
 	if value == nil {
 		return nil

@@ -1,0 +1,94 @@
+package web
+
+import (
+	"github.com/pooya79/AgentSession/internal/app"
+	"github.com/pooya79/AgentSession/internal/model"
+)
+
+// timelinePage renders canonical event summaries and an optional focused payload.
+templ timelinePage(view timelineView) {
+	@document("Timeline · AgentSession") {
+		<main id="main">
+			<nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Sessions</a><span aria-hidden="true">/</span><span aria-current="page">Timeline</span></nav>
+			<header class="page-heading">
+				<div>
+					<p class="eyebrow">Canonical timeline</p>
+					<h1 class="session-id">{ string(view.SessionID) }</h1>
+					<p class="muted">Bounded summaries; normalized payloads load only for the selected event.</p>
+				</div>
+			</header>
+			@notice(view.Notice)
+			<section class="projection-panel" aria-labelledby="projection-title">
+				<div class="section-heading">
+					<div><p class="eyebrow">Secondary derived data</p><h2 id="projection-title">Projection readiness</h2></div>
+				</div>
+				if view.ProjectionErr != nil {
+					<p class="notice warning" role="status">Projection status is unavailable. Canonical evidence below is unaffected.</p>
+				} else {
+					<div id="projection-status">
+						@projectionStatus(view.Projection, view.CSRF, "")
+					</div>
+				}
+			</section>
+			<section aria-labelledby="events-title">
+				<h2 id="events-title">Events</h2>
+				@timelineEvidenceState(view.Page, view.DiagnosticRefs)
+				<div class="timeline">
+					@eventRows(view.SessionID, view.Page, view.Focused, view.FocusedPayload, view.DiagnosticRefs)
+				</div>
+			</section>
+		</main>
+	}
+}
+
+// timelineEvidenceState distinguishes partial or unavailable evidence from successful evidence.
+templ timelineEvidenceState(page app.TimelinePage, refs map[model.EventID]eventReference) {
+	if page.State == app.EvidenceUnavailable {
+		<p class="notice warning">Normalized timeline evidence is unavailable. This is not evidence of success.</p>
+	} else if page.State == app.EvidencePartial {
+		<p class="notice warning">This timeline contains partial evidence. Review diagnostics before drawing conclusions.</p>
+	}
+	@diagnosticSynopsis(page.Diagnostics, refs)
+}
+
+// eventRows renders ordered event summaries and cursor-based continuation controls.
+templ eventRows(sessionID model.SessionID, page app.TimelinePage, focused app.EventDetail, payload string, refs map[model.EventID]eventReference) {
+	if len(page.Events) == 0 {
+		<p class="empty-state">No normalized events are available.</p>
+	} else {
+		for _, event := range page.Events {
+			<article id={ eventAnchorID(event.ID) } class="event">
+				<div class="event-marker" aria-hidden="true"></div>
+				<div class="event-card">
+					<header class="event-heading">
+						<span class="event-kind">{ string(event.Kind) }</span>
+						<span class="metadata">#{ strconvFormatInt(event.Sequence) } · { formatTime(event.Timestamp) }</span>
+					</header>
+					<p>{ event.Summary }</p>
+					<a class="button quiet" href={ templ.URL(focusedTimelineURL(sessionID, event.ID)) } hx-get={ eventFragmentURL(sessionID, event.ID) } hx-target={ "#" + eventAnchorID(event.ID) + " .event-detail" } hx-swap="innerHTML" hx-push-url={ focusedTimelineURL(sessionID, event.ID) }>Inspect event detail</a>
+					<div class="event-detail" aria-live="polite">
+						if focused.Event.ID == event.ID {
+							@eventDetail(focused, payload, refs)
+						}
+					</div>
+				</div>
+			</article>
+		}
+		if page.NextCursor != "" {
+			<a class="button load-more" rel="next" href={ templ.URL(timelinePageURL(sessionID, page.NextCursor)) } hx-get={ timelineFragmentURL(sessionID, page.NextCursor) } hx-target="this" hx-swap="outerHTML">Load more events</a>
+		}
+	}
+}
+
+// eventDetail renders an explicitly requested normalized payload and its diagnostics.
+templ eventDetail(detail app.EventDetail, payload string, refs map[model.EventID]eventReference) {
+	<div class={ "detail-panel state-" + string(detail.State) }>
+		if detail.State == app.EvidenceUnavailable || detail.Payload == nil {
+			<p class="notice warning">The normalized payload is unavailable. This is not evidence of success.</p>
+		} else {
+			<h3>Normalized payload</h3>
+			<pre>{ payload }</pre>
+		}
+		@diagnosticSynopsis(detail.Diagnostics, refs)
+	</div>
+}

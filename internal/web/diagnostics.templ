@@ -1,0 +1,45 @@
+package web
+
+import (
+	"github.com/pooya79/AgentSession/internal/app"
+	"github.com/pooya79/AgentSession/internal/model"
+)
+
+// diagnosticSynopsis renders bounded diagnostics without collapsing missing evidence into success.
+templ diagnosticSynopsis(synopsis app.DiagnosticSynopsis, refs map[model.EventID]eventReference) {
+	if synopsis.Total > 0 {
+		<details class="diagnostics">
+			<summary>{ formatCount(synopsis.Total, "diagnostic") } retained with this evidence</summary>
+			<ul>
+				for _, diagnostic := range synopsis.Diagnostics {
+					<li>
+						<strong>{ string(diagnostic.Severity) }: { diagnostic.Code }</strong>
+						<span>{ diagnostic.Message }</span>
+						@resolvedEvidenceChips(diagnostic.EventIDs, diagnostic.RawRecordIDs, refs)
+					</li>
+				}
+			</ul>
+			if synopsis.Omitted > 0 {
+				<p class="muted">{ formatCount(synopsis.Omitted, "additional diagnostic") } omitted.</p>
+			}
+		</details>
+	}
+}
+
+// resolvedEvidenceChips links verified event references and marks unresolved or raw references plainly.
+templ resolvedEvidenceChips(eventIDs []model.EventID, rawRecordIDs []model.RawRecordID, refs map[model.EventID]eventReference) {
+	if len(eventIDs) > 0 || len(rawRecordIDs) > 0 {
+		<div class="evidence-chips" aria-label="Diagnostic evidence references">
+			for _, eventID := range eventIDs {
+				if ref, ok := refs[eventID]; ok && ref.Found && ref.MatchesSession {
+					<a class="chip" href={ templ.URL(focusedTimelineURL(ref.SessionID, eventID)) }>event { string(eventID) }</a>
+				} else {
+					<span class="chip missing">event { string(eventID) } (unresolved)</span>
+				}
+			}
+			for _, recordID := range rawRecordIDs {
+				<span class="chip raw">record { string(recordID) }</span>
+			}
+		</div>
+	}
+}
