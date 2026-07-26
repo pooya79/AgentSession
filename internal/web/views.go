@@ -9,35 +9,82 @@ import (
 	"github.com/pooya79/AgentSession/internal/model"
 )
 
-func timelineURL(sessionID model.SessionID) string {
-	return "/timeline?" + url.Values{"session": {string(sessionID)}}.Encode()
+type dashboardView struct {
+	CSRF        string
+	Notice      string
+	Import      app.ImportAllStatus
+	ImportErr   error
+	Overview    app.LibraryOverview
+	OverviewErr error
+	Sessions    app.SessionPage
+	SessionsErr error
 }
 
-func sessionsFragmentURL(cursor string) string {
-	return "/fragments/sessions?" + url.Values{"cursor": {cursor}}.Encode()
+type indexingView struct {
+	CSRF           string
+	Notice         string
+	Status         app.ImportAllStatus
+	DiagnosticRefs map[model.EventID]eventReference
+}
+
+type timelineView struct {
+	CSRF           string
+	Notice         string
+	SessionID      model.SessionID
+	Page           app.TimelinePage
+	Projection     app.ProjectionStatus
+	ProjectionErr  error
+	Focused        app.EventDetail
+	FocusedPayload string
+	DiagnosticRefs map[model.EventID]eventReference
+}
+
+type eventReference struct {
+	Found          bool
+	MatchesSession bool
+	SessionID      model.SessionID
+}
+
+func sessionURL(sessionID model.SessionID) string {
+	return "/sessions/" + url.PathEscape(string(sessionID))
+}
+
+func sessionPageURL(cursor string) string {
+	if cursor == "" {
+		return "/"
+	}
+	return "/?" + url.Values{"cursor": {cursor}}.Encode()
+}
+
+func timelinePageURL(sessionID model.SessionID, cursor string) string {
+	return sessionURL(sessionID) + "?" + url.Values{"cursor": {cursor}}.Encode()
 }
 
 func timelineFragmentURL(sessionID model.SessionID, cursor string) string {
-	return "/fragments/timeline?" + url.Values{"session": {string(sessionID)}, "cursor": {cursor}}.Encode()
+	return sessionURL(sessionID) + "/fragments/events?" + url.Values{"cursor": {cursor}}.Encode()
+}
+
+func focusedTimelineURL(sessionID model.SessionID, eventID model.EventID) string {
+	return sessionURL(sessionID) + "?" + url.Values{"event": {string(eventID)}}.Encode()
 }
 
 func eventFragmentURL(sessionID model.SessionID, eventID model.EventID) string {
-	return "/fragments/event?" + url.Values{"session": {string(sessionID)}, "event": {string(eventID)}}.Encode()
+	return sessionURL(sessionID) + "/fragments/event/" + url.PathEscape(string(eventID))
 }
 
-// projectionsFragmentURL encodes the untrusted session identifier as a query
-// value rather than interpolating it into an htmx URL.
 func projectionsFragmentURL(sessionID model.SessionID) string {
-	return "/fragments/projections?" + url.Values{"session": {string(sessionID)}}.Encode()
+	return sessionURL(sessionID) + "/fragments/projections"
 }
 
-func eventAnchorURL(eventID model.EventID) string {
-	return "#" + url.PathEscape("event-"+string(eventID))
+func projectionActionURL(sessionID model.SessionID, action string) string {
+	return sessionURL(sessionID) + "/projections/" + action
 }
 
-func eventAnchorID(eventID model.EventID) string {
-	return "event-" + string(eventID)
+func timelineNoticeURL(sessionID model.SessionID, notice string) string {
+	return sessionURL(sessionID) + "?" + url.Values{"notice": {notice}}.Encode()
 }
+
+func eventAnchorID(eventID model.EventID) string { return "event-" + string(eventID) }
 
 func sessionTitle(session app.SessionSummary) string {
 	if session.Title != "" {
@@ -48,9 +95,9 @@ func sessionTitle(session app.SessionSummary) string {
 
 func formatTime(value *time.Time) string {
 	if value == nil {
-		return "time unavailable"
+		return "Unavailable"
 	}
-	return value.Local().Format("2006-01-02 15:04:05 MST")
+	return value.Local().Format("2006-01-02 15:04 MST")
 }
 
 func formatCount(count int64, noun string) string {

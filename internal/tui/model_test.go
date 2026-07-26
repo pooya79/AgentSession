@@ -81,6 +81,10 @@ func (s *servicesStub) LibraryOverview(context.Context) (app.LibraryOverview, er
 	return s.overview, s.overviewErr
 }
 
+func (s *servicesStub) EventLocations(context.Context, []model.EventID) (map[model.EventID]app.EventLocation, error) {
+	return nil, nil
+}
+
 func (s *servicesStub) Timeline(_ context.Context, request app.TimelineRequest) (app.TimelinePage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

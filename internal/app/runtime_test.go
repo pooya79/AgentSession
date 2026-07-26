@@ -38,6 +38,9 @@ func (runtimeExplorerStub) Timeline(context.Context, TimelineRequest) (TimelineP
 func (runtimeExplorerStub) EventDetail(context.Context, EventDetailRequest) (EventDetail, error) {
 	return EventDetail{}, nil
 }
+func (runtimeExplorerStub) EventLocations(context.Context, []model.EventID) (map[model.EventID]EventLocation, error) {
+	return nil, nil
+}
 
 func TestRuntimeListSessionsPreservesCanonicalPageWhenProjectionStatusFails(t *testing.T) {
 	summary := ProjectionSummary{Ready: 1, Usable: 1}

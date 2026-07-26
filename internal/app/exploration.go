@@ -78,22 +78,31 @@ type ListSessionsRequest struct {
 }
 
 type SessionPage struct {
-	State      EvidenceState
-	Sessions   []SessionSummary
-	NextCursor string
+	State          EvidenceState
+	Sessions       []SessionSummary
+	PreviousCursor string
+	NextCursor     string
 }
 
 type TimelineRequest struct {
-	SessionID model.SessionID
-	Cursor    string
-	Limit     int
+	SessionID    model.SessionID
+	Cursor       string
+	Limit        int
+	FocusedEvent model.EventID
 }
 
 type TimelinePage struct {
-	State       EvidenceState
-	Events      []model.EventSummary
-	NextCursor  string
-	Diagnostics DiagnosticSynopsis
+	State        EvidenceState
+	Events       []model.EventSummary
+	NextCursor   string
+	Diagnostics  DiagnosticSynopsis
+	FocusedEvent model.EventID
+}
+
+type EventLocation struct {
+	EventID   model.EventID
+	SessionID model.SessionID
+	Sequence  int64
 }
 
 type EventDetailRequest struct {
@@ -115,6 +124,7 @@ type Explorer interface {
 	ListSessions(context.Context, ListSessionsRequest) (SessionPage, error)
 	Timeline(context.Context, TimelineRequest) (TimelinePage, error)
 	EventDetail(context.Context, EventDetailRequest) (EventDetail, error)
+	EventLocations(context.Context, []model.EventID) (map[model.EventID]EventLocation, error)
 }
 
 type explorationService struct{ reader storage.ExplorationReader }
@@ -149,12 +159,14 @@ func (s *explorationService) ListSessions(ctx context.Context, request ListSessi
 		return SessionPage{}, err
 	}
 	var after *storage.SessionCursor
+	backward := false
 	if request.Cursor != "" {
 		cursor, err := decodeSessionCursor(request.Cursor)
 		if err != nil {
 			return SessionPage{}, err
 		}
 		after = &cursor
+		backward = cursor.Before
 	}
 	rows, more, err := s.reader.ListSessions(ctx, after, limit)
 	if err != nil {
@@ -179,12 +191,16 @@ func (s *explorationService) ListSessions(ctx context.Context, request ListSessi
 			EventCount: row.EventCount, State: state, Diagnostics: synopsis,
 		})
 	}
-	if more && len(rows) > 0 {
+	if len(rows) > 0 && request.Cursor != "" && (!backward || more) {
+		first := rows[0]
+		page.PreviousCursor, err = encodeSessionCursor(first, true)
+		if err != nil {
+			return SessionPage{}, err
+		}
+	}
+	if len(rows) > 0 && (more || backward) {
 		last := rows[len(rows)-1]
-		page.NextCursor, err = encodeCursor(cursorEnvelope{
-			Kind: sessionCursorKind, SessionID: last.ID,
-			LastActivityAt: formatCursorTime(last.LastActivityAt),
-		})
+		page.NextCursor, err = encodeSessionCursor(last, false)
 		if err != nil {
 			return SessionPage{}, err
 		}
@@ -207,6 +223,9 @@ func (s *explorationService) Timeline(ctx context.Context, request TimelineReque
 	if !exists {
 		return TimelinePage{State: EvidenceNotFound}, nil
 	}
+	if request.FocusedEvent != "" && request.Cursor != "" {
+		return TimelinePage{}, fmt.Errorf("%w: focused event and cursor are mutually exclusive", ErrInvalidRequest)
+	}
 	var after *int64
 	if request.Cursor != "" {
 		sequence, err := decodeTimelineCursor(request.Cursor, request.SessionID)
@@ -215,7 +234,24 @@ func (s *explorationService) Timeline(ctx context.Context, request TimelineReque
 		}
 		after = &sequence
 	}
-	rows, more, err := s.reader.EventSummaryPage(ctx, request.SessionID, after, limit)
+	var rows []model.EventSummary
+	var more bool
+	if request.FocusedEvent != "" {
+		if err := validateEventID(request.FocusedEvent); err != nil {
+			return TimelinePage{}, err
+		}
+		locations, err := s.reader.EventLocations(ctx, []model.EventID{request.FocusedEvent})
+		if err != nil {
+			return TimelinePage{}, fmt.Errorf("locate focused event %q: %w", request.FocusedEvent, err)
+		}
+		location, found := locations[request.FocusedEvent]
+		if !found || location.SessionID != request.SessionID {
+			return TimelinePage{State: EvidenceNotFound}, nil
+		}
+		rows, more, err = s.reader.EventSummaryWindow(ctx, request.SessionID, location.Sequence, limit)
+	} else {
+		rows, more, err = s.reader.EventSummaryPage(ctx, request.SessionID, after, limit)
+	}
 	if err != nil {
 		return TimelinePage{}, fmt.Errorf("read timeline for %q: %w", request.SessionID, err)
 	}
@@ -231,7 +267,7 @@ func (s *explorationService) Timeline(ctx context.Context, request TimelineReque
 			state = EvidenceUnavailable
 		}
 	}
-	page := TimelinePage{State: state, Events: rows, Diagnostics: synopsis}
+	page := TimelinePage{State: state, Events: rows, Diagnostics: synopsis, FocusedEvent: request.FocusedEvent}
 	if more && len(rows) > 0 {
 		page.NextCursor, err = encodeCursor(cursorEnvelope{Kind: "timeline", SessionID: request.SessionID, Sequence: rows[len(rows)-1].Sequence})
 		if err != nil {
@@ -239,6 +275,29 @@ func (s *explorationService) Timeline(ctx context.Context, request TimelineReque
 		}
 	}
 	return page, nil
+}
+
+func (s *explorationService) EventLocations(ctx context.Context, eventIDs []model.EventID) (map[model.EventID]EventLocation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(eventIDs) > MaximumPageSize {
+		return nil, fmt.Errorf("%w: at most %d event IDs may be located", ErrInvalidRequest, MaximumPageSize)
+	}
+	for _, eventID := range eventIDs {
+		if err := validateEventID(eventID); err != nil {
+			return nil, err
+		}
+	}
+	found, err := s.reader.EventLocations(ctx, eventIDs)
+	if err != nil {
+		return nil, fmt.Errorf("locate events: %w", err)
+	}
+	result := make(map[model.EventID]EventLocation, len(found))
+	for id, location := range found {
+		result[id] = EventLocation{EventID: id, SessionID: location.SessionID, Sequence: location.Sequence}
+	}
+	return result, nil
 }
 
 func (s *explorationService) EventDetail(ctx context.Context, request EventDetailRequest) (EventDetail, error) {
@@ -283,11 +342,12 @@ type cursorEnvelope struct {
 	SessionID      model.SessionID `json:"session"`
 	LastActivityAt *string         `json:"last_activity_at,omitempty"`
 	Sequence       int64           `json:"sequence,omitempty"`
+	Direction      string          `json:"direction,omitempty"`
 }
 
 const (
 	sessionCursorKind    = "sessions-last-activity"
-	sessionCursorVersion = 2
+	sessionCursorVersion = 3
 )
 
 func pageLimit(limit int) (int, error) {
@@ -321,7 +381,7 @@ func decodeCursor(value string) (cursorEnvelope, error) {
 		return cursorEnvelope{}, fmt.Errorf("%w: malformed cursor", ErrInvalidRequest)
 	}
 	var cursor cursorEnvelope
-	if err := json.Unmarshal(decoded, &cursor); err != nil || (cursor.Version != 1 && cursor.Version != 2) {
+	if err := json.Unmarshal(decoded, &cursor); err != nil || (cursor.Version < 1 || cursor.Version > sessionCursorVersion) {
 		return cursorEnvelope{}, fmt.Errorf("%w: unsupported cursor", ErrInvalidRequest)
 	}
 	return cursor, nil
@@ -336,6 +396,10 @@ func decodeSessionCursor(value string) (storage.SessionCursor, error) {
 		return storage.SessionCursor{}, err
 	}
 	result := storage.SessionCursor{ID: cursor.SessionID}
+	if cursor.Direction != "next" && cursor.Direction != "previous" {
+		return storage.SessionCursor{}, fmt.Errorf("%w: malformed session cursor direction", ErrInvalidRequest)
+	}
+	result.Before = cursor.Direction == "previous"
 	if cursor.LastActivityAt != nil {
 		parsed, err := time.Parse(time.RFC3339Nano, *cursor.LastActivityAt)
 		if err != nil {
@@ -344,6 +408,17 @@ func decodeSessionCursor(value string) (storage.SessionCursor, error) {
 		result.LastActivityAt = &parsed
 	}
 	return result, nil
+}
+
+func encodeSessionCursor(row storage.SessionSummary, before bool) (string, error) {
+	direction := "next"
+	if before {
+		direction = "previous"
+	}
+	return encodeCursor(cursorEnvelope{
+		Kind: sessionCursorKind, SessionID: row.ID,
+		LastActivityAt: formatCursorTime(row.LastActivityAt), Direction: direction,
+	})
 }
 
 // sessionPreview prefers an adapter-provided summary and falls back to the

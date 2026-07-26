@@ -3,7 +3,9 @@ package web
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,420 +28,39 @@ const (
 	DefaultAddress     = "127.0.0.1:8080"
 	defaultPageLimit   = 50
 	maximumRequestBody = 8 << 10
-	importHeader       = "X-AgentSession-Request"
 )
 
 //go:embed assets/*
 var embeddedAssets embed.FS
 
-// ImportSubscriptionProvider resolves an application-owned subscription for
-// one HTTP request. It remains public so alternate local presentation shells
-// can reuse the observer-only SSE boundary.
-type ImportSubscriptionProvider func(*http.Request) (*app.ImportSubscription, error)
-
-// NewImportProgressHandler renders a shared import subscription as SSE. A
-// disconnected HTTP client detaches only its observer, never the import job.
-func NewImportProgressHandler(provider ImportSubscriptionProvider) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if provider == nil {
-			writeError(w, http.StatusServiceUnavailable)
-			return
-		}
-		subscription, err := provider(r)
-		if err != nil {
-			writeServiceError(w, err)
-			return
-		}
-		if subscription == nil {
-			writeError(w, http.StatusServiceUnavailable)
-			return
-		}
-		streamImport(w, r, subscription, nil)
-	})
+type handler struct {
+	services app.Services
+	csrf     string
 }
 
-func streamImport(w http.ResponseWriter, r *http.Request, subscription *app.ImportSubscription, shutdown <-chan struct{}) {
-	defer subscription.Close()
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
-
-	for {
-		select {
-		case <-shutdown:
-			return
-		case <-r.Context().Done():
-			return
-		case progress, open := <-subscription.Updates():
-			if !open {
-				return
-			}
-			payload, err := json.Marshal(importProgressJSON(progress))
-			if err != nil {
-				return
-			}
-			event := "progress"
-			if progress.Failure != nil {
-				event = "failure"
-			} else if progress.Complete {
-				event = "completion"
-			}
-			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, payload); err != nil {
-				return
-			}
-			flusher.Flush()
-		}
-	}
-}
-
-type importProgressPayload struct {
-	RunID                    uint64                   `json:"run_id"`
-	SourceID                 model.SourceID           `json:"source"`
-	ActiveSourceID           model.SourceID           `json:"active_source"`
-	Phase                    app.ImportPhase          `json:"phase"`
-	RecordsProcessed         int64                    `json:"records_processed"`
-	EventsProcessed          int64                    `json:"events_processed"`
-	RecordsCommitted         int64                    `json:"records_committed"`
-	BatchesCommitted         int64                    `json:"batches_committed"`
-	DiagnosticsObserved      int64                    `json:"diagnostics_observed"`
-	DiagnosticsOmitted       int64                    `json:"diagnostics_omitted"`
-	RecentDiagnostics        []diagnosticPayload      `json:"recent_diagnostics,omitempty"`
-	ImportedSessions         []importedSessionPayload `json:"imported_sessions,omitempty"`
-	ImportResultsObserved    int64                    `json:"import_results_observed"`
-	UnchangedResultsObserved int64                    `json:"unchanged_results_observed"`
-	ImportResultsOmitted     int64                    `json:"import_results_omitted"`
-	Complete                 bool                     `json:"complete"`
-	Failure                  string                   `json:"failure,omitempty"`
-}
-
-type importedSessionPayload struct {
-	SourceID          model.SourceID  `json:"source"`
-	SessionID         model.SessionID `json:"session"`
-	Change            string          `json:"change"`
-	RecordsCommitted  int64           `json:"records_committed"`
-	BatchesCommitted  int64           `json:"batches_committed"`
-	CanonicalChanged  bool            `json:"canonical_changed"`
-	Reconciled        bool            `json:"reconciled"`
-	ProjectionWarning bool            `json:"projection_warning"`
-}
-
-type diagnosticPayload struct {
-	Code         string              `json:"code"`
-	Severity     model.Severity      `json:"severity"`
-	Message      string              `json:"message"`
-	EventIDs     []model.EventID     `json:"event_ids,omitempty"`
-	RawRecordIDs []model.RawRecordID `json:"raw_record_ids,omitempty"`
-}
-
-func importProgressJSON(progress app.ImportProgress) importProgressPayload {
-	payload := importProgressPayload{
-		RunID: progress.RunID, SourceID: progress.SourceID, ActiveSourceID: progress.ActiveSourceID,
-		Phase: progress.Phase, RecordsProcessed: progress.RecordsProcessed, EventsProcessed: progress.EventsProcessed,
-		RecordsCommitted: progress.RecordsCommitted, BatchesCommitted: progress.BatchesCommitted,
-		DiagnosticsObserved: progress.DiagnosticsObserved, DiagnosticsOmitted: progress.DiagnosticsOmitted,
-		ImportResultsObserved: progress.ImportResultsObserved, UnchangedResultsObserved: progress.UnchangedResultsObserved,
-		ImportResultsOmitted: progress.ImportResultsOmitted, Complete: progress.Complete,
-	}
-	for _, diagnostic := range progress.RecentDiagnostics {
-		payload.RecentDiagnostics = append(payload.RecentDiagnostics, diagnosticPayload{
-			Code: diagnostic.Code, Severity: diagnostic.Severity, Message: diagnostic.Message,
-			EventIDs: diagnostic.EventIDs, RawRecordIDs: diagnostic.RawRecordIDs,
-		})
-	}
-	for _, summary := range progress.ImportedSessions {
-		payload.ImportedSessions = append(payload.ImportedSessions, importedSessionPayload{
-			SourceID: summary.SourceID, SessionID: summary.SessionID, Change: string(summary.Change),
-			RecordsCommitted: summary.RecordsCommitted, BatchesCommitted: summary.BatchesCommitted,
-			CanonicalChanged: summary.CanonicalChanged, Reconciled: summary.Reconciled,
-			ProjectionWarning: summary.ProjectionWarning,
-		})
-	}
-	if progress.Failure != nil {
-		payload.Failure = progress.Failure.Error()
-	}
-	return payload
-}
-
-// NewHandler creates the local web interface over the shared application services.
+// NewHandler creates the local, server-rendered operations console.
 func NewHandler(services app.Services) http.Handler {
-	return newHandler(services, nil)
-}
-
-func newHandler(services app.Services, streamShutdown <-chan struct{}) http.Handler {
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err != nil {
+		panic("web: generate CSRF token: " + err.Error())
+	}
+	h := &handler{services: services, csrf: base64.RawURLEncoding.EncodeToString(token)}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		if !requireNoQuery(w, r) {
-			return
-		}
-		render(w, r, http.StatusOK, indexPage())
-	})
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		if !requireNoQuery(w, r) {
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok\n"))
-	})
-	mux.HandleFunc("GET /fragments/sources", func(w http.ResponseWriter, r *http.Request) {
-		if !requireNoQuery(w, r) {
-			return
-		}
-		if services == nil {
-			writeError(w, http.StatusServiceUnavailable)
-			return
-		}
-		discovery, err := services.DiscoverSources(r.Context())
-		if err != nil {
-			writeServiceError(w, err)
-			return
-		}
-		render(w, r, http.StatusOK, sourcesFragment(discovery))
-	})
-	mux.HandleFunc("GET /fragments/import-status", func(w http.ResponseWriter, r *http.Request) {
-		if !requireNoQuery(w, r) {
-			return
-		}
-		if services == nil {
-			writeError(w, http.StatusServiceUnavailable)
-			return
-		}
-		status, err := services.ImportAllStatus(r.Context())
-		if err != nil {
-			writeServiceError(w, err)
-			return
-		}
-		if !status.Active {
-			w.Header().Set("HX-Trigger", "sessionsRefresh")
-		}
-		render(w, r, http.StatusOK, importStatusFragment(status))
-	})
-	mux.HandleFunc("POST /imports", func(w http.ResponseWriter, r *http.Request) {
-		if services == nil {
-			writeError(w, http.StatusServiceUnavailable)
-			return
-		}
-		if !validImportRequest(w, r) {
-			return
-		}
-		started, err := services.StartImportAll(r.Context())
-		if err != nil {
-			writeServiceError(w, err)
-			return
-		}
-		w.Header().Set("X-AgentSession-Import-Joined", strconv.FormatBool(started.Joined))
-		render(w, r, http.StatusAccepted, importStatusFragment(started.Status))
-	})
-	mux.HandleFunc("GET /fragments/sessions", func(w http.ResponseWriter, r *http.Request) {
-		if services == nil {
-			writeError(w, http.StatusServiceUnavailable)
-			return
-		}
-		values, ok := strictQuery(w, r, "cursor", "limit")
-		if !ok {
-			return
-		}
-		cursor, ok := optionalSingle(w, values, "cursor")
-		if !ok {
-			return
-		}
-		limit, ok := parseLimit(w, values)
-		if !ok {
-			return
-		}
-		page, err := services.ListSessions(r.Context(), app.ListSessionsRequest{Cursor: cursor, Limit: limit})
-		if err != nil {
-			writeServiceError(w, err)
-			return
-		}
-		render(w, r, http.StatusOK, sessionsFragment(page, cursor == ""))
-	})
-	mux.HandleFunc("GET /timeline", func(w http.ResponseWriter, r *http.Request) {
-		if services == nil {
-			writeError(w, http.StatusServiceUnavailable)
-			return
-		}
-		values, ok := strictQuery(w, r, "session", "limit")
-		if !ok {
-			return
-		}
-		session, ok := requiredSingle(w, values, "session")
-		if !ok {
-			return
-		}
-		limit, ok := parseLimit(w, values)
-		if !ok {
-			return
-		}
-		page, err := services.Timeline(r.Context(), app.TimelineRequest{SessionID: model.SessionID(session), Limit: limit})
-		if err != nil {
-			writeServiceError(w, err)
-			return
-		}
-		if page.State == app.EvidenceNotFound {
-			writeError(w, http.StatusNotFound)
-			return
-		}
-		render(w, r, http.StatusOK, timelinePage(model.SessionID(session), page))
-	})
-	mux.HandleFunc("GET /fragments/timeline", func(w http.ResponseWriter, r *http.Request) {
-		if services == nil {
-			writeError(w, http.StatusServiceUnavailable)
-			return
-		}
-		values, ok := strictQuery(w, r, "session", "cursor", "limit")
-		if !ok {
-			return
-		}
-		session, ok := requiredSingle(w, values, "session")
-		if !ok {
-			return
-		}
-		cursor, ok := requiredSingle(w, values, "cursor")
-		if !ok {
-			return
-		}
-		limit, ok := parseLimit(w, values)
-		if !ok {
-			return
-		}
-		page, err := services.Timeline(r.Context(), app.TimelineRequest{SessionID: model.SessionID(session), Cursor: cursor, Limit: limit})
-		if err != nil {
-			writeServiceError(w, err)
-			return
-		}
-		if page.State == app.EvidenceNotFound {
-			writeError(w, http.StatusNotFound)
-			return
-		}
-		render(w, r, http.StatusOK, timelineFragment(model.SessionID(session), page))
-	})
-	mux.HandleFunc("GET /fragments/event", func(w http.ResponseWriter, r *http.Request) {
-		if services == nil {
-			writeError(w, http.StatusServiceUnavailable)
-			return
-		}
-		values, ok := strictQuery(w, r, "session", "event")
-		if !ok {
-			return
-		}
-		session, ok := requiredSingle(w, values, "session")
-		if !ok {
-			return
-		}
-		event, ok := requiredSingle(w, values, "event")
-		if !ok {
-			return
-		}
-		detail, err := services.EventDetail(r.Context(), app.EventDetailRequest{
-			SessionID: model.SessionID(session), EventID: model.EventID(event), IncludePayload: true,
-		})
-		if err != nil {
-			writeServiceError(w, err)
-			return
-		}
-		if detail.State == app.EvidenceNotFound {
-			writeError(w, http.StatusNotFound)
-			return
-		}
-		payload := ""
-		if detail.Payload != nil {
-			payload, err = normalizedPayload(detail.Payload)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError)
-				return
-			}
-		}
-		render(w, r, http.StatusOK, eventFragment(detail, payload))
-	})
-	// Projection fragments are observations only. Conditional polling is
-	// encoded by the fragment and stops when work is no longer active/running.
-	mux.HandleFunc("GET /fragments/projections", func(w http.ResponseWriter, r *http.Request) {
-		if services == nil {
-			writeError(w, http.StatusServiceUnavailable)
-			return
-		}
-		values, ok := strictQuery(w, r, "session")
-		if !ok {
-			return
-		}
-		session, ok := requiredSingle(w, values, "session")
-		if !ok {
-			return
-		}
-		status, err := services.ProjectionStatus(r.Context(), model.SessionID(session))
-		if err != nil {
-			writeServiceError(w, err)
-			return
-		}
-		if status.State == app.EvidenceNotFound {
-			writeError(w, http.StatusNotFound)
-			return
-		}
-		render(w, r, http.StatusOK, projectionStatusFragment(status))
-	})
-	// Action handlers return the admitted snapshot immediately; the runtime,
-	// rather than this request, owns the operation that follows.
-	mux.HandleFunc("POST /projections/retry", func(w http.ResponseWriter, r *http.Request) {
-		if services == nil {
-			writeError(w, http.StatusServiceUnavailable)
-			return
-		}
-		values, ok := validProjectionRequest(w, r, "session")
-		if !ok {
-			return
-		}
-		session, ok := requiredSingle(w, values, "session")
-		if !ok {
-			return
-		}
-		action, err := services.RetryProjections(r.Context(), model.SessionID(session))
-		if err != nil {
-			writeServiceError(w, err)
-			return
-		}
-		if action.State == app.EvidenceNotFound {
-			writeError(w, http.StatusNotFound)
-			return
-		}
-		w.Header().Set("X-AgentSession-Projection-Joined", strconv.FormatBool(action.Joined))
-		render(w, r, http.StatusAccepted, projectionStatusFragment(action.Status))
-	})
-	mux.HandleFunc("POST /projections/rebuild", func(w http.ResponseWriter, r *http.Request) {
-		if services == nil {
-			writeError(w, http.StatusServiceUnavailable)
-			return
-		}
-		values, ok := validProjectionRequest(w, r, "session", "kind")
-		if !ok {
-			return
-		}
-		session, sessionOK := requiredSingle(w, values, "session")
-		kind, kindOK := requiredSingle(w, values, "kind")
-		if !sessionOK || !kindOK {
-			return
-		}
-		action, err := services.RebuildProjections(r.Context(), model.SessionID(session), kind)
-		if err != nil {
-			writeServiceError(w, err)
-			return
-		}
-		if action.State == app.EvidenceNotFound {
-			writeError(w, http.StatusNotFound)
-			return
-		}
-		w.Header().Set("X-AgentSession-Projection-Joined", strconv.FormatBool(action.Joined))
-		render(w, r, http.StatusAccepted, projectionStatusFragment(action.Status))
-	})
+	mux.HandleFunc("GET /", h.dashboard)
+	mux.HandleFunc("GET /healthz", h.health)
+	mux.HandleFunc("GET /indexing", h.indexing)
+	mux.HandleFunc("POST /indexing/rescan", h.rescan)
+	mux.HandleFunc("GET /fragments/index-status", h.indexStatusFragment)
+	mux.HandleFunc("GET /fragments/index-strip", h.indexStripFragment)
+	mux.HandleFunc("GET /events/{event}", h.eventRedirect)
+	mux.HandleFunc("GET /sessions/{session}", h.timeline)
+	mux.HandleFunc("GET /sessions/{session}/fragments/events", h.timelineFragment)
+	mux.HandleFunc("GET /sessions/{session}/fragments/event/{event}", h.eventFragment)
+	mux.HandleFunc("GET /sessions/{session}/fragments/projections", h.projectionFragment)
+	mux.HandleFunc("POST /sessions/{session}/projections/retry", h.retryProjections)
+	mux.HandleFunc("POST /sessions/{session}/projections/rebuild", h.rebuildProjection)
+	mux.HandleFunc("GET /sessions/{session}/projections/rebuild-all", h.confirmRebuildAll)
+	mux.HandleFunc("POST /sessions/{session}/projections/rebuild-all", h.rebuildAll)
 
 	assets, err := fs.Sub(embeddedAssets, "assets")
 	if err != nil {
@@ -449,7 +70,458 @@ func newHandler(services app.Services, streamShutdown <-chan struct{}) http.Hand
 	return securityHeaders(mux)
 }
 
+func (h *handler) available(w http.ResponseWriter) bool {
+	if h.services == nil {
+		writeError(w, http.StatusServiceUnavailable)
+		return false
+	}
+	return true
+}
+
+func (h *handler) dashboard(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" || !h.available(w) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+		}
+		return
+	}
+	values, ok := strictQuery(w, r, "cursor", "limit", "notice")
+	if !ok {
+		return
+	}
+	cursor, ok := optionalSingle(w, values, "cursor")
+	if !ok {
+		return
+	}
+	limit, ok := parseLimit(w, values)
+	if !ok {
+		return
+	}
+	notice, ok := parseNotice(w, values)
+	if !ok {
+		return
+	}
+	vm := dashboardView{CSRF: h.csrf, Notice: notice}
+	vm.Import, vm.ImportErr = h.services.ImportAllStatus(r.Context())
+	vm.Overview, vm.OverviewErr = h.services.LibraryOverview(r.Context())
+	vm.Sessions, vm.SessionsErr = h.services.ListSessions(r.Context(), app.ListSessionsRequest{Cursor: cursor, Limit: limit})
+	if serviceRequestError(w, vm.SessionsErr) {
+		return
+	}
+	render(w, r, http.StatusOK, dashboardPage(vm))
+}
+
+func (h *handler) health(w http.ResponseWriter, r *http.Request) {
+	if !requireNoQuery(w, r) {
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte("ok\n"))
+}
+
+func (h *handler) indexing(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w) {
+		return
+	}
+	values, ok := strictQuery(w, r, "notice")
+	if !ok {
+		return
+	}
+	notice, ok := parseNotice(w, values)
+	if !ok {
+		return
+	}
+	status, err := h.services.ImportAllStatus(r.Context())
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	render(w, r, http.StatusOK, indexingPage(indexingView{
+		CSRF: h.csrf, Notice: notice, Status: status, DiagnosticRefs: h.resolveImportDiagnostics(r.Context(), status.RecentDiagnostics),
+	}))
+}
+
+func (h *handler) rescan(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w) {
+		return
+	}
+	if _, ok := h.validMutation(w, r); !ok {
+		return
+	}
+	started, err := h.services.StartImportAll(r.Context())
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if isHTMX(r) {
+		w.Header().Set("HX-Push-Url", "/indexing?notice=rescan-started")
+		render(w, r, http.StatusOK, indexStatus(started.Status, h.csrf, h.resolveImportDiagnostics(r.Context(), started.Status.RecentDiagnostics)))
+		return
+	}
+	redirectSeeOther(w, r, "/indexing?notice=rescan-started")
+}
+
+func (h *handler) indexStatusFragment(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w) || !requireNoQuery(w, r) {
+		return
+	}
+	status, err := h.services.ImportAllStatus(r.Context())
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if !status.Active {
+		w.Header().Set("HX-Refresh", "true")
+	}
+	render(w, r, http.StatusOK, indexStatus(status, h.csrf, h.resolveImportDiagnostics(r.Context(), status.RecentDiagnostics)))
+}
+
+func (h *handler) indexStripFragment(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w) || !requireNoQuery(w, r) {
+		return
+	}
+	status, err := h.services.ImportAllStatus(r.Context())
+	if err != nil {
+		render(w, r, http.StatusOK, indexStrip(app.ImportAllStatus{}, err))
+		return
+	}
+	if !status.Active {
+		w.Header().Set("HX-Refresh", "true")
+	}
+	render(w, r, http.StatusOK, indexStrip(status, nil))
+}
+
+func (h *handler) timeline(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w) {
+		return
+	}
+	values, ok := strictQuery(w, r, "cursor", "limit", "event", "notice")
+	if !ok {
+		return
+	}
+	cursor, ok := optionalSingle(w, values, "cursor")
+	if !ok {
+		return
+	}
+	event, ok := optionalSingle(w, values, "event")
+	if !ok {
+		return
+	}
+	notice, ok := parseNotice(w, values)
+	if !ok {
+		return
+	}
+	limit, ok := parseLimit(w, values)
+	if !ok {
+		return
+	}
+	sessionID := model.SessionID(r.PathValue("session"))
+	page, err := h.services.Timeline(r.Context(), app.TimelineRequest{
+		SessionID: sessionID, Cursor: cursor, Limit: limit, FocusedEvent: model.EventID(event),
+	})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if page.State == app.EvidenceNotFound {
+		writeError(w, http.StatusNotFound)
+		return
+	}
+	projections, projectionErr := h.services.ProjectionStatus(r.Context(), sessionID)
+	var focused app.EventDetail
+	var payload string
+	if event != "" {
+		focused, err = h.services.EventDetail(r.Context(), app.EventDetailRequest{
+			SessionID: sessionID, EventID: model.EventID(event), IncludePayload: true,
+		})
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if focused.State == app.EvidenceNotFound {
+			writeError(w, http.StatusNotFound)
+			return
+		}
+		payload, err = normalizedPayload(focused.Payload)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError)
+			return
+		}
+	}
+	diagnostics := append([]model.Diagnostic(nil), page.Diagnostics.Diagnostics...)
+	diagnostics = append(diagnostics, focused.Diagnostics.Diagnostics...)
+	refs := h.resolveDiagnostics(r.Context(), sessionID, diagnostics)
+	render(w, r, http.StatusOK, timelinePage(timelineView{
+		CSRF: h.csrf, Notice: notice, SessionID: sessionID, Page: page,
+		Projection: projections, ProjectionErr: projectionErr, Focused: focused,
+		FocusedPayload: payload, DiagnosticRefs: refs,
+	}))
+}
+
+func (h *handler) timelineFragment(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w) {
+		return
+	}
+	values, ok := strictQuery(w, r, "cursor", "limit")
+	if !ok {
+		return
+	}
+	cursor, ok := requiredSingle(w, values, "cursor")
+	if !ok {
+		return
+	}
+	limit, ok := parseLimit(w, values)
+	if !ok {
+		return
+	}
+	sessionID := model.SessionID(r.PathValue("session"))
+	page, err := h.services.Timeline(r.Context(), app.TimelineRequest{SessionID: sessionID, Cursor: cursor, Limit: limit})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if page.State == app.EvidenceNotFound {
+		writeError(w, http.StatusNotFound)
+		return
+	}
+	render(w, r, http.StatusOK, eventRows(sessionID, page, app.EventDetail{}, "", nil))
+}
+
+func (h *handler) eventRedirect(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w) || !requireNoQuery(w, r) {
+		return
+	}
+	eventID := model.EventID(r.PathValue("event"))
+	locations, err := h.services.EventLocations(r.Context(), []model.EventID{eventID})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	location, found := locations[eventID]
+	if !found {
+		writeError(w, http.StatusNotFound)
+		return
+	}
+	redirectSeeOther(w, r, focusedTimelineURL(location.SessionID, eventID))
+}
+
+func (h *handler) eventFragment(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w) || !requireNoQuery(w, r) {
+		return
+	}
+	sessionID := model.SessionID(r.PathValue("session"))
+	eventID := model.EventID(r.PathValue("event"))
+	detail, err := h.services.EventDetail(r.Context(), app.EventDetailRequest{
+		SessionID: sessionID, EventID: eventID, IncludePayload: true,
+	})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if detail.State == app.EvidenceNotFound {
+		writeError(w, http.StatusNotFound)
+		return
+	}
+	payload, err := normalizedPayload(detail.Payload)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError)
+		return
+	}
+	render(w, r, http.StatusOK, eventDetail(detail, payload, h.resolveDiagnostics(r.Context(), sessionID, detail.Diagnostics.Diagnostics)))
+}
+
+func (h *handler) projectionFragment(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w) || !requireNoQuery(w, r) {
+		return
+	}
+	sessionID := model.SessionID(r.PathValue("session"))
+	status, err := h.services.ProjectionStatus(r.Context(), sessionID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if status.State == app.EvidenceNotFound {
+		writeError(w, http.StatusNotFound)
+		return
+	}
+	render(w, r, http.StatusOK, projectionStatus(status, h.csrf, ""))
+}
+
+func (h *handler) retryProjections(w http.ResponseWriter, r *http.Request) {
+	h.projectionMutation(w, r, "", func(ctx context.Context, session model.SessionID, _ string) (app.ProjectionAction, error) {
+		return h.services.RetryProjections(ctx, session)
+	})
+}
+
+func (h *handler) rebuildProjection(w http.ResponseWriter, r *http.Request) {
+	h.projectionMutation(w, r, "kind", func(ctx context.Context, session model.SessionID, kind string) (app.ProjectionAction, error) {
+		if kind == app.ProjectionKindAll {
+			return app.ProjectionAction{}, app.ErrInvalidRequest
+		}
+		return h.services.RebuildProjections(ctx, session, kind)
+	})
+}
+
+func (h *handler) projectionMutation(w http.ResponseWriter, r *http.Request, field string, action func(context.Context, model.SessionID, string) (app.ProjectionAction, error)) {
+	if !h.available(w) {
+		return
+	}
+	fields := []string{}
+	if field != "" {
+		fields = append(fields, field)
+	}
+	values, ok := h.validMutation(w, r, fields...)
+	if !ok {
+		return
+	}
+	value := ""
+	if field != "" {
+		value = values.Get(field)
+	}
+	sessionID := model.SessionID(r.PathValue("session"))
+	result, err := action(r.Context(), sessionID, value)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if result.State == app.EvidenceNotFound {
+		writeError(w, http.StatusNotFound)
+		return
+	}
+	if isHTMX(r) {
+		render(w, r, http.StatusOK, projectionStatus(result.Status, h.csrf, "Projection work started."))
+		return
+	}
+	redirectSeeOther(w, r, timelineNoticeURL(sessionID, "projection-started"))
+}
+
+func (h *handler) confirmRebuildAll(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w) || !requireNoQuery(w, r) {
+		return
+	}
+	sessionID := model.SessionID(r.PathValue("session"))
+	status, err := h.services.ProjectionStatus(r.Context(), sessionID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if status.State == app.EvidenceNotFound {
+		writeError(w, http.StatusNotFound)
+		return
+	}
+	if !allBuildersAvailable(status) {
+		writeError(w, http.StatusConflict)
+		return
+	}
+	render(w, r, http.StatusOK, rebuildAllPage(sessionID, status, h.csrf))
+}
+
+func (h *handler) rebuildAll(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w) {
+		return
+	}
+	if _, ok := h.validMutation(w, r); !ok {
+		return
+	}
+	sessionID := model.SessionID(r.PathValue("session"))
+	status, err := h.services.ProjectionStatus(r.Context(), sessionID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if status.State == app.EvidenceNotFound {
+		writeError(w, http.StatusNotFound)
+		return
+	}
+	if !allBuildersAvailable(status) {
+		writeError(w, http.StatusConflict)
+		return
+	}
+	result, err := h.services.RebuildProjections(r.Context(), sessionID, app.ProjectionKindAll)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if isHTMX(r) {
+		render(w, r, http.StatusOK, projectionStatus(result.Status, h.csrf, "All projections scheduled for rebuild."))
+		return
+	}
+	redirectSeeOther(w, r, timelineNoticeURL(sessionID, "rebuild-all-started"))
+}
+
+func (h *handler) resolveDiagnostics(ctx context.Context, expected model.SessionID, diagnostics []model.Diagnostic) map[model.EventID]eventReference {
+	ids := make([]model.EventID, 0)
+	seen := make(map[model.EventID]struct{})
+	for _, diagnostic := range diagnostics {
+		for _, id := range diagnostic.EventIDs {
+			if _, exists := seen[id]; !exists && len(ids) < app.MaximumPageSize {
+				seen[id] = struct{}{}
+				ids = append(ids, id)
+			}
+		}
+	}
+	result := make(map[model.EventID]eventReference, len(ids))
+	locations, err := h.services.EventLocations(ctx, ids)
+	if err != nil {
+		return result
+	}
+	for _, id := range ids {
+		location, found := locations[id]
+		result[id] = eventReference{Found: found, MatchesSession: found && (expected == "" || location.SessionID == expected), SessionID: location.SessionID}
+	}
+	return result
+}
+
+func (h *handler) resolveImportDiagnostics(ctx context.Context, diagnostics []app.ImportAllDiagnostic) map[model.EventID]eventReference {
+	normalized := make([]model.Diagnostic, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		normalized = append(normalized, model.Diagnostic{EventIDs: diagnostic.EventIDs})
+	}
+	return h.resolveDiagnostics(ctx, "", normalized)
+}
+
+func (h *handler) validMutation(w http.ResponseWriter, r *http.Request, fields ...string) (url.Values, bool) {
+	if r.URL.RawQuery != "" || !sameOrigin(r) {
+		writeError(w, http.StatusBadRequest)
+		return nil, false
+	}
+	mediaType, parameters, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/x-www-form-urlencoded" || len(parameters) != 0 {
+		writeError(w, http.StatusBadRequest)
+		return nil, false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maximumRequestBody)
+	if err := r.ParseForm(); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge)
+		} else {
+			writeError(w, http.StatusBadRequest)
+		}
+		return nil, false
+	}
+	allowed := make(map[string]struct{}, len(fields)+1)
+	allowed["csrf"] = struct{}{}
+	for _, field := range fields {
+		allowed[field] = struct{}{}
+	}
+	for key, values := range r.PostForm {
+		if _, exists := allowed[key]; !exists || len(values) != 1 || values[0] == "" {
+			writeError(w, http.StatusBadRequest)
+			return nil, false
+		}
+	}
+	if len(r.PostForm) != len(allowed) || r.PostForm.Get("csrf") != h.csrf {
+		writeError(w, http.StatusBadRequest)
+		return nil, false
+	}
+	return r.PostForm, true
+}
+
 func normalizedPayload(payload model.NormalizedData) (string, error) {
+	if payload == nil {
+		return "", nil
+	}
 	var output bytes.Buffer
 	encoder := json.NewEncoder(&output)
 	encoder.SetEscapeHTML(false)
@@ -532,56 +604,32 @@ func parseLimit(w http.ResponseWriter, values url.Values) (int, bool) {
 	return limit, true
 }
 
-func validImportRequest(w http.ResponseWriter, r *http.Request) bool {
-	_, ok := validFormRequest(w, r, "import")
-	return ok
+var notices = map[string]string{
+	"rescan-started":      "Rescan started. Indexing continues if you leave this page.",
+	"projection-started":  "Projection work started.",
+	"rebuild-all-started": "All available projections were scheduled for rebuild.",
 }
 
-// validProjectionRequest is the shared strict form boundary for mutating
-// projection endpoints. It rejects unknown, missing, empty, and duplicate
-// fields before application work can be admitted.
-func validProjectionRequest(w http.ResponseWriter, r *http.Request, fields ...string) (url.Values, bool) {
-	return validFormRequest(w, r, "projection", fields...)
-}
-
-func validFormRequest(w http.ResponseWriter, r *http.Request, requestType string, fields ...string) (url.Values, bool) {
-	if r.URL.RawQuery != "" || r.Header.Get(importHeader) != requestType || !sameOrigin(r) {
+func parseNotice(w http.ResponseWriter, values url.Values) (string, bool) {
+	code, ok := optionalSingle(w, values, "notice")
+	if !ok {
+		return "", false
+	}
+	if code == "" {
+		return "", true
+	}
+	message, exists := notices[code]
+	if !exists {
 		writeError(w, http.StatusBadRequest)
-		return nil, false
+		return "", false
 	}
-	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || mediaType != "application/x-www-form-urlencoded" {
-		writeError(w, http.StatusBadRequest)
-		return nil, false
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maximumRequestBody)
-	if err := r.ParseForm(); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			writeError(w, http.StatusRequestEntityTooLarge)
-		} else {
-			writeError(w, http.StatusBadRequest)
-		}
-		return nil, false
-	}
-	allowed := make(map[string]struct{}, len(fields))
-	for _, field := range fields {
-		allowed[field] = struct{}{}
-	}
-	for key, values := range r.PostForm {
-		if _, ok := allowed[key]; !ok || len(values) != 1 || values[0] == "" {
-			writeError(w, http.StatusBadRequest)
-			return nil, false
-		}
-	}
-	if len(r.PostForm) != len(allowed) {
-		writeError(w, http.StatusBadRequest)
-		return nil, false
-	}
-	return r.PostForm, true
+	return message, true
 }
 
 func sameOrigin(r *http.Request) bool {
+	if r.Host == "" {
+		return false
+	}
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return true
@@ -591,7 +639,19 @@ func sameOrigin(r *http.Request) bool {
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	return err == nil && parsed.Scheme == scheme && parsed.Host == r.Host && parsed.Path == "" && parsed.RawQuery == ""
+	return err == nil && parsed.Scheme == scheme && parsed.Host == r.Host &&
+		parsed.Path == "" && parsed.RawQuery == "" && parsed.Fragment == ""
+}
+
+func serviceRequestError(w http.ResponseWriter, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, app.ErrInvalidRequest) {
+		writeError(w, http.StatusBadRequest)
+		return true
+	}
+	return false
 }
 
 func writeServiceError(w http.ResponseWriter, err error) {
@@ -615,6 +675,16 @@ func writeError(w http.ResponseWriter, status int) {
 	http.Error(w, message, status)
 }
 
+func redirectSeeOther(w http.ResponseWriter, r *http.Request, target string) {
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+func isHTMX(r *http.Request) bool { return r.Header.Get("HX-Request") == "true" }
+
+func allBuildersAvailable(status app.ProjectionStatus) bool {
+	return len(status.Projections) > 0 && status.Summary.Unimplemented == 0
+}
+
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
@@ -630,18 +700,15 @@ func Serve(ctx context.Context, addr string, services app.Services) error {
 	if services == nil {
 		return errors.New("web: application services are required")
 	}
-	streamShutdown := make(chan struct{})
 	server := &http.Server{
-		Addr: addr, Handler: newHandler(services, streamShutdown), ReadHeaderTimeout: 5 * time.Second,
+		Addr: addr, Handler: NewHandler(services), ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
 	}
 	if _, err := services.StartImportAll(context.Background()); err != nil {
 		return fmt.Errorf("web: start automatic import: %w", err)
 	}
-
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.ListenAndServe() }()
-
 	select {
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
@@ -649,9 +716,6 @@ func Serve(ctx context.Context, addr string, services app.Services) error {
 		}
 		return err
 	case <-ctx.Done():
-		// Shutdown waits for active handlers, so detach long-lived SSE observers
-		// first. Closing a subscription does not cancel application-owned work.
-		close(streamShutdown)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {

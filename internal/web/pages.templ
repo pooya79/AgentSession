@@ -5,7 +5,6 @@ import (
 	"github.com/pooya79/AgentSession/internal/model"
 )
 
-// sourceText is the mandatory escaped-text boundary for untrusted web content.
 templ sourceText(content string) {
 	{ content }
 }
@@ -16,79 +15,207 @@ templ document(title string) {
 		<head>
 			<meta charset="utf-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<meta name="color-scheme" content="light dark"/>
 			<meta name="htmx-config" content="{&quot;includeIndicatorStyles&quot;:false}"/>
 			<title>{ title }</title>
 			<link rel="stylesheet" href="/assets/styles.css"/>
 			<script src="/assets/htmx.min.js" defer></script>
 		</head>
 		<body>
+			<a class="skip-link" href="#main">Skip to content</a>
+			<header class="site-header">
+				<a class="brand" href="/">AgentSession <span>Operations console</span></a>
+				<nav aria-label="Primary">
+					<a href="/">Sessions</a>
+					<a href="/indexing">Indexing</a>
+				</nav>
+				<span class="privacy-mark">Local · offline · read-only</span>
+			</header>
 			{ children... }
 		</body>
 	</html>
 }
 
-templ indexPage() {
-	@document("AgentSession") {
-		<header class="site-header">
-			<a class="brand" href="/">AgentSession <span>Evidence inspector</span></a>
-			<span class="privacy-mark">Local · offline · read-only</span>
-		</header>
-		<main>
-			<section class="hero compact">
-				<p class="eyebrow">Local evidence workspace</p>
-				<h1>Inspect the record, not the claim.</h1>
-				<p class="lede">AgentSession indexes supported agent histories automatically and preserves incomplete or contradictory evidence for review.</p>
+templ notice(message string) {
+	if message != "" {
+		<p class="notice success" role="status">{ message }</p>
+	}
+}
+
+templ dashboardPage(view dashboardView) {
+	@document("Sessions · AgentSession") {
+		<main id="main">
+			<nav class="breadcrumbs" aria-label="Breadcrumb"><span aria-current="page">Sessions</span></nav>
+			@indexStrip(view.Import, view.ImportErr)
+			<header class="page-heading">
+				<div>
+					<p class="eyebrow">Canonical evidence library</p>
+					<h1>Sessions</h1>
+				</div>
+				<a class="button secondary" href="/indexing">Indexing details</a>
+			</header>
+			@notice(view.Notice)
+			<section aria-labelledby="metrics-title">
+				<h2 id="metrics-title" class="visually-hidden">Exact library metrics</h2>
+				if view.OverviewErr != nil {
+					<p class="notice warning" role="status">Exact library metrics are temporarily unavailable. Indexed sessions remain usable below.</p>
+				} else {
+					<div class="metric-grid">
+						<div><strong>{ strconvFormatInt(view.Overview.Sessions) }</strong><span>Sessions</span></div>
+						<div><strong>{ strconvFormatInt(view.Overview.Events) }</strong><span>Events</span></div>
+						<div><strong>{ strconvFormatInt(view.Overview.Agents) }</strong><span>Agents</span></div>
+						<div><strong>{ strconvFormatInt(view.Overview.IssueSessions) }</strong><span>Evidence issues</span></div>
+					</div>
+				}
 			</section>
-			<div class="dashboard">
-				<section class="index-panel" aria-labelledby="index-title">
-					<div class="section-heading">
-						<div>
-							<p class="eyebrow">Index lifecycle</p>
-							<h2 id="index-title">All supported sources</h2>
-						</div>
+			<section aria-labelledby="session-list-title">
+				<div class="section-heading">
+					<div>
+						<h2 id="session-list-title">Recent sessions</h2>
+						<p class="muted">Ordered by canonical last activity; unknown activity appears last.</p>
 					</div>
-					<div id="import-status" hx-get="/fragments/import-status" hx-trigger="load" hx-swap="innerHTML">
-						<p class="notice" role="status">Reading indexing status…</p>
-					</div>
-				</section>
-				<section aria-labelledby="sessions-title">
-					<div class="section-heading">
-						<h2 id="sessions-title">Imported sessions</h2>
-						<button class="quiet" type="button" hx-get="/fragments/sessions" hx-target="#sessions-panel" hx-swap="innerHTML">Refresh</button>
-					</div>
-					<div id="sessions-panel" hx-get="/fragments/sessions" hx-trigger="load, sessionsRefresh from:body" hx-swap="innerHTML">
-						<p class="muted" role="status">Loading imported sessions…</p>
-					</div>
-				</section>
+				</div>
+				if view.SessionsErr != nil {
+					<p class="notice warning" role="alert">Sessions are temporarily unavailable.</p>
+				} else {
+					@sessionsTable(view.Sessions)
+				}
+			</section>
+			@dashboardIndexSummary(view.Import, view.ImportErr)
+		</main>
+	}
+}
+
+templ indexStrip(status app.ImportAllStatus, statusErr error) {
+	<section class="index-strip" aria-label="Canonical index status" aria-live="polite">
+		if statusErr != nil {
+			<span class="status-dot unavailable" aria-hidden="true"></span>
+			<strong>Index status unavailable</strong>
+			<span>Already indexed sessions remain readable.</span>
+		} else {
+			<span class={ "status-dot phase-" + string(status.Phase) } aria-hidden="true"></span>
+			if status.Active {
+				<strong>Indexing canonical evidence</strong>
+				<span>{ strconvFormatInt(status.SourcesCompleted) }/{ strconvFormatInt(status.SourcesDiscovered) } sources · { formatCount(status.EventsProcessed, "event") }</span>
+			} else if status.Phase == app.ImportAllUpToDate {
+				<strong>Canonical index up to date</strong>
+				<span>{ formatCount(status.SourcesDiscovered, "source") } in the latest scan</span>
+			} else if status.Phase == app.ImportAllIssues {
+				<strong>Index completed with issues</strong>
+				<span>{ formatCount(status.DiagnosticsTotal, "diagnostic") }; usable evidence is preserved</span>
+			} else {
+				<strong>Index unavailable</strong>
+				<span>Review the detailed indexing view.</span>
+			}
+			if status.Active {
+				<span class="poller" hx-get="/fragments/index-strip" hx-trigger="load delay:1s" hx-target="closest .index-strip" hx-swap="outerHTML"></span>
+			}
+		}
+		<a href="/indexing">View indexing</a>
+	</section>
+}
+
+templ sessionsTable(page app.SessionPage) {
+	if len(page.Sessions) == 0 {
+		<p class="empty-state" role="status">No indexed sessions are available yet.</p>
+	} else {
+		<div class="session-table" role="table" aria-label="Indexed sessions">
+			<div class="session-row session-header" role="row">
+				<span role="columnheader">Activity</span>
+				<span role="columnheader">Agent</span>
+				<span role="columnheader">Session</span>
+				<span role="columnheader">Events</span>
+				<span role="columnheader">Evidence</span>
+			</div>
+			for _, session := range page.Sessions {
+				<article class="session-row" role="row">
+					<span role="cell" data-label="Activity">{ formatTime(session.LastActivityAt) }</span>
+					<span role="cell" data-label="Agent" class="agent">{ session.AgentName }</span>
+					<span role="cell" data-label="Session" class="session-copy">
+						<a href={ templ.URL(sessionURL(session.ID)) }>{ sessionTitle(session) }</a>
+						if session.Preview != "" {
+							<small>{ session.Preview }</small>
+						}
+						<details class="projection-summary">
+							<summary>Derived data</summary>
+							<span>{ strconvFormatInt(session.Projections.Usable) } usable · { strconvFormatInt(session.Projections.Pending) } pending · { strconvFormatInt(session.Projections.Running) } running · { strconvFormatInt(session.Projections.Failed) } failed · { strconvFormatInt(session.Projections.Stale) } stale · { strconvFormatInt(session.Projections.Unimplemented) } unavailable</span>
+						</details>
+					</span>
+					<span role="cell" data-label="Events">{ strconvFormatInt(session.EventCount) }</span>
+					<span role="cell" data-label="Evidence">
+						<span class={ "badge state-" + string(session.State) }>{ string(session.State) }</span>
+						if session.Diagnostics.Total > 0 {
+							<small>{ formatCount(session.Diagnostics.Total, "diagnostic") }</small>
+						}
+					</span>
+				</article>
+			}
+		</div>
+		<nav class="pagination" aria-label="Session pages">
+			if page.PreviousCursor != "" {
+				<a class="button secondary" rel="prev" href={ templ.URL(sessionPageURL(page.PreviousCursor)) }>Previous</a>
+			}
+			if page.NextCursor != "" {
+				<a class="button secondary" rel="next" href={ templ.URL(sessionPageURL(page.NextCursor)) }>Next</a>
+			}
+		</nav>
+	}
+}
+
+templ dashboardIndexSummary(status app.ImportAllStatus, statusErr error) {
+	<section class="compact-panel" aria-labelledby="index-summary-title">
+		<div>
+			<h2 id="index-summary-title">Latest source scan</h2>
+			if statusErr != nil {
+				<p class="muted">Status unavailable.</p>
+			} else {
+				<p class="muted">{ formatCount(status.SourcesDiscovered, "source") } · { formatCount(status.SourcesFailed, "failure") } · { formatCount(status.DiagnosticsTotal, "diagnostic") }</p>
+			}
+		</div>
+		<a href="/indexing">Inspect sources and diagnostics</a>
+	</section>
+}
+
+templ indexingPage(view indexingView) {
+	@document("Indexing · AgentSession") {
+		<main id="main">
+			<nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Sessions</a><span aria-hidden="true">/</span><span aria-current="page">Indexing</span></nav>
+			<header class="page-heading">
+				<div>
+					<p class="eyebrow">Discovery and import</p>
+					<h1>Canonical indexing</h1>
+					<p class="muted">The latest application-owned scan. Opening this page does not start discovery.</p>
+				</div>
+			</header>
+			@notice(view.Notice)
+			<div id="index-status">
+				@indexStatus(view.Status, view.CSRF, view.DiagnosticRefs)
 			</div>
 		</main>
 	}
 }
 
-templ importStatusFragment(status app.ImportAllStatus) {
-	<div class={ "import-overview phase-" + string(status.Phase) } aria-live="polite">
-		<div class="status-line">
-			<span class="status-dot" aria-hidden="true"></span>
+templ indexStatus(status app.ImportAllStatus, csrf string, refs map[model.EventID]eventReference) {
+	<section class={ "index-console phase-" + string(status.Phase) } aria-labelledby="index-state-title" aria-live="polite">
+		<div class="section-heading">
 			<div>
-				if status.Active {
-					<strong>Indexing local evidence</strong>
-					<p>Processing { formatCount(status.SourcesDiscovered, "source") }. This continues if you leave the page.</p>
-				} else if status.Phase == app.ImportAllUpToDate {
-					<strong>Index is up to date</strong>
-					if status.SourcesDiscovered == 0 {
-						<p>No supported sources were found. Configure a source path or install a supported agent, then rescan.</p>
+				<h2 id="index-state-title">
+					if status.Active {
+						Indexing in progress
+					} else if status.Phase == app.ImportAllUpToDate {
+						Index up to date
+					} else if status.Phase == app.ImportAllIssues {
+						Completed with issues
 					} else {
-						<p>The latest scan completed without failures or diagnostics.</p>
+						Index unavailable
 					}
-				} else if status.Phase == app.ImportAllIssues {
-					<strong>Indexing completed with issues</strong>
-					<p>Available evidence was retained. Review failures and diagnostics before drawing conclusions.</p>
-				} else {
-					<strong>Indexing unavailable</strong>
-					<p>{ status.Failure }</p>
+				</h2>
+				if status.Failure != "" {
+					<p class="notice warning">The scan failed. Previously indexed evidence remains available.</p>
 				}
 			</div>
-			<form method="post" action="/imports" hx-post="/imports" hx-target="#import-status" hx-swap="innerHTML" hx-headers={ `{"X-AgentSession-Request":"import"}` }>
+			<form method="post" action="/indexing/rescan" hx-post="/indexing/rescan" hx-target="#index-status" hx-swap="innerHTML">
+				<input type="hidden" name="csrf" value={ csrf }/>
 				<button type="submit" disabled?={ status.Active }>
 					if status.Active {
 						Scanning…
@@ -98,254 +225,135 @@ templ importStatusFragment(status app.ImportAllStatus) {
 				</button>
 			</form>
 		</div>
-		<div class="stat-grid" aria-label="Index statistics">
-			<div><strong>{ strconvFormatInt(status.SourcesCompleted) }/{ strconvFormatInt(status.SourcesDiscovered) }</strong><span>sources complete</span></div>
-			<div><strong>{ strconvFormatInt(status.RecordsProcessed) }</strong><span>records inspected</span></div>
-			<div><strong>{ strconvFormatInt(status.EventsProcessed) }</strong><span>events normalized</span></div>
-			<div><strong>{ strconvFormatInt(status.SessionsObserved) }</strong><span>sessions observed</span></div>
-			<div><strong>{ strconvFormatInt(status.UnchangedSessions) }</strong><span>unchanged</span></div>
-			<div><strong>{ strconvFormatInt(status.DiagnosticsTotal) }</strong><span>diagnostics</span></div>
+		<div class="metric-grid six" aria-label="Index totals">
+			<div><strong>{ strconvFormatInt(status.SourcesCompleted) }/{ strconvFormatInt(status.SourcesDiscovered) }</strong><span>Sources complete</span></div>
+			<div><strong>{ strconvFormatInt(status.RecordsProcessed) }</strong><span>Records</span></div>
+			<div><strong>{ strconvFormatInt(status.EventsProcessed) }</strong><span>Events</span></div>
+			<div><strong>{ strconvFormatInt(status.SessionsObserved) }</strong><span>Sessions</span></div>
+			<div><strong>{ strconvFormatInt(status.UnchangedSessions) }</strong><span>Unchanged</span></div>
+			<div><strong>{ strconvFormatInt(status.DiagnosticsTotal) }</strong><span>Diagnostics</span></div>
 		</div>
-		if status.Active {
-			<div hx-get="/fragments/import-status" hx-trigger="load delay:500ms" hx-target="#import-status" hx-swap="innerHTML"></div>
+		if len(status.Sources) == 0 {
+			<p class="empty-state">No supported sources were discovered in the latest scan.</p>
+		} else {
+			<div class="source-table" role="table" aria-label="Discovered sources">
+				<div class="source-row source-header" role="row">
+					<span role="columnheader">Source</span><span role="columnheader">Origin</span><span role="columnheader">Phase</span><span role="columnheader">Totals</span>
+				</div>
+				for _, source := range status.Sources {
+					<div class="source-row" role="row">
+						<span role="cell" data-label="Source"><strong>{ source.Kind }</strong><code>{ source.Path }</code></span>
+						<span role="cell" data-label="Origin">{ source.Origin }</span>
+						<span role="cell" data-label="Phase">
+							<span class="badge">{ string(source.Phase) }</span>
+							if source.Failure != "" {
+								<small>Failed; available evidence was retained.</small>
+							}
+						</span>
+						<span role="cell" data-label="Totals">{ formatCount(source.Records, "record") } · { formatCount(source.Events, "event") } · { formatCount(source.Diagnostics, "diagnostic") }</span>
+					</div>
+				}
+			</div>
 		}
 		if len(status.RecentDiagnostics) > 0 {
 			<details class="diagnostics" open>
-				<summary>Recent diagnostics ({ strconvFormatInt(status.DiagnosticsTotal) })</summary>
+				<summary>Latest bounded diagnostics ({ strconvFormatInt(status.DiagnosticsTotal) } total)</summary>
 				<ul>
 					for _, diagnostic := range status.RecentDiagnostics {
 						<li>
-							<strong><span class={ "severity severity-" + string(diagnostic.Severity) }>{ string(diagnostic.Severity) }</span> { diagnostic.Code }</strong>
+							<strong>{ string(diagnostic.Severity) }: { diagnostic.Code }</strong>
 							<span>{ diagnostic.Message }</span>
 							if diagnostic.SourceID != "" {
 								<code>source { string(diagnostic.SourceID) }</code>
 							}
-							if diagnostic.SourcePath != "" {
-								<code>{ diagnostic.SourcePath }</code>
-							}
-							@evidenceChips(diagnostic.EventIDs, diagnostic.RawRecordIDs)
+							@resolvedEvidenceChips(diagnostic.EventIDs, diagnostic.RawRecordIDs, refs)
 						</li>
 					}
 				</ul>
 				if status.DiagnosticsOmitted > 0 {
-					<p class="muted">{ formatCount(status.DiagnosticsOmitted, "earlier diagnostic") } omitted from this bounded status.</p>
+					<p class="muted">{ formatCount(status.DiagnosticsOmitted, "diagnostic") } omitted from this bounded view.</p>
 				}
 			</details>
 		}
-		if len(status.Sources) > 0 {
-			<details class="source-drawer">
-				<summary>Source details</summary>
-				<div class="source-list">
-					for _, source := range status.Sources {
-						<div class="source-row">
-							<div class="source-copy">
-								<strong>{ source.Kind }</strong>
-								<code>{ source.Path }</code>
-								<small>{ source.Origin }</small>
-							</div>
-							<div class="source-state">
-								<span>{ string(source.Phase) }</span>
-								<small>{ formatCount(source.Records, "record") } · { formatCount(source.Events, "event") }</small>
-								if source.Failure != "" {
-									<em>{ source.Failure }</em>
-								}
-							</div>
-						</div>
-					}
-				</div>
-			</details>
+		if status.Active {
+			<span class="poller" hx-get="/fragments/index-status" hx-trigger="load delay:1s" hx-target="#index-status" hx-swap="innerHTML"></span>
 		}
-	</div>
+	</section>
 }
 
-templ sourcesFragment(discovery app.SourceDiscovery) {
-	<div class={ "fragment-state state-" + string(discovery.State) }>
-		if discovery.State == app.EvidenceUnavailable {
-			<p class="notice warning" role="status">Source discovery is unavailable. Review the diagnostics below.</p>
-		} else if len(discovery.Sources) == 0 {
-			<p class="notice" role="status">No supported session sources were found.</p>
-		} else {
-			<p>{ formatCount(int64(len(discovery.Sources)), "source") } discovered.</p>
-		}
-		if len(discovery.Diagnostics) > 0 {
-			<div class="diagnostics" aria-label="Discovery diagnostics">
-				<h3>Discovery diagnostics</h3>
-				<ul>
-					for _, diagnostic := range discovery.Diagnostics {
-						<li>
-							<strong>{ string(diagnostic.Severity) }: { diagnostic.Code }</strong>
-							<span>{ diagnostic.Message }</span>
-							if diagnostic.Path != "" {
-								<code>{ diagnostic.Path }</code>
-							}
-						</li>
-					}
-				</ul>
-			</div>
-		}
-	</div>
-}
-
-templ sessionsFragment(page app.SessionPage, first bool) {
-	if first && len(page.Sessions) == 0 {
-		<p class="notice" role="status">No indexed sessions are available yet. Indexing status above will show whether sources are still being processed or unavailable.</p>
-	} else {
-		<div class="session-list">
-			for _, session := range page.Sessions {
-				<a class={ "session-card state-" + string(session.State) } href={ templ.URL(timelineURL(session.ID)) }>
-					<span class="card-top">
-						<span class="session-title">{ sessionTitle(session) }</span>
-						<span class={ "badge state-" + string(session.State) }>{ string(session.State) }</span>
-						if session.Diagnostics.Total > 0 {
-							<span class="badge diagnostic">{ formatCount(session.Diagnostics.Total, "diagnostic") }</span>
-						}
-					</span>
-					if session.Summary != "" {
-						<span class="session-summary">{ session.Summary }</span>
-					}
-					<span class="metadata">
-						{ formatTime(session.StartedAt) } · { formatCount(session.EventCount, "event") } · { string(session.State) }
-					</span>
-					<span class="metadata">
-						Projections: { strconvFormatInt(session.Projections.Usable) } usable · { strconvFormatInt(session.Projections.Pending) } pending · { strconvFormatInt(session.Projections.Running) } running · { strconvFormatInt(session.Projections.Failed) } failed · { strconvFormatInt(session.Projections.Stale) } stale
-					</span>
-				</a>
-			}
-		</div>
-		if page.NextCursor != "" {
-			<button class="load-more" hx-get={ sessionsFragmentURL(page.NextCursor) } hx-target="this" hx-swap="outerHTML">Load more sessions</button>
-		}
-	}
-}
-
-templ timelinePage(sessionID model.SessionID, page app.TimelinePage) {
+templ timelinePage(view timelineView) {
 	@document("Timeline · AgentSession") {
-		<header class="site-header">
-			<a class="brand" href="/">AgentSession <span>Evidence inspector</span></a>
-			<a class="back-link" href="/">← All sessions</a>
-		</header>
-		<main>
-			<section class="timeline-heading">
-				<p class="eyebrow">Session timeline</p>
-				<h1 class="session-id">{ string(sessionID) }</h1>
-				<p class="muted">Normalized summaries load first. Payloads remain collapsed until requested.</p>
-			</section>
+		<main id="main">
+			<nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Sessions</a><span aria-hidden="true">/</span><span aria-current="page">Timeline</span></nav>
+			<header class="page-heading">
+				<div>
+					<p class="eyebrow">Canonical timeline</p>
+					<h1 class="session-id">{ string(view.SessionID) }</h1>
+					<p class="muted">Bounded summaries; normalized payloads load only for the selected event.</p>
+				</div>
+			</header>
+			@notice(view.Notice)
 			<section class="projection-panel" aria-labelledby="projection-title">
 				<div class="section-heading">
-					<div>
-						<p class="eyebrow">Derived data</p>
-						<h2 id="projection-title">Projection readiness</h2>
+					<div><p class="eyebrow">Secondary derived data</p><h2 id="projection-title">Projection readiness</h2></div>
+				</div>
+				if view.ProjectionErr != nil {
+					<p class="notice warning" role="status">Projection status is unavailable. Canonical evidence below is unaffected.</p>
+				} else {
+					<div id="projection-status">
+						@projectionStatus(view.Projection, view.CSRF, "")
 					</div>
-					<button class="quiet" type="button" hx-get={ projectionsFragmentURL(sessionID) } hx-target="#projection-status" hx-swap="innerHTML">Refresh</button>
-				</div>
-				<p class="muted">Canonical timeline evidence remains available independently of projection state.</p>
-				<div id="projection-status" hx-get={ projectionsFragmentURL(sessionID) } hx-trigger="load" hx-swap="innerHTML">
-					<p class="notice" role="status">Loading projection status…</p>
-				</div>
+				}
 			</section>
-			<section aria-label="Session events">
-				@timelineEvidenceState(page)
+			<section aria-labelledby="events-title">
+				<h2 id="events-title">Events</h2>
+				@timelineEvidenceState(view.Page, view.DiagnosticRefs)
 				<div class="timeline">
-					@timelineFragment(sessionID, page)
+					@eventRows(view.SessionID, view.Page, view.Focused, view.FocusedPayload, view.DiagnosticRefs)
 				</div>
 			</section>
 		</main>
 	}
 }
 
-templ projectionStatusFragment(status app.ProjectionStatus) {
-	<div class="projection-status" aria-live="polite">
-		if status.State == app.EvidenceNotFound {
-			<p class="notice warning">This session is no longer available.</p>
-		} else {
-			<div class="stat-grid" aria-label="Projection statistics">
-				<div><strong>{ strconvFormatInt(status.Summary.Usable) }</strong><span>usable</span></div>
-				<div><strong>{ strconvFormatInt(status.Summary.Pending) }</strong><span>pending</span></div>
-				<div><strong>{ strconvFormatInt(status.Summary.Running) }</strong><span>running</span></div>
-				<div><strong>{ strconvFormatInt(status.Summary.Failed) }</strong><span>failed</span></div>
-				<div><strong>{ strconvFormatInt(status.Summary.Stale) }</strong><span>stale</span></div>
-			</div>
-			if status.OperationDiagnostic != nil {
-				<p class="notice warning"><strong>{ status.OperationDiagnostic.Code }</strong>: { status.OperationDiagnostic.Summary }</p>
-			}
-			<div class="projection-list">
-				for _, projection := range status.Projections {
-					<article class={ "projection-row state-" + projection.Status }>
-						<div>
-							<strong>{ projection.Kind }</strong>
-							<span class="badge">{ projection.Status }</span>
-							if projection.Usable {
-								<span class="badge state-complete">usable</span>
-							}
-							if projection.Stale {
-								<span class="badge warning">stale</span>
-							}
-							<p class="metadata">Target { projection.TargetVersion }/{ strconvFormatInt(projection.TargetRevision) } · { formatCount(projection.AttemptCount, "attempt") }</p>
-							if projection.Diagnostic != nil {
-								<p class="notice warning"><strong>{ projection.Diagnostic.Code }</strong>: { projection.Diagnostic.Summary }</p>
-							}
-						</div>
-						<form method="post" action="/projections/rebuild" hx-post="/projections/rebuild" hx-target="#projection-status" hx-swap="innerHTML" hx-headers={ `{"X-AgentSession-Request":"projection"}` }>
-							<input type="hidden" name="session" value={ string(status.SessionID) }/>
-							<input type="hidden" name="kind" value={ projection.Kind }/>
-							<button class="quiet" type="submit">Rebuild</button>
-						</form>
-					</article>
-				}
-			</div>
-			<div class="projection-actions">
-				<form method="post" action="/projections/retry" hx-post="/projections/retry" hx-target="#projection-status" hx-swap="innerHTML" hx-headers={ `{"X-AgentSession-Request":"projection"}` }>
-					<input type="hidden" name="session" value={ string(status.SessionID) }/>
-					<button type="submit">Retry pending and failed</button>
-				</form>
-				<form method="post" action="/projections/rebuild" hx-post="/projections/rebuild" hx-target="#projection-status" hx-swap="innerHTML" hx-confirm="Rebuild every projection for this session?" hx-headers={ `{"X-AgentSession-Request":"projection"}` }>
-					<input type="hidden" name="session" value={ string(status.SessionID) }/>
-					<input type="hidden" name="kind" value="all"/>
-					<button class="danger" type="submit">Rebuild all…</button>
-				</form>
-			</div>
-			if status.Active || status.Summary.Running > 0 {
-				<p class="muted">Projection work continues in the application if this page is closed.</p>
-				<div hx-get={ projectionsFragmentURL(status.SessionID) } hx-trigger="load delay:500ms" hx-target="#projection-status" hx-swap="innerHTML"></div>
-			}
-		}
-	</div>
-}
-
-templ timelineEvidenceState(page app.TimelinePage) {
+templ timelineEvidenceState(page app.TimelinePage, refs map[model.EventID]eventReference) {
 	if page.State == app.EvidenceUnavailable {
-		<p class="notice warning">Timeline evidence is unavailable. Diagnostics were retained, but no normalized events are available.</p>
+		<p class="notice warning">Normalized timeline evidence is unavailable. This is not evidence of success.</p>
 	} else if page.State == app.EvidencePartial {
-		<p class="notice warning">This timeline contains partial evidence. Review the diagnostics before drawing conclusions.</p>
+		<p class="notice warning">This timeline contains partial evidence. Review diagnostics before drawing conclusions.</p>
 	}
-	@diagnosticSynopsis(page.Diagnostics)
+	@diagnosticSynopsis(page.Diagnostics, refs)
 }
 
-templ timelineFragment(sessionID model.SessionID, page app.TimelinePage) {
-	if len(page.Events) == 0 && page.NextCursor == "" {
-		<p class="notice">No normalized events are available for this session.</p>
+templ eventRows(sessionID model.SessionID, page app.TimelinePage, focused app.EventDetail, payload string, refs map[model.EventID]eventReference) {
+	if len(page.Events) == 0 {
+		<p class="empty-state">No normalized events are available.</p>
 	} else {
 		for _, event := range page.Events {
-			<article id={ eventAnchorID(event.ID) } class="event" data-kind={ string(event.Kind) }>
+			<article id={ eventAnchorID(event.ID) } class="event">
 				<div class="event-marker" aria-hidden="true"></div>
 				<div class="event-card">
-					<div class="event-heading">
+					<header class="event-heading">
 						<span class="event-kind">{ string(event.Kind) }</span>
 						<span class="metadata">#{ strconvFormatInt(event.Sequence) } · { formatTime(event.Timestamp) }</span>
-					</div>
+					</header>
 					<p>{ event.Summary }</p>
-					<button class="quiet" type="button" hx-get={ eventFragmentURL(sessionID, event.ID) } hx-target="next .event-detail" hx-swap="innerHTML">Inspect event detail</button>
-					<div class="event-detail" aria-live="polite"></div>
+					<a class="button quiet" href={ templ.URL(focusedTimelineURL(sessionID, event.ID)) } hx-get={ eventFragmentURL(sessionID, event.ID) } hx-target={ "#" + eventAnchorID(event.ID) + " .event-detail" } hx-swap="innerHTML" hx-push-url={ focusedTimelineURL(sessionID, event.ID) }>Inspect event detail</a>
+					<div class="event-detail" aria-live="polite">
+						if focused.Event.ID == event.ID {
+							@eventDetail(focused, payload, refs)
+						}
+					</div>
 				</div>
 			</article>
 		}
 		if page.NextCursor != "" {
-			<button class="load-more" hx-get={ timelineFragmentURL(sessionID, page.NextCursor) } hx-target="this" hx-swap="outerHTML">Load more events</button>
+			<a class="button load-more" rel="next" href={ templ.URL(timelinePageURL(sessionID, page.NextCursor)) } hx-get={ timelineFragmentURL(sessionID, page.NextCursor) } hx-target="this" hx-swap="outerHTML">Load more events</a>
 		}
 	}
 }
 
-templ eventFragment(detail app.EventDetail, payload string) {
+templ eventDetail(detail app.EventDetail, payload string, refs map[model.EventID]eventReference) {
 	<div class={ "detail-panel state-" + string(detail.State) }>
 		if detail.State == app.EvidenceUnavailable || detail.Payload == nil {
 			<p class="notice warning">The normalized payload is unavailable. This is not evidence of success.</p>
@@ -353,17 +361,97 @@ templ eventFragment(detail app.EventDetail, payload string) {
 			<h3>Normalized payload</h3>
 			<pre>{ payload }</pre>
 		}
-		@diagnosticSynopsis(detail.Diagnostics)
+		@diagnosticSynopsis(detail.Diagnostics, refs)
 	</div>
 }
 
-templ diagnosticSynopsis(synopsis app.DiagnosticSynopsis) {
+templ projectionStatus(status app.ProjectionStatus, csrf string, feedback string) {
+	<div class="projection-status" aria-live="polite">
+		if feedback != "" {
+			<p class="notice success" role="status">{ feedback }</p>
+		}
+		<details>
+			<summary>{ strconvFormatInt(status.Summary.Usable) } usable · { strconvFormatInt(status.Summary.Pending) } pending · { strconvFormatInt(status.Summary.Running) } running · { strconvFormatInt(status.Summary.Failed) } failed · { strconvFormatInt(status.Summary.Stale) } stale · { strconvFormatInt(status.Summary.Unimplemented) } unavailable in this build</summary>
+			if status.OperationDiagnostic != nil {
+				<p class="notice warning"><strong>{ status.OperationDiagnostic.Code }</strong>: { status.OperationDiagnostic.Summary }</p>
+			}
+			<div class="projection-list">
+				for _, projection := range status.Projections {
+					<article class="projection-row">
+						<div>
+							<strong>{ projection.Kind }</strong>
+							if !projection.BuildAvailable {
+								<span class="badge warning">unavailable in this build</span>
+							} else if projection.Usable {
+								<span class="badge state-complete">usable</span>
+							} else if projection.Stale {
+								<span class="badge warning">stale</span>
+							} else {
+								<span class="badge">{ projection.Status }</span>
+							}
+							if projection.Diagnostic != nil {
+								<p class="notice warning"><strong>{ projection.Diagnostic.Code }</strong>: { projection.Diagnostic.Summary }</p>
+							}
+						</div>
+						if projection.BuildAvailable {
+							<form method="post" action={ templ.URL(projectionActionURL(status.SessionID, "rebuild")) } hx-post={ projectionActionURL(status.SessionID, "rebuild") } hx-target="#projection-status" hx-swap="innerHTML">
+								<input type="hidden" name="csrf" value={ csrf }/>
+								<input type="hidden" name="kind" value={ projection.Kind }/>
+								<button class="quiet" type="submit">Rebuild</button>
+							</form>
+						}
+					</article>
+				}
+			</div>
+			<div class="projection-actions">
+				<form method="post" action={ templ.URL(projectionActionURL(status.SessionID, "retry")) } hx-post={ projectionActionURL(status.SessionID, "retry") } hx-target="#projection-status" hx-swap="innerHTML">
+					<input type="hidden" name="csrf" value={ csrf }/>
+					<button type="submit" disabled?={ status.Active || status.Summary.Unimplemented == int64(len(status.Projections)) }>Retry pending and failed</button>
+				</form>
+				if allBuildersAvailable(status) {
+					<a class="button danger" href={ templ.URL(projectionActionURL(status.SessionID, "rebuild-all")) }>Rebuild all…</a>
+				}
+			</div>
+		</details>
+		if status.Active || status.Summary.Running > 0 {
+			<p class="muted">Projection work continues if this page is closed.</p>
+			<span class="poller" hx-get={ projectionsFragmentURL(status.SessionID) } hx-trigger="load delay:1s" hx-target="#projection-status" hx-swap="innerHTML"></span>
+		}
+	</div>
+}
+
+templ rebuildAllPage(sessionID model.SessionID, status app.ProjectionStatus, csrf string) {
+	@document("Confirm rebuild · AgentSession") {
+		<main id="main" class="narrow">
+			<nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Sessions</a><span aria-hidden="true">/</span><a href={ templ.URL(sessionURL(sessionID)) }>Timeline</a><span aria-hidden="true">/</span><span aria-current="page">Rebuild all</span></nav>
+			<section class="confirmation" aria-labelledby="confirm-title">
+				<p class="eyebrow">Confirmation required</p>
+				<h1 id="confirm-title">Rebuild all projections?</h1>
+				<p>This invalidates and schedules every registered derived-data projection for this session. Canonical evidence is not modified.</p>
+				<p><strong>{ formatCount(int64(len(status.Projections)), "projection") }</strong> will be rebuilt.</p>
+				<div class="projection-actions">
+					<form method="post" action={ templ.URL(projectionActionURL(sessionID, "rebuild-all")) }>
+						<input type="hidden" name="csrf" value={ csrf }/>
+						<button class="danger" type="submit">Confirm rebuild all</button>
+					</form>
+					<a class="button secondary" href={ templ.URL(sessionURL(sessionID)) }>Cancel</a>
+				</div>
+			</section>
+		</main>
+	}
+}
+
+templ diagnosticSynopsis(synopsis app.DiagnosticSynopsis, refs map[model.EventID]eventReference) {
 	if synopsis.Total > 0 {
 		<details class="diagnostics">
 			<summary>{ formatCount(synopsis.Total, "diagnostic") } retained with this evidence</summary>
 			<ul>
 				for _, diagnostic := range synopsis.Diagnostics {
-					@diagnosticItem(diagnostic)
+					<li>
+						<strong>{ string(diagnostic.Severity) }: { diagnostic.Code }</strong>
+						<span>{ diagnostic.Message }</span>
+						@resolvedEvidenceChips(diagnostic.EventIDs, diagnostic.RawRecordIDs, refs)
+					</li>
 				}
 			</ul>
 			if synopsis.Omitted > 0 {
@@ -373,19 +461,15 @@ templ diagnosticSynopsis(synopsis app.DiagnosticSynopsis) {
 	}
 }
 
-templ diagnosticItem(diagnostic model.Diagnostic) {
-	<li>
-		<strong>{ string(diagnostic.Severity) }: { diagnostic.Code }</strong>
-		<span>{ diagnostic.Message }</span>
-		@evidenceChips(diagnostic.EventIDs, diagnostic.RawRecordIDs)
-	</li>
-}
-
-templ evidenceChips(eventIDs []model.EventID, rawRecordIDs []model.RawRecordID) {
+templ resolvedEvidenceChips(eventIDs []model.EventID, rawRecordIDs []model.RawRecordID, refs map[model.EventID]eventReference) {
 	if len(eventIDs) > 0 || len(rawRecordIDs) > 0 {
 		<div class="evidence-chips" aria-label="Diagnostic evidence references">
 			for _, eventID := range eventIDs {
-				<a class="chip" href={ templ.SafeURL(eventAnchorURL(eventID)) }>event { string(eventID) }</a>
+				if ref, ok := refs[eventID]; ok && ref.Found && ref.MatchesSession {
+					<a class="chip" href={ templ.URL(focusedTimelineURL(ref.SessionID, eventID)) }>event { string(eventID) }</a>
+				} else {
+					<span class="chip missing">event { string(eventID) } (unresolved)</span>
+				}
 			}
 			for _, recordID := range rawRecordIDs {
 				<span class="chip raw">record { string(recordID) }</span>

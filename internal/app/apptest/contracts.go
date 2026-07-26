@@ -20,6 +20,7 @@ type Consumer interface {
 	ListSessions(context.Context, app.ListSessionsRequest) (app.SessionPage, error)
 	Timeline(context.Context, app.TimelineRequest) (app.TimelinePage, error)
 	EventDetail(context.Context, app.EventDetailRequest) (app.EventDetail, error)
+	EventLocations(context.Context, []model.EventID) (map[model.EventID]app.EventLocation, error)
 	ProjectionStatus(context.Context, model.SessionID) (app.ProjectionStatus, error)
 	RetryProjections(context.Context, model.SessionID) (app.ProjectionAction, error)
 	RebuildProjections(context.Context, model.SessionID, string) (app.ProjectionAction, error)

@@ -214,6 +214,10 @@ func (r *Runtime) EventDetail(ctx context.Context, request EventDetailRequest) (
 	return r.explorer.EventDetail(ctx, request)
 }
 
+func (r *Runtime) EventLocations(ctx context.Context, eventIDs []model.EventID) (map[model.EventID]EventLocation, error) {
+	return r.explorer.EventLocations(ctx, eventIDs)
+}
+
 // ProjectionStatus exposes the runtime-owned projection lifecycle service.
 func (r *Runtime) ProjectionStatus(ctx context.Context, sessionID model.SessionID) (ProjectionStatus, error) {
 	return r.projections.ProjectionStatus(ctx, sessionID)

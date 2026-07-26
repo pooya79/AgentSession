@@ -12,6 +12,7 @@ import (
 type SessionCursor struct {
 	LastActivityAt *time.Time
 	ID             model.SessionID
+	Before         bool
 }
 
 // SessionSummary is lightweight imported-session metadata. It deliberately
@@ -47,6 +48,13 @@ type EventEnvelope struct {
 	RawRecord model.RawRecordRef
 }
 
+// EventLocation is the smallest canonical destination for an event reference.
+type EventLocation struct {
+	EventID   model.EventID
+	SessionID model.SessionID
+	Sequence  int64
+}
+
 // DiagnosticPage is a bounded synopsis with an exact total.
 type DiagnosticPage struct {
 	Diagnostics []model.Diagnostic
@@ -60,6 +68,8 @@ type ExplorationReader interface {
 	ListSessions(context.Context, *SessionCursor, int) ([]SessionSummary, bool, error)
 	SessionExists(context.Context, model.SessionID) (bool, error)
 	EventSummaryPage(context.Context, model.SessionID, *int64, int) ([]model.EventSummary, bool, error)
+	EventSummaryWindow(context.Context, model.SessionID, int64, int) ([]model.EventSummary, bool, error)
+	EventLocations(context.Context, []model.EventID) (map[model.EventID]EventLocation, error)
 	EventEnvelope(context.Context, model.SessionID, model.EventID) (EventEnvelope, bool, error)
 	EventPayload(context.Context, model.SessionID, model.EventID) (model.NormalizedData, bool, error)
 	Diagnostics(context.Context, model.SessionID, *model.EventID, int) (DiagnosticPage, error)
