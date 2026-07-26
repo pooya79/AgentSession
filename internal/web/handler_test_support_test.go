@@ -102,7 +102,7 @@ func (s servicesStub) EventLocations(ctx context.Context, ids []model.EventID) (
 }
 func request(t *testing.T, handler http.Handler, method, target string, body io.Reader, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, target, body)
+	req := httptest.NewRequestWithContext(t.Context(), method, target, body)
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}

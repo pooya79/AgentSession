@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -59,7 +60,8 @@ func (h *handler) validMutation(w http.ResponseWriter, r *http.Request, fields .
 			return nil, false
 		}
 	}
-	if len(r.PostForm) != len(allowed) || r.PostForm.Get("csrf") != h.csrf {
+	if len(r.PostForm) != len(allowed) ||
+		subtle.ConstantTimeCompare([]byte(r.PostForm.Get("csrf")), []byte(h.csrf)) != 1 {
 		writeError(w, http.StatusBadRequest)
 		return nil, false
 	}

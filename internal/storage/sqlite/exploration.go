@@ -169,7 +169,7 @@ func (s *ImportStore) EventSummaryPage(ctx context.Context, sessionID model.Sess
 }
 
 // EventSummaryWindow returns an ordered bounded window ending at a focused sequence.
-func (s *ImportStore) EventSummaryWindow(ctx context.Context, sessionID model.SessionID, endingAt int64, limit int) ([]model.EventSummary, bool, error) {
+func (s *ImportStore) EventSummaryWindow(ctx context.Context, sessionID model.SessionID, endingAt int64, limit int) (items []model.EventSummary, hasMore bool, err error) {
 	if limit <= 0 {
 		return nil, false, errors.New("sqlite exploration: timeline window: limit must be positive")
 	}
@@ -181,8 +181,13 @@ func (s *ImportStore) EventSummaryWindow(ctx context.Context, sessionID model.Se
 	if err != nil {
 		return nil, false, fmt.Errorf("sqlite exploration: timeline window for %q: %w", sessionID, err)
 	}
-	defer rows.Close()
-	items := make([]model.EventSummary, 0, limit)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			closeErr = fmt.Errorf("sqlite exploration: close timeline window for %q: %w", sessionID, closeErr)
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	items = make([]model.EventSummary, 0, limit)
 	for rows.Next() {
 		var item model.EventSummary
 		var timestamp sql.NullString

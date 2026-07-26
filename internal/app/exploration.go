@@ -267,9 +267,9 @@ func (s *explorationService) Timeline(ctx context.Context, request TimelineReque
 		if err := validateEventID(request.FocusedEvent); err != nil {
 			return TimelinePage{}, err
 		}
-		locations, err := s.reader.EventLocations(ctx, []model.EventID{request.FocusedEvent})
-		if err != nil {
-			return TimelinePage{}, fmt.Errorf("locate focused event %q: %w", request.FocusedEvent, err)
+		locations, locateErr := s.reader.EventLocations(ctx, []model.EventID{request.FocusedEvent})
+		if locateErr != nil {
+			return TimelinePage{}, fmt.Errorf("locate focused event %q: %w", request.FocusedEvent, locateErr)
 		}
 		location, found := locations[request.FocusedEvent]
 		if !found || location.SessionID != request.SessionID {

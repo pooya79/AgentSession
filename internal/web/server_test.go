@@ -36,7 +36,7 @@ func TestHandlerHealthAssetsSecurityAndAvailability(t *testing.T) {
 	}
 	for _, tt := range tests {
 		recorder := httptest.NewRecorder()
-		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, tt.path, nil))
+		handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, tt.path, nil))
 		body, _ := io.ReadAll(recorder.Result().Body)
 		if recorder.Code != tt.status || !strings.Contains(string(body), tt.content) {
 			t.Fatalf("%s = %d %q", tt.path, recorder.Code, body)

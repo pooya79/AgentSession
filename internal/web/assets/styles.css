@@ -14,6 +14,7 @@
   --warn-soft: #fef3c7;
   --danger: #b91c1c;
   --focus: #0284c7;
+
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
@@ -59,7 +60,7 @@ h1 { font-family: ui-sans-serif, system-ui, sans-serif; font-size: clamp(1.7rem,
 h2 { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 1.15rem; margin-bottom: .4rem; }
 .eyebrow { color: var(--accent); font-size: .72rem; font-weight: 800; letter-spacing: .09em; margin-bottom: .15rem; text-transform: uppercase; }
 .muted, .metadata, small { color: var(--muted); }
-.visually-hidden { height: 1px; margin: -1px; overflow: hidden; padding: 0; position: absolute; width: 1px; clip: rect(0 0 0 0); }
+.visually-hidden { height: 1px; margin: -1px; overflow: hidden; padding: 0; position: absolute; width: 1px; clip-path: inset(50%); }
 .index-strip {
   align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: .4rem;
   display: flex; gap: .65rem; margin-bottom: 1.5rem; padding: .65rem .8rem;

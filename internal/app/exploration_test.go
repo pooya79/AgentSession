@@ -26,6 +26,7 @@ type explorationReaderStub struct {
 	locations    map[model.EventID]storage.EventLocation
 	windowEnd    int64
 	windowReads  int
+	windowErr    error
 }
 
 func (s *explorationReaderStub) LibraryOverview(context.Context) (storage.LibraryOverview, error) {
@@ -116,7 +117,7 @@ func (s *explorationReaderStub) EventSummaryPage(context.Context, model.SessionI
 func (s *explorationReaderStub) EventSummaryWindow(_ context.Context, _ model.SessionID, endingAt int64, _ int) ([]model.EventSummary, bool, error) {
 	s.windowEnd = endingAt
 	s.windowReads++
-	return s.events, false, nil
+	return s.events, false, s.windowErr
 }
 func (s *explorationReaderStub) EventLocations(context.Context, []model.EventID) (map[model.EventID]storage.EventLocation, error) {
 	if s.locations != nil {
@@ -161,9 +162,14 @@ func TestSessionCursorDirectionsAndFocusedTimeline(t *testing.T) {
 	if err != nil || timeline.FocusedEvent != eventID || stub.windowReads != 1 || stub.windowEnd != 9 {
 		t.Fatalf("focused timeline = (%#v, %v), window reads/end %d/%d", timeline, err, stub.windowReads, stub.windowEnd)
 	}
+	stub.windowErr = errors.New("window unavailable")
+	if _, err := explorer.Timeline(context.Background(), TimelineRequest{SessionID: "one", FocusedEvent: eventID}); err == nil || !strings.Contains(err.Error(), `read timeline for "one"`) {
+		t.Fatalf("focused timeline storage error = %v", err)
+	}
+	stub.windowErr = nil
 	stub.locations[eventID] = storage.EventLocation{EventID: eventID, SessionID: "other", Sequence: 9}
 	missing, err := explorer.Timeline(context.Background(), TimelineRequest{SessionID: "one", FocusedEvent: eventID})
-	if err != nil || missing.State != EvidenceNotFound || stub.windowReads != 1 {
+	if err != nil || missing.State != EvidenceNotFound || stub.windowReads != 2 {
 		t.Fatalf("wrong-session focus = (%#v, %v), reads %d", missing, err, stub.windowReads)
 	}
 	if _, err := explorer.Timeline(context.Background(), TimelineRequest{SessionID: "one", Cursor: "cursor", FocusedEvent: eventID}); !errors.Is(err, ErrInvalidRequest) {
