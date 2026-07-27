@@ -1,0 +1,12 @@
+CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, time_created INTEGER, time_updated INTEGER, future_text TEXT, future_blob BLOB);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT, future_text TEXT);
+CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT, future_blob BLOB);
+INSERT INTO session VALUES ('legacy', 'Legacy variants', 1, 20, '', x'');
+INSERT INTO session VALUES ('legacy_empty', 'Empty legacy', 21, 21, 'unknown', x'00ff');
+INSERT INTO message VALUES ('m_user', 'legacy', 2, '{"role":"user"}', '');
+INSERT INTO part VALUES ('p_text', 'm_user', 'legacy', '{"type":"text","text":"hello"}', x'');
+INSERT INTO message VALUES ('m_assistant', 'legacy', 3, '{"role":"assistant","tokens":{"input":1,"output":2,"cache":{"read":3,"write":4}}}', 'unknown');
+INSERT INTO part VALUES ('p_file', 'm_assistant', 'legacy', '{"type":"file","mime":"text/plain","source":{"type":"file","path":"README.md","start":0,"end":5}}', x'0102');
+INSERT INTO part VALUES ('p_finish', 'm_assistant', 'legacy', '{"type":"step-finish","reason":"stop","cost":0.1,"tokens":{"input":1,"output":2,"reasoning":3,"cache":{"read":4,"write":5}}}', x'');
+INSERT INTO part VALUES ('p_retry', 'm_assistant', 'legacy', '{"type":"retry","attempt":2,"error":{"message":"retrying"},"time":{"created":4}}', x'00');
+INSERT INTO part VALUES ('p_future', 'm_assistant', 'legacy', '{"type":"future-part"}', x'');

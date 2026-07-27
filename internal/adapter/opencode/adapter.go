@@ -1,4 +1,4 @@
-// Package opencode imports OpenCode's SQLite session/message/part store.
+// Package opencode imports the supported generations of OpenCode's SQLite store.
 package opencode
 
 import (
@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"math"
 	"net/url"
 	"path/filepath"
@@ -25,17 +26,33 @@ import (
 
 const (
 	AdapterVersion       model.Version = "1"
-	FormatVersion        model.Version = "opencode-sqlite-message-part-v1"
+	FormatVersion        model.Version = "opencode-sqlite-container-v2"
+	LegacyFormatVersion  model.Version = "opencode-sqlite-message-part-v1"
+	MessageFormatVersion model.Version = "opencode-sqlite-session-message-v1"
+	EventFormatVersion   model.Version = "opencode-sqlite-durable-event-v1"
 	ModelVersion         model.Version = "1"
-	NormalizationVersion model.Version = "1"
-	CursorVersion        model.Version = "opencode-logical-cursor-v1"
-	fingerprintVersion                 = "opencode-logical-fingerprint-v1"
+	NormalizationVersion model.Version = "2"
+	CursorVersion        model.Version = "opencode-logical-cursor-v2"
+	fingerprintVersion                 = "opencode-logical-fingerprint-v2"
 )
 
-var requiredColumns = map[string][]string{
-	"session": {"id", "title", "time_created", "time_updated"},
-	"message": {"id", "session_id", "time_created", "data"},
-	"part":    {"id", "message_id", "session_id", "data"},
+type generation string
+
+const (
+	generationLegacy  generation = "legacy"
+	generationMessage generation = "session_message"
+	generationEvent   generation = "durable_event"
+)
+
+type schemaInfo struct {
+	legacy, messages, events bool
+}
+
+type generationSelection struct {
+	generation        generation
+	format            model.Version
+	eventConvention   string
+	durableIncomplete bool
 }
 
 type Adapter struct{}
@@ -59,7 +76,7 @@ func (a *Adapter) Probe(ctx context.Context, source importer.Source) (importer.P
 		return importer.ProbeResult{}, fmt.Errorf("open OpenCode database for probe: %w", err)
 	}
 	defer view.close()
-	ok, err := probeSchema(ctx, view.tx)
+	_, ok, err := probeSchema(ctx, view.tx)
 	if err != nil {
 		return importer.ProbeResult{}, fmt.Errorf("probe OpenCode schema: %w", err)
 	}
@@ -80,15 +97,15 @@ func (a *Adapter) PrepareContainer(ctx context.Context, source importer.Source) 
 	if err != nil {
 		return nil, err
 	}
-	ok, err := probeSchema(ctx, view.tx)
+	schema, ok, err := probeSchema(ctx, view.tx)
 	if err != nil || !ok {
 		_ = view.close()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("probe OpenCode schema for %q: %w", source.LocalPath, err)
 		}
-		return nil, errors.New("database does not contain the required OpenCode schema")
+		return nil, errors.New("database does not contain a supported OpenCode schema")
 	}
-	return &container{adapter: a, source: source, snapshot: view}, nil
+	return &container{adapter: a, source: source, snapshot: view, schema: schema}, nil
 }
 
 type snapshot struct {
@@ -127,7 +144,6 @@ func openSnapshot(ctx context.Context, path string) (*snapshot, error) {
 		db.Close()
 		return nil, fmt.Errorf("begin consistent read transaction: %w", err)
 	}
-	// Establish the snapshot now so later WAL commits cannot change a child view.
 	var schemaVersion int64
 	if err := tx.QueryRowContext(ctx, `PRAGMA schema_version`).Scan(&schemaVersion); err != nil {
 		tx.Rollback()
@@ -142,8 +158,47 @@ func (s *snapshot) close() error {
 	return errors.Join(s.tx.Rollback(), s.conn.Close(), s.db.Close())
 }
 
-func probeSchema(ctx context.Context, tx *sql.Tx) (bool, error) {
-	for table, required := range requiredColumns {
+var generationColumns = map[generation]map[string][]string{
+	generationLegacy: {
+		"message": {"id", "session_id", "time_created", "data"},
+		"part":    {"id", "message_id", "session_id", "data"},
+	},
+	generationMessage: {
+		"session_message": {"id", "session_id", "type", "seq", "time_created", "time_updated", "data"},
+	},
+	generationEvent: {
+		"event_sequence": {"aggregate_id", "seq", "owner_id"},
+		"event":          {"id", "aggregate_id", "seq", "type", "data"},
+	},
+}
+
+func probeSchema(ctx context.Context, tx *sql.Tx) (schemaInfo, bool, error) {
+	ok, err := hasContract(ctx, tx, map[string][]string{
+		"session": {"id", "title", "time_created", "time_updated"},
+	})
+	if err != nil || !ok {
+		return schemaInfo{}, false, err
+	}
+	var schema schemaInfo
+	for gen, contract := range generationColumns {
+		present, err := hasContract(ctx, tx, contract)
+		if err != nil {
+			return schemaInfo{}, false, err
+		}
+		switch gen {
+		case generationLegacy:
+			schema.legacy = present
+		case generationMessage:
+			schema.messages = present
+		case generationEvent:
+			schema.events = present
+		}
+	}
+	return schema, schema.legacy || schema.messages || schema.events, nil
+}
+
+func hasContract(ctx context.Context, tx *sql.Tx, contract map[string][]string) (bool, error) {
+	for table, required := range contract {
 		rows, err := tx.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table)
 		if err != nil {
 			return false, err
@@ -173,6 +228,7 @@ type container struct {
 	adapter  *Adapter
 	source   importer.Source
 	snapshot *snapshot
+	schema   schemaInfo
 	closed   bool
 }
 
@@ -193,14 +249,100 @@ func (c *container) Children(ctx context.Context) ([]importer.PreparedChild, err
 		if err := rows.Scan(&nativeID, &title, &created, &updated); err != nil {
 			return nil, err
 		}
+		selected, err := selectGeneration(ctx, c.snapshot.tx, c.schema, nativeID)
+		if err != nil {
+			return nil, fmt.Errorf("select OpenCode generation for session: %w", err)
+		}
 		childID := logicalSourceID(c.source.ID, nativeID)
 		childSource := importer.Source{ID: childID, Hint: "opencode", LocalPath: c.source.LocalPath}
 		meta := sessionMeta{nativeID: nativeID, title: title.String, created: created, updated: updated}
 		children = append(children, importer.PreparedChild{Source: childSource, Prepared: &prepared{
-			adapter: c.adapter, source: childSource, tx: c.snapshot.tx, meta: meta,
+			adapter: c.adapter, source: childSource, tx: c.snapshot.tx, meta: meta, selected: selected,
 		}})
 	}
 	return children, rows.Err()
+}
+
+func selectGeneration(ctx context.Context, tx *sql.Tx, schema schemaInfo, sessionID string) (generationSelection, error) {
+	var durableRows int64
+	if schema.events {
+		convention, complete, rows, err := durableState(ctx, tx, sessionID)
+		if err != nil {
+			return generationSelection{}, err
+		}
+		durableRows = rows
+		if complete && rows > 0 {
+			return generationSelection{generation: generationEvent, format: EventFormatVersion, eventConvention: convention}, nil
+		}
+	}
+	if schema.messages {
+		count, err := rowCount(ctx, tx, `SELECT COUNT(*) FROM session_message WHERE session_id = ?`, sessionID)
+		if err != nil {
+			return generationSelection{}, err
+		}
+		if count > 0 {
+			return generationSelection{generation: generationMessage, format: MessageFormatVersion}, nil
+		}
+	}
+	if schema.legacy {
+		count, err := rowCount(ctx, tx, `SELECT (SELECT COUNT(*) FROM message WHERE session_id = ?) + (SELECT COUNT(*) FROM part WHERE session_id = ?)`, sessionID, sessionID)
+		if err != nil {
+			return generationSelection{}, err
+		}
+		if count > 0 {
+			return generationSelection{generation: generationLegacy, format: LegacyFormatVersion}, nil
+		}
+	}
+	if durableRows > 0 {
+		return generationSelection{generation: generationEvent, format: EventFormatVersion, eventConvention: "incomplete", durableIncomplete: true}, nil
+	}
+	if schema.events {
+		return generationSelection{generation: generationEvent, format: EventFormatVersion, eventConvention: "empty"}, nil
+	}
+	if schema.messages {
+		return generationSelection{generation: generationMessage, format: MessageFormatVersion}, nil
+	}
+	return generationSelection{generation: generationLegacy, format: LegacyFormatVersion}, nil
+}
+
+func durableState(ctx context.Context, tx *sql.Tx, sessionID string) (string, bool, int64, error) {
+	var count, distinct, distinctIDs int64
+	var minSeq, maxSeq sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COUNT(DISTINCT seq), COUNT(DISTINCT id), MIN(seq), MAX(seq) FROM event WHERE aggregate_id = ?`, sessionID).
+		Scan(&count, &distinct, &distinctIDs, &minSeq, &maxSeq); err != nil {
+		return "", false, 0, err
+	}
+	var markerCount, markerDistinct int64
+	var marker sql.NullInt64
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COUNT(DISTINCT seq), MIN(seq) FROM event_sequence WHERE aggregate_id = ?`, sessionID).
+		Scan(&markerCount, &markerDistinct, &marker)
+	if err != nil {
+		return "", false, 0, err
+	}
+	if count == 0 {
+		if markerCount == 1 && markerDistinct == 1 && marker.Valid {
+			return "empty", true, 0, nil
+		}
+		return "", false, 0, nil
+	}
+	contiguous := distinct == count && distinctIDs == count && minSeq.Valid && maxSeq.Valid &&
+		(minSeq.Int64 == 0 || minSeq.Int64 == 1) && count <= math.MaxInt64-minSeq.Int64+1 &&
+		minSeq.Int64+count-1 == maxSeq.Int64
+	if markerCount != 1 || markerDistinct != 1 || !marker.Valid || !contiguous {
+		return "", false, count, nil
+	}
+	if marker.Int64 == maxSeq.Int64 {
+		return "last_persisted", true, count, nil
+	}
+	if maxSeq.Int64 < math.MaxInt64 && marker.Int64 == maxSeq.Int64+1 {
+		return "next_sequence", true, count, nil
+	}
+	return "", false, count, nil
+}
+
+func rowCount(ctx context.Context, tx *sql.Tx, query string, args ...any) (int64, error) {
+	var count int64
+	return count, tx.QueryRowContext(ctx, query, args...).Scan(&count)
 }
 
 func (c *container) Close() error {
@@ -229,9 +371,11 @@ type sessionMeta struct {
 }
 
 type cursorState struct {
-	Version string `json:"version"`
-	Count   int64  `json:"count"`
-	LastKey string `json:"last_key"`
+	Version         string `json:"version"`
+	Format          string `json:"format"`
+	EventConvention string `json:"event_sequence_convention,omitempty"`
+	Count           int64  `json:"count"`
+	LastKey         string `json:"last_key"`
 }
 
 type fingerprintState struct {
@@ -240,17 +384,18 @@ type fingerprintState struct {
 }
 
 type prepared struct {
-	adapter *Adapter
-	source  importer.Source
-	tx      *sql.Tx
-	meta    sessionMeta
+	adapter  *Adapter
+	source   importer.Source
+	tx       *sql.Tx
+	meta     sessionMeta
+	selected generationSelection
 }
 
 func (p *prepared) Close() error { return nil }
 
 func (p *prepared) Verify(ctx context.Context, state importer.SourceState) (importer.SourceChange, error) {
 	if state.Import.AdapterName != p.adapter.Name() || state.Import.AdapterVersion != AdapterVersion ||
-		state.Import.FormatVersion != FormatVersion || state.Import.ModelVersion != ModelVersion ||
+		state.Import.FormatVersion != p.selected.format || state.Import.ModelVersion != ModelVersion ||
 		state.Import.NormalizationVersion != NormalizationVersion {
 		return importer.SourceReplaced, nil
 	}
@@ -258,16 +403,20 @@ func (p *prepared) Verify(ctx context.Context, state importer.SourceState) (impo
 	var fingerprint fingerprintState
 	if state.Checkpoint.StateVersion != CursorVersion || json.Unmarshal(state.Checkpoint.Cursor, &cursor) != nil ||
 		json.Unmarshal(state.Checkpoint.Fingerprint, &fingerprint) != nil || cursor.Version != string(CursorVersion) ||
+		cursor.Format != string(p.selected.format) || cursor.EventConvention != p.selected.eventConvention ||
 		fingerprint.Version != fingerprintVersion || cursor.Count < 0 {
 		return importer.SourceReplaced, nil
 	}
 	digest := sha256.New()
-	var count int64
+	var count, total int64
+	var lastKey string
 	prefix := hex.EncodeToString(digest.Sum(nil))
 	err := p.eachRecord(ctx, func(record logicalRecord) error {
+		total++
 		if count < cursor.Count {
 			writeFingerprint(digest, record.raw)
 			count++
+			lastKey = record.key
 			if count == cursor.Count {
 				prefix = hex.EncodeToString(digest.Sum(nil))
 			}
@@ -280,13 +429,11 @@ func (p *prepared) Verify(ctx context.Context, state importer.SourceState) (impo
 	if count < cursor.Count {
 		return importer.SourceTruncated, nil
 	}
-	if prefix != fingerprint.SHA256 {
+	if lastKey != cursor.LastKey {
 		return importer.SourceMutated, nil
 	}
-	// Count the tail without retaining it.
-	total := int64(0)
-	if err := p.eachRecord(ctx, func(logicalRecord) error { total++; return nil }); err != nil {
-		return "", err
+	if prefix != fingerprint.SHA256 {
+		return importer.SourceMutated, nil
 	}
 	if total == cursor.Count {
 		return importer.SourceUnchanged, nil
@@ -298,7 +445,9 @@ func (p *prepared) Import(ctx context.Context, resume *importer.ImportCheckpoint
 	start := int64(0)
 	if resume != nil {
 		var cursor cursorState
-		if resume.StateVersion != CursorVersion || json.Unmarshal(resume.Cursor, &cursor) != nil || cursor.Version != string(CursorVersion) {
+		if resume.StateVersion != CursorVersion || json.Unmarshal(resume.Cursor, &cursor) != nil ||
+			cursor.Version != string(CursorVersion) || cursor.Format != string(p.selected.format) ||
+			cursor.EventConvention != p.selected.eventConvention {
 			return importer.ErrSourceChanged
 		}
 		start = cursor.Count
@@ -322,16 +471,22 @@ func (p *prepared) stream(ctx context.Context, start int64, sink importer.Import
 		return err
 	}
 	err = p.eachRecord(ctx, func(record logicalRecord) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		writeFingerprint(digest, record.raw)
 		events, diagnostics, err := p.normalize(record, session.ID, eventSequence)
 		if err != nil {
 			return err
 		}
-		if record.table != "session" {
-			if _, diagnostic := millisecondTime(record.timeCreated, "opencode.record.time_created.invalid"); diagnostic != nil {
-				diagnostics = append(diagnostics, *diagnostic)
+		switch record.table {
+		case "session":
+		default:
+			if record.timestampDiagnostic != nil {
+				diagnostics = append(diagnostics, *record.timestampDiagnostic)
 			}
 		}
+		diagnostics = boundDiagnostics(diagnostics)
 		eventSequence += int64(len(events))
 		recordCount++
 		checkpoint, err = p.checkpoint(recordCount, record.key, digest)
@@ -358,8 +513,8 @@ func (p *prepared) stream(ctx context.Context, start int64, sink importer.Import
 			}
 		}
 		return sink.Accept(ctx, importer.RecordEnvelope{
-			RawRecord: model.RawRecord{Ref: ref, Content: append([]byte(nil), record.raw...)}, Events: events,
-			Diagnostics: diagnostics, Checkpoint: checkpoint,
+			RawRecord: model.RawRecord{Ref: ref, Content: append([]byte(nil), record.raw...)},
+			Events:    events, Diagnostics: diagnostics, Checkpoint: checkpoint,
 		})
 	})
 	if err != nil {
@@ -371,8 +526,22 @@ func (p *prepared) stream(ctx context.Context, start int64, sink importer.Import
 	return sink.Complete(ctx, session, checkpoint)
 }
 
-func (p *prepared) checkpoint(count int64, lastKey string, digest interface{ Sum([]byte) []byte }) (importer.ImportCheckpoint, error) {
-	cursor, err := json.Marshal(cursorState{Version: string(CursorVersion), Count: count, LastKey: lastKey})
+func boundDiagnostics(values []model.Diagnostic) []model.Diagnostic {
+	if len(values) <= 8 {
+		return values
+	}
+	values = append([]model.Diagnostic(nil), values[:7]...)
+	return append(values, model.Diagnostic{
+		Code: "opencode.diagnostics.truncated", Severity: model.SeverityWarning,
+		Message: "Additional OpenCode row diagnostics were omitted.",
+	})
+}
+
+func (p *prepared) checkpoint(count int64, lastKey string, digest hash.Hash) (importer.ImportCheckpoint, error) {
+	cursor, err := json.Marshal(cursorState{
+		Version: string(CursorVersion), Format: string(p.selected.format), EventConvention: p.selected.eventConvention,
+		Count: count, LastKey: lastKey,
+	})
 	if err != nil {
 		return importer.ImportCheckpoint{}, err
 	}
@@ -380,7 +549,10 @@ func (p *prepared) checkpoint(count int64, lastKey string, digest interface{ Sum
 	if err != nil {
 		return importer.ImportCheckpoint{}, err
 	}
-	return importer.ImportCheckpoint{SourceID: p.source.ID, RecordSequence: count - 1, StateVersion: CursorVersion, Cursor: cursor, Fingerprint: fingerprint}, nil
+	return importer.ImportCheckpoint{
+		SourceID: p.source.ID, RecordSequence: count - 1, StateVersion: CursorVersion,
+		Cursor: cursor, Fingerprint: fingerprint,
+	}, nil
 }
 
 func (p *prepared) session() model.Session {
@@ -393,10 +565,18 @@ func (p *prepared) session() model.Session {
 	if endDiagnostic != nil {
 		diagnostics = append(diagnostics, *endDiagnostic)
 	}
+	if p.selected.durableIncomplete {
+		diagnostics = append(diagnostics, model.Diagnostic{
+			Code: "opencode.generation.durable.incomplete", Severity: model.SeverityWarning,
+			Message: "The selected OpenCode durable event sequence is incomplete; available rows were imported in source sequence order.",
+		})
+	}
 	return model.Session{
 		ID: canonicalSessionID(p.source.ID), Title: p.meta.title, StartedAt: started, EndedAt: ended, Diagnostics: diagnostics,
-		Import: model.ImportMetadata{SourceID: p.source.ID, AdapterName: p.adapter.Name(), AdapterVersion: AdapterVersion,
-			FormatVersion: FormatVersion, ModelVersion: ModelVersion, NormalizationVersion: NormalizationVersion},
+		Import: model.ImportMetadata{
+			SourceID: p.source.ID, AdapterName: p.adapter.Name(), AdapterVersion: AdapterVersion,
+			FormatVersion: p.selected.format, ModelVersion: ModelVersion, NormalizationVersion: NormalizationVersion,
+		},
 	}
 }
 
@@ -414,25 +594,70 @@ type encodedRow struct {
 }
 
 type logicalRecord struct {
-	table       string
-	key         string
-	nativeID    string
-	messageID   string
-	data        []byte
-	dataIsBlob  bool
-	messageData []byte
-	timeCreated any
-	raw         []byte
+	table               string
+	key                 string
+	nativeID            string
+	messageID           string
+	rowType             string
+	rowTypePresent      bool
+	rowTypeValid        bool
+	data                []byte
+	dataIsBlob          bool
+	messageData         []byte
+	timeCreated         any
+	timestamp           *time.Time
+	timestampDiagnostic *model.Diagnostic
+	raw                 []byte
 }
 
 func (p *prepared) eachRecord(ctx context.Context, accept func(logicalRecord) error) error {
-	sessionRecord, err := p.selectOne(ctx, "session", `id = ?`, []any{p.meta.nativeID}, "", p.meta.nativeID, "")
+	sessionRecord, err := p.selectOne(ctx, "session", `id = ?`, []any{p.meta.nativeID}, "", "")
 	if err != nil {
 		return err
 	}
 	if err := accept(sessionRecord); err != nil {
 		return err
 	}
+	switch p.selected.generation {
+	case generationMessage:
+		return p.eachFlat(ctx, "session_message", `session_id = ?`, []any{p.meta.nativeID}, `seq, id`, accept)
+	case generationEvent:
+		return p.eachFlat(ctx, "event", `aggregate_id = ?`, []any{p.meta.nativeID}, `seq, id`, accept)
+	default:
+		return p.eachLegacy(ctx, accept)
+	}
+}
+
+func (p *prepared) eachFlat(ctx context.Context, table, where string, args []any, order string, accept func(logicalRecord) error) error {
+	rows, err := p.tx.QueryContext(ctx, `SELECT * FROM `+table+` WHERE `+where+` ORDER BY `+order, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		values, err := scanValues(rows, len(columns))
+		if err != nil {
+			return err
+		}
+		record, err := makeRecord(table, columns, values, "", "")
+		if err != nil {
+			return err
+		}
+		if err := accept(record); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func (p *prepared) eachLegacy(ctx context.Context, accept func(logicalRecord) error) error {
 	messages, err := p.tx.QueryContext(ctx, `SELECT * FROM message WHERE session_id = ? ORDER BY time_created, id`, p.meta.nativeID)
 	if err != nil {
 		return err
@@ -454,50 +679,77 @@ func (p *prepared) eachRecord(ctx context.Context, accept func(logicalRecord) er
 		if err != nil {
 			return err
 		}
-		messageData := append([]byte(nil), messageRecord.data...)
-		parts, err := p.tx.QueryContext(ctx, `SELECT * FROM part WHERE session_id = ? AND message_id = ? ORDER BY id`, p.meta.nativeID, messageRecord.nativeID)
-		if err != nil {
-			return err
-		}
-		partColumns, err := parts.Columns()
-		if err != nil {
-			parts.Close()
-			return err
-		}
-		for parts.Next() {
-			partValues, err := scanValues(parts, len(partColumns))
-			if err != nil {
-				parts.Close()
-				return err
-			}
-			partRecord, err := makeRecord("part", partColumns, partValues, messageRecord.key+":part", messageRecord.nativeID)
-			if err != nil {
-				parts.Close()
-				return err
-			}
-			partRecord.messageData = messageData
-			if err := accept(partRecord); err != nil {
-				parts.Close()
-				return err
-			}
-		}
-		if err := parts.Err(); err != nil {
-			parts.Close()
-			return err
-		}
-		if err := parts.Close(); err != nil {
+		if err := p.eachPart(ctx, messageRecord, accept); err != nil {
 			return err
 		}
 		if err := accept(messageRecord); err != nil {
 			return err
 		}
 	}
-	return messages.Err()
+	if err := messages.Err(); err != nil {
+		return err
+	}
+	// Orphan parts are still authoritative selected-generation rows.
+	rows, err := p.tx.QueryContext(ctx, `SELECT * FROM part WHERE session_id = ? AND NOT EXISTS (SELECT 1 FROM message WHERE message.id = part.message_id AND message.session_id = ?) ORDER BY id`, p.meta.nativeID, p.meta.nativeID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	partColumns, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		values, err := scanValues(rows, len(partColumns))
+		if err != nil {
+			return err
+		}
+		record, err := makeRecord("part", partColumns, values, "orphan-part", "")
+		if err != nil {
+			return err
+		}
+		if err := accept(record); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
 
-func (p *prepared) selectOne(ctx context.Context, table, where string, args []any, key, nativeID, messageID string) (logicalRecord, error) {
-	query := `SELECT * FROM ` + table + ` WHERE ` + where
-	rows, err := p.tx.QueryContext(ctx, query, args...)
+func (p *prepared) eachPart(ctx context.Context, message logicalRecord, accept func(logicalRecord) error) error {
+	parts, err := p.tx.QueryContext(ctx, `SELECT * FROM part WHERE session_id = ? AND message_id = ? ORDER BY id`, p.meta.nativeID, message.nativeID)
+	if err != nil {
+		return err
+	}
+	defer parts.Close()
+	columns, err := parts.Columns()
+	if err != nil {
+		return err
+	}
+	for parts.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		values, err := scanValues(parts, len(columns))
+		if err != nil {
+			return err
+		}
+		record, err := makeRecord("part", columns, values, message.key+":part", message.nativeID)
+		if err != nil {
+			return err
+		}
+		record.messageData = append([]byte(nil), message.data...)
+		if err := accept(record); err != nil {
+			return err
+		}
+	}
+	return parts.Err()
+}
+
+func (p *prepared) selectOne(ctx context.Context, table, where string, args []any, key, messageID string) (logicalRecord, error) {
+	rows, err := p.tx.QueryContext(ctx, `SELECT * FROM `+table+` WHERE `+where, args...)
 	if err != nil {
 		return logicalRecord{}, err
 	}
@@ -507,25 +759,17 @@ func (p *prepared) selectOne(ctx context.Context, table, where string, args []an
 		return logicalRecord{}, err
 	}
 	if !rows.Next() {
-		if err := rows.Err(); err != nil {
-			return logicalRecord{}, err
-		}
 		return logicalRecord{}, sql.ErrNoRows
 	}
 	values, err := scanValues(rows, len(columns))
 	if err != nil {
 		return logicalRecord{}, err
 	}
-	record, err := makeRecord(table, columns, values, key, messageID)
-	if nativeID != "" {
-		record.nativeID = nativeID
-	}
-	return record, err
+	return makeRecord(table, columns, values, key, messageID)
 }
 
 func scanValues(rows *sql.Rows, count int) ([]any, error) {
-	values := make([]any, count)
-	dest := make([]any, count)
+	values, dest := make([]any, count), make([]any, count)
 	for i := range values {
 		dest[i] = &values[i]
 	}
@@ -535,6 +779,7 @@ func scanValues(rows *sql.Rows, count int) ([]any, error) {
 func makeRecord(table string, names []string, values []any, keyPrefix, messageID string) (logicalRecord, error) {
 	record := logicalRecord{table: table, messageID: messageID}
 	encoded := encodedRow{Table: table, Columns: make([]encodedColumn, len(names))}
+	var seq any
 	for i, name := range names {
 		column, err := encodeColumn(name, values[i])
 		if err != nil {
@@ -544,18 +789,43 @@ func makeRecord(table string, names []string, values []any, keyPrefix, messageID
 		switch name {
 		case "id":
 			record.nativeID = stringValue(values[i])
+		case "type":
+			record.rowTypePresent = true
+			switch value := values[i].(type) {
+			case string:
+				record.rowType, record.rowTypeValid = value, true
+			case []byte:
+				record.rowType = string(value)
+			}
 		case "data":
 			record.data, record.dataIsBlob = bytesValue(values[i])
 		case "time_created":
 			record.timeCreated = values[i]
+		case "seq":
+			seq = values[i]
 		}
 	}
-	if table == "message" {
+	timestampValue := record.timeCreated
+	timestampCode := "opencode.record.time_created.invalid"
+	if table == "event" {
+		var eventData map[string]json.RawMessage
+		if json.Unmarshal(record.data, &eventData) == nil {
+			timestampValue = rawScalar(eventData["timestamp"])
+		}
+		timestampCode = "opencode.event.timestamp.invalid"
+	}
+	record.timestamp, record.timestampDiagnostic = millisecondTime(timestampValue, timestampCode)
+	switch table {
+	case "message":
 		record.key = "message:" + valueKey(record.timeCreated) + ":" + record.nativeID
-	} else if keyPrefix == "" {
-		record.key = table + ":" + record.nativeID
-	} else {
-		record.key = keyPrefix + ":" + record.nativeID
+	case "session_message", "event":
+		record.key = table + ":" + valueKey(seq) + ":" + record.nativeID
+	default:
+		if keyPrefix == "" {
+			record.key = table + ":" + record.nativeID
+		} else {
+			record.key = keyPrefix + ":" + record.nativeID
+		}
 	}
 	encoded.Key = record.key
 	raw, err := json.Marshal(encoded)
@@ -595,6 +865,8 @@ func bytesValue(value any) ([]byte, bool) {
 
 func stringValue(value any) string {
 	switch value := value.(type) {
+	case nil:
+		return ""
 	case string:
 		return value
 	case []byte:
@@ -652,232 +924,4 @@ func millisecondTime(value any, code string) (*time.Time, *model.Diagnostic) {
 
 func timestampDiagnostic(code string) *model.Diagnostic {
 	return &model.Diagnostic{Code: code, Severity: model.SeverityWarning, Message: "An OpenCode millisecond timestamp is malformed; source order was preserved."}
-}
-
-func (p *prepared) normalize(record logicalRecord, sessionID model.SessionID, sequence int64) ([]model.Event, []model.Diagnostic, error) {
-	if record.table == "session" {
-		return nil, nil, nil
-	}
-	var data map[string]json.RawMessage
-	if len(record.data) == 0 || json.Unmarshal(record.data, &data) != nil || data == nil {
-		return nil, []model.Diagnostic{{
-			Code: "opencode.record.data.malformed", Severity: model.SeverityWarning,
-			Message:              "The OpenCode row data is malformed JSON and was retained without canonical interpretation.",
-			InterpretationReason: model.InterpretationStructurallyInvalidKnownRecord,
-		}}, nil
-	}
-	typeName := jsonString(data["type"])
-	if record.table == "message" {
-		return normalizeMessage(record, data, typeName, sessionID, sequence)
-	}
-	return normalizePart(record, data, typeName, sessionID, sequence)
-}
-
-func normalizeMessage(record logicalRecord, data map[string]json.RawMessage, typeName string, sessionID model.SessionID, sequence int64) ([]model.Event, []model.Diagnostic, error) {
-	role := jsonString(data["role"])
-	if role == "" && typeName != "" {
-		role = typeName
-	}
-	if role == "" {
-		return nil, []model.Diagnostic{{
-			Code: "opencode.message.role.missing", Severity: model.SeverityWarning,
-			Message:              "The OpenCode message row has no role discriminator.",
-			InterpretationReason: model.InterpretationMissingDiscriminant,
-		}}, nil
-	}
-	if role != "assistant" && role != "user" && role != "system" && role != "developer" {
-		event, err := newEvent(record, sessionID, sequence, 0, "unknown", model.EventKindUnknown, "Unsupported OpenCode message: "+role, role, model.UnknownData{Reason: model.UnknownUnsupportedNestedVariant, OriginalKind: model.BoundOriginalKind("message:" + role)})
-		return []model.Event{event}, nil, err
-	}
-	if role != "assistant" {
-		return nil, nil, nil
-	}
-	var events []model.Event
-	var diagnostics []model.Diagnostic
-	if raw := data["tokens"]; len(raw) > 0 {
-		var tokens map[string]json.RawMessage
-		if json.Unmarshal(raw, &tokens) == nil {
-			var cache map[string]json.RawMessage
-			_ = json.Unmarshal(tokens["cache"], &cache)
-			usage := model.UsageData{InputTokens: jsonInt64(tokens["input"]), OutputTokens: jsonInt64(tokens["output"]), CacheReadTokens: jsonInt64(cache["read"]), CacheWriteTokens: jsonInt64(cache["write"])}
-			if clearNegativeTokenCounters(&usage) {
-				diagnostics = append(diagnostics, model.Diagnostic{Code: "opencode.message.tokens.negative", Severity: model.SeverityWarning, Message: "The OpenCode token usage contains a negative counter; malformed counters were omitted."})
-			}
-			event, err := newEvent(record, sessionID, sequence+int64(len(events)), uint64(len(events)), "usage", model.EventKindUsage, "OpenCode token usage", "", usage)
-			if err != nil {
-				return nil, nil, err
-			}
-			events = append(events, event)
-		}
-	}
-	if raw := data["error"]; len(raw) > 0 && string(raw) != "null" {
-		message, code := jsonText(raw), "assistant_error"
-		var details map[string]json.RawMessage
-		if json.Unmarshal(raw, &details) == nil {
-			if value := jsonString(details["message"]); value != "" {
-				message = value
-			}
-			if value := jsonString(details["name"]); value != "" {
-				code = value
-			}
-		}
-		event, err := newEvent(record, sessionID, sequence+int64(len(events)), uint64(len(events)), "error", model.EventKindError, "OpenCode assistant error", message, model.ErrorData{Code: code, Message: message})
-		if err != nil {
-			return nil, nil, err
-		}
-		events = append(events, event)
-	}
-	return events, diagnostics, nil
-}
-
-func clearNegativeTokenCounters(usage *model.UsageData) bool {
-	found := false
-	for _, counter := range []**int64{&usage.InputTokens, &usage.OutputTokens, &usage.CacheReadTokens, &usage.CacheWriteTokens} {
-		if *counter != nil && **counter < 0 {
-			*counter = nil
-			found = true
-		}
-	}
-	return found
-}
-
-func normalizePart(record logicalRecord, data map[string]json.RawMessage, typeName string, sessionID model.SessionID, sequence int64) ([]model.Event, []model.Diagnostic, error) {
-	if typeName == "" {
-		return nil, []model.Diagnostic{{
-			Code: "opencode.part.type.missing", Severity: model.SeverityWarning,
-			Message:              "The OpenCode part row has no type discriminator.",
-			InterpretationReason: model.InterpretationMissingDiscriminant,
-		}}, nil
-	}
-	switch typeName {
-	case "text":
-		text := jsonString(data["text"])
-		role := messageRole(record.messageData)
-		diagnostics := []model.Diagnostic(nil)
-		if text == "" {
-			diagnostics = append(diagnostics, model.Diagnostic{Code: "opencode.part.text.missing", Severity: model.SeverityWarning, Message: "The OpenCode text part has no text content."})
-		}
-		event, err := newEvent(record, sessionID, sequence, 0, "text", model.EventKindMessage, roleSummary(role), text, model.MessageData{Role: role, Text: text})
-		return []model.Event{event}, diagnostics, err
-	case "tool":
-		callID, toolName := jsonString(data["callID"]), jsonString(data["tool"])
-		var state map[string]json.RawMessage
-		_ = json.Unmarshal(data["state"], &state)
-		input := jsonText(state["input"])
-		call, err := newEvent(record, sessionID, sequence, 0, "call", model.EventKindToolCall, "Tool call: "+fallback(toolName, "unknown"), input, model.ToolCallData{CallID: callID, ToolName: toolName, Input: input})
-		if err != nil {
-			return nil, nil, err
-		}
-		events := []model.Event{call}
-		status := jsonString(state["status"])
-		if status == "completed" || status == "error" {
-			isError := status == "error"
-			output := jsonText(state["output"])
-			if output == "" {
-				output = jsonText(state["error"])
-			}
-			result, err := newEvent(record, sessionID, sequence+1, 1, "result", model.EventKindToolResult, "Tool result: "+fallback(toolName, "unknown"), output, model.ToolResultData{CallID: callID, ToolName: toolName, Output: output, IsError: &isError})
-			if err != nil {
-				return nil, nil, err
-			}
-			events = append(events, result)
-		}
-		var diagnostics []model.Diagnostic
-		if callID == "" || toolName == "" || len(data["state"]) == 0 {
-			diagnostics = append(diagnostics, model.Diagnostic{Code: "opencode.part.tool.partial", Severity: model.SeverityWarning, Message: "The OpenCode tool part is incomplete; available evidence was normalized."})
-		}
-		return events, diagnostics, nil
-	case "patch":
-		text := jsonString(data["text"])
-		if text == "" {
-			text = jsonText(data["files"])
-		}
-		var paths []string
-		_ = json.Unmarshal(data["files"], &paths)
-		event, err := newEvent(record, sessionID, sequence, 0, "patch", model.EventKindPatch, "OpenCode patch", text, model.PatchData{Text: text, Paths: paths})
-		return []model.Event{event}, nil, err
-	case "reasoning", "file", "step-start", "step-finish", "snapshot", "agent", "subtask", "retry":
-		event, err := newEvent(record, sessionID, sequence, 0, "unknown", model.EventKindUnknown, "Unsupported OpenCode part: "+typeName, typeName, model.UnknownData{Reason: model.UnknownUnsupportedNestedVariant, OriginalKind: model.BoundOriginalKind("part:" + typeName)})
-		return []model.Event{event}, nil, err
-	default:
-		event, err := newEvent(record, sessionID, sequence, 0, "unknown", model.EventKindUnknown, "Unsupported OpenCode part: "+typeName, typeName, model.UnknownData{Reason: model.UnknownUnsupportedNestedVariant, OriginalKind: model.BoundOriginalKind("part:" + typeName)})
-		return []model.Event{event}, nil, err
-	}
-}
-
-func newEvent(record logicalRecord, sessionID model.SessionID, sequence int64, ordinal uint64, suffix string, kind model.EventKind, summary, searchable string, data model.NormalizedData) (model.Event, error) {
-	nativeID := "opencode:" + record.table + ":" + record.nativeID
-	if nativeID != "" {
-		nativeID += ":" + suffix
-	}
-	var native *model.NativeEventIdentity
-	if nativeID != "" {
-		native = &model.NativeEventIdentity{Scope: model.NativeEventIDSession, SessionID: string(sessionID), EventID: nativeID}
-	}
-	id, err := model.NewEventID(model.EventIDInput{Native: native, SourceID: "fallback", RecordSequence: &sequence, RecordHash: "fallback", EventOrdinal: ordinal})
-	if err != nil {
-		return model.Event{}, err
-	}
-	timestamp, _ := millisecondTime(record.timeCreated, "")
-	return model.Event{ID: id, SessionID: sessionID, Sequence: sequence, Timestamp: timestamp, Kind: kind, Summary: summary, SearchableText: searchable, Data: data}, nil
-}
-
-func messageRole(raw []byte) model.MessageRole {
-	var data map[string]json.RawMessage
-	if json.Unmarshal(raw, &data) != nil {
-		return model.MessageRoleUnknown
-	}
-	switch jsonString(data["role"]) {
-	case "user":
-		return model.MessageRoleUser
-	case "assistant":
-		return model.MessageRoleAssistant
-	case "system", "developer":
-		return model.MessageRoleSystem
-	case "":
-		return model.MessageRoleUnknown
-	default:
-		return model.MessageRoleOther
-	}
-}
-
-func roleSummary(role model.MessageRole) string {
-	value := string(role)
-	if value == "" {
-		return "Unknown message"
-	}
-	return strings.ToUpper(value[:1]) + value[1:] + " message"
-}
-
-func jsonString(raw json.RawMessage) string {
-	var value string
-	_ = json.Unmarshal(raw, &value)
-	return value
-}
-func jsonInt64(raw json.RawMessage) *int64 {
-	var value int64
-	if json.Unmarshal(raw, &value) != nil {
-		return nil
-	}
-	return &value
-}
-func jsonText(raw json.RawMessage) string {
-	if len(raw) == 0 || string(raw) == "null" {
-		return ""
-	}
-	if value := jsonString(raw); value != "" {
-		return value
-	}
-	var value any
-	if json.Unmarshal(raw, &value) != nil {
-		return string(raw)
-	}
-	encoded, _ := json.Marshal(value)
-	return string(encoded)
-}
-func fallback(value, alternate string) string {
-	if value == "" {
-		return alternate
-	}
-	return value
 }

@@ -1,0 +1,10 @@
+CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, time_created INTEGER, time_updated INTEGER, future_text TEXT, future_blob BLOB);
+CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT, future_text TEXT, future_blob BLOB);
+INSERT INTO session VALUES ('malformed', 'Malformed variants', 1, 9, '', x'');
+INSERT INTO session_message VALUES ('null_data', 'malformed', 'user', 1, 2, 2, 'null', '', x'');
+INSERT INTO session_message VALUES ('empty_data', 'malformed', 'user', 2, 3, 3, '', '', x'');
+INSERT INTO session_message VALUES ('array_data', 'malformed', 'user', 3, 4, 4, '[]', '', x'');
+INSERT INTO session_message VALUES ('conflict', 'malformed', 'user', 4, 5, 5, '{"type":"system","text":"conflict"}', '', x'');
+INSERT INTO session_message VALUES ('known_bad', 'malformed', 'user', 5, 6, 6, '{"text":{"bad":true}}', '', x'00ff');
+INSERT INTO session_message VALUES ('future', 'malformed', 'future-kind', 6, 7, 7, '{"value":true}', 'unknown', x'');
+INSERT INTO session_message VALUES ('after', 'malformed', 'system', 7, 8, 8, '{"text":"valid after malformed"}', '', x'');
