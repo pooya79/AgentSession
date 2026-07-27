@@ -18,10 +18,13 @@ analysis are still under development.
   content in source order, retain snapshots, sidechains, malformed records,
   and unknown variants, and use the same verified append and reconciliation
   guarantees.
-- OpenCode SQLite databases using the current `session`/`message`/`part`
-  schema. Each database is read through one query-only snapshot and expands
-  into one stable logical source per OpenCode session. Complete typed rows,
-  including unknown columns and exact TEXT/BLOB values, are retained.
+- OpenCode SQLite databases using legacy `session`/`message`/`part`, sequenced
+  `session_message`, or durable `event_sequence`/`event` storage. Each database
+  is read through one query-only snapshot and expands into one stable logical
+  source per OpenCode session. A complete durable sequence takes precedence,
+  then populated sequenced messages, then legacy rows; generations are never
+  merged. Complete selected rows, including unknown columns and exact
+  TEXT/BLOB values, are retained.
 
 The application composes discovery and all adapters behind one shared runtime.
 Canonical imports are stored locally in SQLite. Both interactive interfaces

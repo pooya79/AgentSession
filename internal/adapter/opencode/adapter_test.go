@@ -21,6 +21,10 @@ import (
 )
 
 func createFixture(t *testing.T) string {
+	return createNamedFixture(t, "valid_multi_session.sql")
+}
+
+func createNamedFixture(t *testing.T, name string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "opencode.db")
 	db, err := sql.Open("sqlite", path)
@@ -28,11 +32,183 @@ func createFixture(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	fixture := adaptertest.LoadSanitizedFixture(t, filepath.Join("testdata", "valid_multi_session.sql"), "private-project")
+	fixture := adaptertest.LoadSanitizedFixture(t, filepath.Join("testdata", name), "private-project")
 	if _, err := db.Exec(string(fixture)); err != nil {
 		t.Fatalf("execute fixture: %v", err)
 	}
 	return path
+}
+
+func TestGenerationSelectionUsesOneAuthoritativeTimeline(t *testing.T) {
+	ctx := context.Background()
+	view, err := New().PrepareContainer(ctx, sourceFor(createNamedFixture(t, "coexisting_generations.sql")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer view.Close()
+	children, err := view.Children(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(children) != 2 {
+		t.Fatalf("children = %d, want 2", len(children))
+	}
+	want := []generation{generationEvent, generationMessage}
+	for i, child := range children {
+		prepared := child.Prepared.(*prepared)
+		if prepared.selected.generation != want[i] {
+			t.Fatalf("child %d generation = %q, want %q", i, prepared.selected.generation, want[i])
+		}
+		var tables []string
+		if err := prepared.eachRecord(ctx, func(record logicalRecord) error {
+			tables = append(tables, record.table)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		for _, table := range tables[1:] {
+			if i == 0 && table != "event" {
+				t.Fatalf("durable child retained cross-generation table %q: %v", table, tables)
+			}
+			if i == 1 && table != "session_message" {
+				t.Fatalf("fallback child retained cross-generation table %q: %v", table, tables)
+			}
+		}
+	}
+}
+
+func TestGenerationSpecificFormatsAndMappings(t *testing.T) {
+	tests := []struct {
+		fixture string
+		format  model.Version
+		kinds   []model.EventKind
+	}{
+		{
+			fixture: "legacy_variants_v1.sql", format: LegacyFormatVersion,
+			kinds: []model.EventKind{model.EventKindMessage, model.EventKindFileRead, model.EventKindUsage, model.EventKindUnknown, model.EventKindUnknown, model.EventKindError, model.EventKindUnknown, model.EventKindUsage},
+		},
+		{
+			fixture: "session_message_v1.sql", format: MessageFormatVersion,
+			kinds: []model.EventKind{model.EventKindMessage, model.EventKindCommand, model.EventKindMessage, model.EventKindUnknown, model.EventKindToolCall, model.EventKindToolResult, model.EventKindUsage, model.EventKindSummary, model.EventKindUnknown, model.EventKindMessage},
+		},
+		{
+			fixture: "durable_events_v1.sql", format: EventFormatVersion,
+			kinds: []model.EventKind{model.EventKindMessage, model.EventKindToolCall, model.EventKindToolResult, model.EventKindToolCall, model.EventKindToolResult, model.EventKindUsage, model.EventKindUnknown, model.EventKindSummary, model.EventKindUnknown},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.fixture, func(t *testing.T) {
+			ctx := context.Background()
+			indexDB, err := storageSQLite.Open(ctx, filepath.Join(t.TempDir(), "index.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer indexDB.Close()
+			store, _ := storageSQLite.NewImportStore(indexDB)
+			coordinator, _ := importer.NewCoordinator(store, []importer.Adapter{New()}, nil, importer.Options{})
+			results, err := coordinator.ImportAll(ctx, sourceFor(createNamedFixture(t, test.fixture)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(results) != 2 {
+				t.Fatalf("results = %d, want 2", len(results))
+			}
+			session, found, err := store.Session(ctx, results[0].SessionID)
+			if err != nil || !found {
+				t.Fatalf("session = %#v, %v, %v", session, found, err)
+			}
+			if session.Import.FormatVersion != test.format {
+				t.Fatalf("format = %q, want %q", session.Import.FormatVersion, test.format)
+			}
+			summaries, err := store.EventSummaries(ctx, results[0].SessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var kinds []model.EventKind
+			for _, summary := range summaries {
+				kinds = append(kinds, summary.Kind)
+			}
+			if !equalKinds(kinds, test.kinds) {
+				t.Fatalf("kinds = %v, want %v", kinds, test.kinds)
+			}
+		})
+	}
+}
+
+func TestIncompleteDurableWithoutFallbackIsSelectedAndDiagnosed(t *testing.T) {
+	ctx := context.Background()
+	path := createNamedFixture(t, "durable_events_v1.sql")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE event_sequence SET seq = 99 WHERE aggregate_id = 'ev_main'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	view, err := New().PrepareContainer(ctx, sourceFor(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer view.Close()
+	children, err := view.Children(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared := children[0].Prepared.(*prepared)
+	if prepared.selected.generation != generationEvent || !prepared.selected.durableIncomplete {
+		t.Fatalf("selection = %#v", prepared.selected)
+	}
+	session := prepared.session()
+	if len(session.Diagnostics) != 1 || session.Diagnostics[0].Code != "opencode.generation.durable.incomplete" {
+		t.Fatalf("session diagnostics = %#v", session.Diagnostics)
+	}
+}
+
+func TestNormalizationV1StateIsReplaced(t *testing.T) {
+	ctx := context.Background()
+	view, err := New().PrepareContainer(ctx, sourceFor(createFixture(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer view.Close()
+	children, err := view.Children(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared := children[0].Prepared.(*prepared)
+	change, err := prepared.Verify(ctx, importer.SourceState{Import: model.ImportMetadata{
+		SourceID: prepared.source.ID, AdapterName: "opencode", AdapterVersion: AdapterVersion,
+		FormatVersion: LegacyFormatVersion, ModelVersion: ModelVersion, NormalizationVersion: "1",
+	}})
+	if err != nil || change != importer.SourceReplaced {
+		t.Fatalf("verify v1 = %q, %v", change, err)
+	}
+}
+
+func TestDiagnosticsAreBoundedPerRow(t *testing.T) {
+	values := make([]model.Diagnostic, 10)
+	for i := range values {
+		values[i] = invalidDiagnostic("opencode.test.invalid", "A fixed test diagnostic.")
+	}
+	got := boundDiagnostics(values)
+	if len(got) != 8 || got[7].Code != "opencode.diagnostics.truncated" {
+		t.Fatalf("bounded diagnostics = %#v", got)
+	}
+}
+
+func equalKinds(left, right []model.EventKind) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func sourceFor(path string) importer.Source {
@@ -112,7 +288,8 @@ func TestCoordinatorImportsLogicalSessionsAndRetainsRows(t *testing.T) {
 		if err != nil || !found {
 			t.Fatalf("session %q = %#v, %v, %v", result.SessionID, session, found, err)
 		}
-		if session.Import.AdapterVersion != AdapterVersion || session.Import.FormatVersion != FormatVersion {
+		if session.Import.AdapterVersion != AdapterVersion || session.Import.FormatVersion != LegacyFormatVersion ||
+			session.Import.NormalizationVersion != NormalizationVersion {
 			t.Fatalf("metadata = %#v", session.Import)
 		}
 	}
@@ -466,7 +643,7 @@ func TestNegativeTokenCounterIsDiagnosedAndOmitted(t *testing.T) {
 	}
 	foundDiagnostic := false
 	for _, diagnostic := range diagnostics {
-		if diagnostic.Diagnostic.Code == "opencode.message.tokens.negative" {
+		if diagnostic.Diagnostic.Code == "opencode.message.tokens.invalid" {
 			foundDiagnostic = true
 		}
 	}
