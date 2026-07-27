@@ -1497,6 +1497,10 @@ func (m Model) detailContentLines() []string {
 			lines = append(lines, m.spinner.View()+" Loading and redacting retained evidence…")
 		case m.detailState.inspectionErr != nil:
 			lines = append(lines, "Inspection failed: "+m.detailState.inspectionErr.Error())
+		case m.detailState.inspection.State == app.EvidenceUnavailable:
+			lines = append(lines, "Retained evidence for this event is no longer available.")
+		case m.detailState.inspection.State == app.EvidenceNotFound:
+			lines = append(lines, "This event's retained evidence could not be located.")
 		case m.detailState.inspection.EventID != "":
 			inspection := m.detailState.inspection
 			lines = append(lines, fmt.Sprintf("%d of %d bytes · %d redactions · truncated: %t",

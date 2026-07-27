@@ -169,6 +169,19 @@ func TestNullMessagesAreRetainedAsMalformedDiagnostics(t *testing.T) {
 	}
 }
 
+func TestNullContentBlockLinksEarlierEventsToMalformedDiagnostic(t *testing.T) {
+	record := `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"before null"},null]}}`
+	sink, _ := importSource(t, bytesSource("null-block", []byte(record+"\n")), nil, nil)
+	if len(sink.records) != 1 || len(sink.records[0].Events) != 1 || len(sink.records[0].Diagnostics) != 1 {
+		t.Fatalf("record = %#v, want one event and one diagnostic", sink.records)
+	}
+	diagnostic := sink.records[0].Diagnostics[0]
+	if diagnostic.InterpretationReason != model.InterpretationStructurallyInvalidKnownRecord ||
+		len(diagnostic.EventIDs) != 1 || diagnostic.EventIDs[0] != sink.records[0].Events[0].ID {
+		t.Fatalf("diagnostic = %#v, want malformed reason linked to emitted event", diagnostic)
+	}
+}
+
 func TestMainThreadNormalizationRetainsRecordsAndUsesIndependentSequences(t *testing.T) {
 	sink, _ := importSource(t, fixtureSource(t, "main.jsonl"), nil, nil)
 	got := events(sink.records)

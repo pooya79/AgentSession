@@ -392,6 +392,7 @@ func (p *prepared) envelope(line []byte, offset, sequence int64, session model.S
 	}
 
 	drafts, interpretationReason := normalizeRecord(record)
+	var eventIDs []model.EventID
 	for ordinal, draft := range drafts {
 		eventID, err := claudeEventID(record.UUID, p.sessionID, uint64(ordinal), len(drafts), ref)
 		if err != nil {
@@ -400,12 +401,14 @@ func (p *prepared) envelope(line []byte, offset, sequence int64, session model.S
 		event := model.Event{ID: eventID, SessionID: session.ID, Sequence: p.eventSeq, Kind: draft.kind, Summary: draft.summary, SearchableText: draft.searchable, Data: draft.data, RawRecord: ref}
 		p.eventSeq++
 		envelope.Events = append(envelope.Events, event)
+		eventIDs = append(eventIDs, eventID)
 	}
 	if interpretationReason != "" {
 		envelope.Diagnostics = append(envelope.Diagnostics, model.Diagnostic{
 			Code: "claude.record.structure.invalid", Severity: model.SeverityWarning,
 			Message:              "A known Claude record has an invalid structure and was retained.",
 			InterpretationReason: interpretationReason,
+			EventIDs:             eventIDs,
 			RawRecordIDs:         []model.RawRecordID{rawID},
 		})
 	}

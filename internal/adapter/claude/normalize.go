@@ -79,7 +79,7 @@ func isJSONNull(raw json.RawMessage) bool {
 
 func normalizeBlock(raw json.RawMessage, role model.MessageRole) (eventDraft, model.InterpretationReason) {
 	var block map[string]json.RawMessage
-	if json.Unmarshal(raw, &block) != nil {
+	if json.Unmarshal(raw, &block) != nil || block == nil {
 		return eventDraft{}, model.InterpretationStructurallyInvalidKnownRecord
 	}
 	typeName := rawString(block["type"])

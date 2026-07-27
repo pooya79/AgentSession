@@ -376,10 +376,12 @@ func (s *ImportStore) InterpretationCoverage(ctx context.Context, sessionID mode
 	var coverage storagecontract.InterpretationCoverage
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
-			(SELECT COUNT(*) FROM events WHERE session_id = ? AND kind = 'unknown'),
+			(SELECT COUNT(*) FROM events WHERE session_id = ? AND kind = ?),
 			(SELECT COUNT(DISTINCT raw_record_id) FROM record_diagnostics
-			 WHERE session_id = ? AND interpretation_reason IN ('missing_discriminant', 'structurally_invalid_known_record'))
-	`, sessionID, sessionID).Scan(&coverage.UnknownEvents, &coverage.MalformedRecords)
+			 WHERE session_id = ? AND interpretation_reason IN (?, ?))
+	`, sessionID, model.EventKindUnknown, sessionID,
+		model.InterpretationMissingDiscriminant, model.InterpretationStructurallyInvalidKnownRecord,
+	).Scan(&coverage.UnknownEvents, &coverage.MalformedRecords)
 	if err != nil {
 		return storagecontract.InterpretationCoverage{}, fmt.Errorf("sqlite exploration: interpretation coverage for %q: %w", sessionID, err)
 	}

@@ -83,6 +83,7 @@ func TestEventRedirectUsesCanonicalLocation(t *testing.T) {
 func TestUnknownEvidenceInspectionIsCSRFProtectedNoStoreAndEscaped(t *testing.T) {
 	eventID := validEventID("c")
 	sessionID := model.SessionID("session")
+	inspectionState := app.EvidenceComplete
 	services := servicesStub{
 		timeline: func(_ context.Context, request app.TimelineRequest) (app.TimelinePage, error) {
 			return app.TimelinePage{State: app.EvidenceComplete, Events: []model.EventSummary{{
@@ -98,7 +99,7 @@ func TestUnknownEvidenceInspectionIsCSRFProtectedNoStoreAndEscaped(t *testing.T)
 		},
 		inspect: func(context.Context, model.SessionID, model.EventID) (app.UnknownEvidenceInspection, error) {
 			return app.UnknownEvidenceInspection{
-				State: app.EvidenceComplete, SessionID: sessionID, EventID: eventID,
+				State: inspectionState, SessionID: sessionID, EventID: eventID,
 				Text: "<script>alert(1)</script>", OriginalSize: 30, ReturnedSize: 25, RedactionCount: 1,
 			}, nil
 		},
@@ -116,5 +117,13 @@ func TestUnknownEvidenceInspectionIsCSRFProtectedNoStoreAndEscaped(t *testing.T)
 		strings.Contains(response.Body.String(), "<script>alert") ||
 		!strings.Contains(response.Body.String(), "&lt;script&gt;alert") {
 		t.Fatalf("inspection response = %d headers=%v body=%q", response.Code, response.Header(), response.Body.String())
+	}
+
+	inspectionState = app.EvidenceUnavailable
+	response = request(t, handler, http.MethodPost, target, strings.NewReader(url.Values{"csrf": {csrf}}.Encode()), map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
+	if response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), "Retained evidence is unavailable") ||
+		strings.Contains(response.Body.String(), "Redacted retained evidence") {
+		t.Fatalf("unavailable inspection response = %d body=%q", response.Code, response.Body.String())
 	}
 }

@@ -659,7 +659,7 @@ func (p *prepared) normalize(record logicalRecord, sessionID model.SessionID, se
 		return nil, nil, nil
 	}
 	var data map[string]json.RawMessage
-	if len(record.data) == 0 || json.Unmarshal(record.data, &data) != nil {
+	if len(record.data) == 0 || json.Unmarshal(record.data, &data) != nil || data == nil {
 		return nil, []model.Diagnostic{{
 			Code: "opencode.record.data.malformed", Severity: model.SeverityWarning,
 			Message:              "The OpenCode row data is malformed JSON and was retained without canonical interpretation.",

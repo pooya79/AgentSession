@@ -476,6 +476,34 @@ func TestRequestFailuresAndUnavailableEvidence(t *testing.T) {
 	}
 }
 
+func TestUnknownEvidenceInspectionStatesAreRenderedExplicitly(t *testing.T) {
+	event := testEvent("event-1", 1)
+	event.Kind = model.EventKindUnknown
+	m := New(context.Background(), &servicesStub{})
+	m.sessionsState.selected = "session-1"
+	m.detailState.detail = app.EventDetail{
+		State:   app.EvidenceComplete,
+		Event:   event,
+		Payload: model.UnknownData{Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "future"},
+	}
+
+	tests := map[app.EvidenceState]struct {
+		eventID model.EventID
+		want    string
+	}{
+		app.EvidenceUnavailable: {eventID: event.ID, want: "Retained evidence for this event is no longer available."},
+		app.EvidenceNotFound:    {want: "This event's retained evidence could not be located."},
+	}
+	for state, test := range tests {
+		m.detailState.inspection = app.UnknownEvidenceInspection{
+			State: state, EventID: test.eventID,
+		}
+		if got := strings.Join(m.detailContentLines(), "\n"); !strings.Contains(got, test.want) {
+			t.Errorf("state %q detail = %q, want %q", state, got, test.want)
+		}
+	}
+}
+
 func TestProjectionPanelControlsPollingConfirmationAndSafeDiagnostics(t *testing.T) {
 	hostile := "unsafe\x1b]8;;https://attacker.invalid\x07link\x1b]8;;\x07"
 	status := app.ProjectionStatus{

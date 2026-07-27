@@ -102,14 +102,18 @@ templ eventDetail(detail app.EventDetail, payload string, refs map[model.EventID
 }
 
 templ unknownEvidence(inspection app.UnknownEvidenceInspection) {
-	<div class="retained-evidence">
-		<h3>Redacted retained evidence</h3>
-		<p class="metadata">
-			{ strconvFormatInt(inspection.ReturnedSize) } of { strconvFormatInt(inspection.OriginalSize) } bytes · { strconvFormatInt(int64(inspection.RedactionCount)) } redactions
-			if inspection.Truncated {
-				<span>· truncated</span>
-			}
-		</p>
-		<pre>{ inspection.Text }</pre>
-	</div>
+	if inspection.State == app.EvidenceUnavailable {
+		<p class="notice warning">Retained evidence is unavailable. This is not evidence of success.</p>
+	} else {
+		<div class="retained-evidence">
+			<h3>Redacted retained evidence</h3>
+			<p class="metadata">
+				{ strconvFormatInt(inspection.ReturnedSize) } of { strconvFormatInt(inspection.OriginalSize) } bytes · { strconvFormatInt(int64(inspection.RedactionCount)) } redactions
+				if inspection.Truncated {
+					<span>· truncated</span>
+				}
+			</p>
+			<pre>{ inspection.Text }</pre>
+		</div>
+	}
 }

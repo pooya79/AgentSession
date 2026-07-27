@@ -97,7 +97,9 @@ type ExplorationReader interface {
 	EventPayload(context.Context, model.SessionID, model.EventID) (model.NormalizedData, bool, error)
 	// Diagnostics returns an exact total with at most the requested number of entries.
 	Diagnostics(context.Context, model.SessionID, *model.EventID, int) (DiagnosticPage, error)
+	// InterpretationCoverage returns exact canonical counts of Unknown events and malformed records for a session.
 	InterpretationCoverage(context.Context, model.SessionID) (InterpretationCoverage, error)
+	// RawRecordPrefix lazily decodes at most limit bytes of a retained raw record's content.
 	RawRecordPrefix(context.Context, model.SessionID, model.RawRecordID, int64) (RawRecordPrefix, bool, error)
 }
 
