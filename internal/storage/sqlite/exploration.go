@@ -329,12 +329,12 @@ func (s *ImportStore) Diagnostics(ctx context.Context, sessionID model.SessionID
 	}
 	union := `
 		SELECT 0 AS source_order, position AS record_order, 0 AS item_order, '' AS tie_order,
-		       code, severity, message, event_ids_json, raw_record_ids_json
+		       code, severity, message, '' AS interpretation_reason, event_ids_json, raw_record_ids_json
 		FROM session_diagnostics WHERE ` + where + `
 		UNION ALL
 		SELECT 1 AS source_order, COALESCE(r.record_sequence, r.byte_offset, 0) AS record_order,
 		       d.ordinal AS item_order, d.raw_record_id AS tie_order,
-		       d.code, d.severity, d.message, d.event_ids_json, d.raw_record_ids_json
+		       d.code, d.severity, d.message, d.interpretation_reason, d.event_ids_json, d.raw_record_ids_json
 		FROM record_diagnostics d JOIN raw_records r ON r.id = d.raw_record_id WHERE ` + strings.ReplaceAll(where, "session_id", "d.session_id")
 	allArgs := append(append([]any(nil), args...), args...)
 	var total int64
@@ -345,7 +345,7 @@ func (s *ImportStore) Diagnostics(ctx context.Context, sessionID model.SessionID
 	if limit == 0 || total == 0 {
 		return page, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT code, severity, message, event_ids_json, raw_record_ids_json FROM (`+union+`) ORDER BY source_order, record_order, item_order, tie_order LIMIT ?`, append(allArgs, limit)...)
+	rows, err := s.db.QueryContext(ctx, `SELECT code, severity, message, interpretation_reason, event_ids_json, raw_record_ids_json FROM (`+union+`) ORDER BY source_order, record_order, item_order, tie_order LIMIT ?`, append(allArgs, limit)...)
 	if err != nil {
 		return storagecontract.DiagnosticPage{}, fmt.Errorf("sqlite exploration: diagnostics for %q: %w", sessionID, err)
 	}
@@ -353,7 +353,7 @@ func (s *ImportStore) Diagnostics(ctx context.Context, sessionID model.SessionID
 	for rows.Next() {
 		var diagnostic model.Diagnostic
 		var eventIDs, rawRecordIDs string
-		if err := rows.Scan(&diagnostic.Code, &diagnostic.Severity, &diagnostic.Message, &eventIDs, &rawRecordIDs); err != nil {
+		if err := rows.Scan(&diagnostic.Code, &diagnostic.Severity, &diagnostic.Message, &diagnostic.InterpretationReason, &eventIDs, &rawRecordIDs); err != nil {
 			return storagecontract.DiagnosticPage{}, fmt.Errorf("sqlite exploration: scan diagnostic for %q: %w", sessionID, err)
 		}
 		if err := json.Unmarshal([]byte(eventIDs), &diagnostic.EventIDs); err != nil {
@@ -368,4 +368,43 @@ func (s *ImportStore) Diagnostics(ctx context.Context, sessionID model.SessionID
 		return storagecontract.DiagnosticPage{}, fmt.Errorf("sqlite exploration: iterate diagnostics for %q: %w", sessionID, err)
 	}
 	return page, nil
+}
+
+// InterpretationCoverage derives exact coverage counts from committed
+// canonical evidence instead of persisting a mutable session flag.
+func (s *ImportStore) InterpretationCoverage(ctx context.Context, sessionID model.SessionID) (storagecontract.InterpretationCoverage, error) {
+	var coverage storagecontract.InterpretationCoverage
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM events WHERE session_id = ? AND kind = 'unknown'),
+			(SELECT COUNT(DISTINCT raw_record_id) FROM record_diagnostics
+			 WHERE session_id = ? AND interpretation_reason IN ('missing_discriminant', 'structurally_invalid_known_record'))
+	`, sessionID, sessionID).Scan(&coverage.UnknownEvents, &coverage.MalformedRecords)
+	if err != nil {
+		return storagecontract.InterpretationCoverage{}, fmt.Errorf("sqlite exploration: interpretation coverage for %q: %w", sessionID, err)
+	}
+	return coverage, nil
+}
+
+// RawRecordPrefix lazily decodes only the requested retained-record prefix.
+func (s *ImportStore) RawRecordPrefix(ctx context.Context, sessionID model.SessionID, rawRecordID model.RawRecordID, limit int64) (storagecontract.RawRecordPrefix, bool, error) {
+	if limit < 0 {
+		return storagecontract.RawRecordPrefix{}, false, errors.New("sqlite exploration: raw record prefix limit must not be negative")
+	}
+	var payload storagecontract.EncodedPayload
+	err := s.db.QueryRowContext(ctx, `
+		SELECT retention_policy_version, storage_encoding, original_size, content
+		FROM raw_records WHERE session_id = ? AND id = ?
+	`, sessionID, rawRecordID).Scan(&payload.PolicyVersion, &payload.Encoding, &payload.OriginalSize, &payload.Content)
+	if errors.Is(err, sql.ErrNoRows) {
+		return storagecontract.RawRecordPrefix{}, false, nil
+	}
+	if err != nil {
+		return storagecontract.RawRecordPrefix{}, false, fmt.Errorf("sqlite exploration: raw record prefix %q: %w", rawRecordID, err)
+	}
+	content, err := storagecontract.DecodePayloadPrefix(payload, limit)
+	if err != nil {
+		return storagecontract.RawRecordPrefix{}, true, fmt.Errorf("sqlite exploration: decode raw record prefix %q: %w", rawRecordID, err)
+	}
+	return storagecontract.RawRecordPrefix{Content: content, OriginalSize: payload.OriginalSize}, true, nil
 }

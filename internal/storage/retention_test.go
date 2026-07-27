@@ -52,3 +52,20 @@ func TestDecodePayloadRejectsCorruptionAndWrongSize(t *testing.T) {
 		t.Fatal("DecodePayload(wrong size) error = nil, want size error")
 	}
 }
+
+func TestDecodePayloadPrefixBoundsIdentityAndCompressedContent(t *testing.T) {
+	t.Parallel()
+	for _, content := range [][]byte{
+		[]byte("small retained record"),
+		bytes.Repeat([]byte("large retained record"), InlinePayloadThresholdBytes/10),
+	} {
+		encoded, err := EncodePayload(content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prefix, err := DecodePayloadPrefix(encoded, 17)
+		if err != nil || !bytes.Equal(prefix, content[:17]) {
+			t.Fatalf("DecodePayloadPrefix(%s) = (%q, %v)", encoded.Encoding, prefix, err)
+		}
+	}
+}

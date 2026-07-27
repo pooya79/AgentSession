@@ -660,7 +660,11 @@ func (p *prepared) normalize(record logicalRecord, sessionID model.SessionID, se
 	}
 	var data map[string]json.RawMessage
 	if len(record.data) == 0 || json.Unmarshal(record.data, &data) != nil {
-		return nil, []model.Diagnostic{{Code: "opencode.record.data.malformed", Severity: model.SeverityWarning, Message: "The OpenCode row data is malformed JSON and was retained without canonical interpretation."}}, nil
+		return nil, []model.Diagnostic{{
+			Code: "opencode.record.data.malformed", Severity: model.SeverityWarning,
+			Message:              "The OpenCode row data is malformed JSON and was retained without canonical interpretation.",
+			InterpretationReason: model.InterpretationStructurallyInvalidKnownRecord,
+		}}, nil
 	}
 	typeName := jsonString(data["type"])
 	if record.table == "message" {
@@ -675,11 +679,14 @@ func normalizeMessage(record logicalRecord, data map[string]json.RawMessage, typ
 		role = typeName
 	}
 	if role == "" {
-		event, err := newEvent(record, sessionID, sequence, 0, "unknown", model.EventKindUnknown, "OpenCode message with missing role", "", model.UnknownData{OriginalKind: "message"})
-		return []model.Event{event}, []model.Diagnostic{{Code: "opencode.message.role.missing", Severity: model.SeverityWarning, Message: "The OpenCode message row has no role discriminator."}}, err
+		return nil, []model.Diagnostic{{
+			Code: "opencode.message.role.missing", Severity: model.SeverityWarning,
+			Message:              "The OpenCode message row has no role discriminator.",
+			InterpretationReason: model.InterpretationMissingDiscriminant,
+		}}, nil
 	}
 	if role != "assistant" && role != "user" && role != "system" && role != "developer" {
-		event, err := newEvent(record, sessionID, sequence, 0, "unknown", model.EventKindUnknown, "Unsupported OpenCode message: "+role, role, model.UnknownData{OriginalKind: "message:" + role})
+		event, err := newEvent(record, sessionID, sequence, 0, "unknown", model.EventKindUnknown, "Unsupported OpenCode message: "+role, role, model.UnknownData{Reason: model.UnknownUnsupportedNestedVariant, OriginalKind: model.BoundOriginalKind("message:" + role)})
 		return []model.Event{event}, nil, err
 	}
 	if role != "assistant" {
@@ -736,8 +743,11 @@ func clearNegativeTokenCounters(usage *model.UsageData) bool {
 
 func normalizePart(record logicalRecord, data map[string]json.RawMessage, typeName string, sessionID model.SessionID, sequence int64) ([]model.Event, []model.Diagnostic, error) {
 	if typeName == "" {
-		event, err := newEvent(record, sessionID, sequence, 0, "unknown", model.EventKindUnknown, "OpenCode part with missing type", "", model.UnknownData{OriginalKind: "part"})
-		return []model.Event{event}, []model.Diagnostic{{Code: "opencode.part.type.missing", Severity: model.SeverityWarning, Message: "The OpenCode part row has no type discriminator."}}, err
+		return nil, []model.Diagnostic{{
+			Code: "opencode.part.type.missing", Severity: model.SeverityWarning,
+			Message:              "The OpenCode part row has no type discriminator.",
+			InterpretationReason: model.InterpretationMissingDiscriminant,
+		}}, nil
 	}
 	switch typeName {
 	case "text":
@@ -787,10 +797,10 @@ func normalizePart(record logicalRecord, data map[string]json.RawMessage, typeNa
 		event, err := newEvent(record, sessionID, sequence, 0, "patch", model.EventKindPatch, "OpenCode patch", text, model.PatchData{Text: text, Paths: paths})
 		return []model.Event{event}, nil, err
 	case "reasoning", "file", "step-start", "step-finish", "snapshot", "agent", "subtask", "retry":
-		event, err := newEvent(record, sessionID, sequence, 0, "unknown", model.EventKindUnknown, "Unsupported OpenCode part: "+typeName, typeName, model.UnknownData{OriginalKind: "part:" + typeName})
+		event, err := newEvent(record, sessionID, sequence, 0, "unknown", model.EventKindUnknown, "Unsupported OpenCode part: "+typeName, typeName, model.UnknownData{Reason: model.UnknownUnsupportedNestedVariant, OriginalKind: model.BoundOriginalKind("part:" + typeName)})
 		return []model.Event{event}, nil, err
 	default:
-		event, err := newEvent(record, sessionID, sequence, 0, "unknown", model.EventKindUnknown, "Unsupported OpenCode part: "+typeName, typeName, model.UnknownData{OriginalKind: "part:" + typeName})
+		event, err := newEvent(record, sessionID, sequence, 0, "unknown", model.EventKindUnknown, "Unsupported OpenCode part: "+typeName, typeName, model.UnknownData{Reason: model.UnknownUnsupportedNestedVariant, OriginalKind: model.BoundOriginalKind("part:" + typeName)})
 		return []model.Event{event}, nil, err
 	}
 }

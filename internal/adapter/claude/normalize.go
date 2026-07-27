@@ -15,26 +15,26 @@ type eventDraft struct {
 	data       model.NormalizedData
 }
 
-func normalizeRecord(record wireRecord) []eventDraft {
+func normalizeRecord(record wireRecord) ([]eventDraft, model.InterpretationReason) {
 	if record.IsSidechain {
 		label := "sidechain:" + fallback(record.Type, "unknown")
-		return []eventDraft{unknownDraft(label, "Claude sidechain record")}
+		return []eventDraft{unknownDraft(label, "Claude sidechain record", model.UnknownUnsupportedNestedVariant)}, ""
 	}
 	switch record.Type {
 	case "user", "assistant":
 		return normalizeMessage(record)
 	case "summary":
-		return []eventDraft{{kind: model.EventKindSummary, summary: "Claude session summary", searchable: record.Summary, data: model.SummaryData{Text: record.Summary}}}
+		return []eventDraft{{kind: model.EventKindSummary, summary: "Claude session summary", searchable: record.Summary, data: model.SummaryData{Text: record.Summary}}}, ""
 	case "file-history-snapshot":
-		return nil
+		return nil, ""
 	default:
-		return []eventDraft{unknownDraft(fallback(record.Type, "unknown"), "Unsupported Claude record")}
+		return []eventDraft{unknownDraft(fallback(record.Type, "unknown"), "Unsupported Claude record", model.UnknownUnsupportedRecordKind)}, ""
 	}
 }
 
-func normalizeMessage(record wireRecord) []eventDraft {
+func normalizeMessage(record wireRecord) ([]eventDraft, model.InterpretationReason) {
 	if isJSONNull(record.Message) {
-		return []eventDraft{unknownDraft(record.Type+":message", "Unsupported Claude message")}
+		return nil, model.InterpretationStructurallyInvalidKnownRecord
 	}
 	var message struct {
 		Role    string          `json:"role"`
@@ -42,22 +42,26 @@ func normalizeMessage(record wireRecord) []eventDraft {
 		Usage   json.RawMessage `json:"usage"`
 	}
 	if json.Unmarshal(record.Message, &message) != nil {
-		return []eventDraft{unknownDraft(record.Type+":message", "Unsupported Claude message")}
+		return nil, model.InterpretationStructurallyInvalidKnownRecord
 	}
 	role := messageRole(message.Role, record.Type)
 	var result []eventDraft
 	var text string
 	if isJSONNull(message.Content) {
-		result = append(result, unknownDraft(record.Type+":content", "Unsupported Claude message content"))
+		return result, model.InterpretationStructurallyInvalidKnownRecord
 	} else if json.Unmarshal(message.Content, &text) == nil {
 		result = append(result, messageDraft(role, text))
 	} else {
 		var blocks []json.RawMessage
 		if json.Unmarshal(message.Content, &blocks) != nil {
-			result = append(result, unknownDraft(record.Type+":content", "Unsupported Claude message content"))
+			return result, model.InterpretationStructurallyInvalidKnownRecord
 		} else {
 			for _, block := range blocks {
-				result = append(result, normalizeBlock(block, role))
+				draft, reason := normalizeBlock(block, role)
+				if reason != "" {
+					return result, reason
+				}
+				result = append(result, draft)
 			}
 		}
 	}
@@ -66,27 +70,30 @@ func normalizeMessage(record wireRecord) []eventDraft {
 			result = append(result, eventDraft{kind: model.EventKindUsage, summary: "Token usage", data: usage})
 		}
 	}
-	return result
+	return result, ""
 }
 
 func isJSONNull(raw json.RawMessage) bool {
 	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
 
-func normalizeBlock(raw json.RawMessage, role model.MessageRole) eventDraft {
+func normalizeBlock(raw json.RawMessage, role model.MessageRole) (eventDraft, model.InterpretationReason) {
 	var block map[string]json.RawMessage
 	if json.Unmarshal(raw, &block) != nil {
-		return unknownDraft("malformed-content-block", "Unsupported Claude content block")
+		return eventDraft{}, model.InterpretationStructurallyInvalidKnownRecord
 	}
 	typeName := rawString(block["type"])
+	if typeName == "" {
+		return eventDraft{}, model.InterpretationMissingDiscriminant
+	}
 	switch typeName {
 	case "text":
-		return messageDraft(role, rawString(block["text"]))
+		return messageDraft(role, rawString(block["text"])), ""
 	case "tool_use":
 		id := rawString(block["id"])
 		name := rawString(block["name"])
 		input := rawText(block["input"])
-		return eventDraft{kind: model.EventKindToolCall, summary: "Tool call: " + fallback(name, "unknown"), searchable: input, data: model.ToolCallData{CallID: id, ToolName: name, Input: input}}
+		return eventDraft{kind: model.EventKindToolCall, summary: "Tool call: " + fallback(name, "unknown"), searchable: input, data: model.ToolCallData{CallID: id, ToolName: name, Input: input}}, ""
 	case "tool_result":
 		id := rawString(block["tool_use_id"])
 		output := contentText(block["content"])
@@ -97,9 +104,9 @@ func normalizeBlock(raw json.RawMessage, role model.MessageRole) eventDraft {
 				isError = &value
 			}
 		}
-		return eventDraft{kind: model.EventKindToolResult, summary: "Tool result", searchable: output, data: model.ToolResultData{CallID: id, Output: output, IsError: isError}}
+		return eventDraft{kind: model.EventKindToolResult, summary: "Tool result", searchable: output, data: model.ToolResultData{CallID: id, Output: output, IsError: isError}}, ""
 	default:
-		return unknownDraft("content-block:"+fallback(typeName, "unknown"), "Unsupported Claude content block")
+		return unknownDraft("content-block:"+typeName, "Unsupported Claude content block", model.UnknownUnsupportedNestedVariant), ""
 	}
 }
 
@@ -125,8 +132,8 @@ func messageDraft(role model.MessageRole, value string) eventDraft {
 	return eventDraft{kind: model.EventKindMessage, summary: label + " message", searchable: value, data: model.MessageData{Role: role, Text: value}}
 }
 
-func unknownDraft(label, summary string) eventDraft {
-	return eventDraft{kind: model.EventKindUnknown, summary: summary + ": " + label, searchable: label, data: model.UnknownData{OriginalKind: label}}
+func unknownDraft(label, summary string, reason model.UnknownReason) eventDraft {
+	return eventDraft{kind: model.EventKindUnknown, summary: summary + ": " + label, searchable: label, data: model.UnknownData{Reason: reason, OriginalKind: model.BoundOriginalKind(label)}}
 }
 
 func messageRole(role, topLevel string) model.MessageRole {

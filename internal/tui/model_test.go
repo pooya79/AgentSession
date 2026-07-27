@@ -31,6 +31,8 @@ type servicesStub struct {
 	timelineErr         error
 	detail              app.EventDetail
 	detailErr           error
+	inspection          app.UnknownEvidenceInspection
+	inspectionErr       error
 	projections         app.ProjectionStatus
 	projectionErr       error
 	projectionAction    app.ProjectionAction
@@ -97,6 +99,12 @@ func (s *servicesStub) EventDetail(_ context.Context, request app.EventDetailReq
 	defer s.mu.Unlock()
 	s.detailCalls = append(s.detailCalls, request)
 	return s.detail, s.detailErr
+}
+
+func (s *servicesStub) InspectUnknownEvidence(context.Context, model.SessionID, model.EventID) (app.UnknownEvidenceInspection, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inspection, s.inspectionErr
 }
 
 func (s *servicesStub) ProjectionStatus(context.Context, model.SessionID) (app.ProjectionStatus, error) {

@@ -23,9 +23,17 @@ type servicesStub struct {
 	timeline           func(context.Context, app.TimelineRequest) (app.TimelinePage, error)
 	detail             func(context.Context, app.EventDetailRequest) (app.EventDetail, error)
 	locations          func(context.Context, []model.EventID) (map[model.EventID]app.EventLocation, error)
+	inspect            func(context.Context, model.SessionID, model.EventID) (app.UnknownEvidenceInspection, error)
 	projectionStatus   func(context.Context, model.SessionID) (app.ProjectionStatus, error)
 	retryProjections   func(context.Context, model.SessionID) (app.ProjectionAction, error)
 	rebuildProjections func(context.Context, model.SessionID, string) (app.ProjectionAction, error)
+}
+
+func (s servicesStub) InspectUnknownEvidence(ctx context.Context, sessionID model.SessionID, eventID model.EventID) (app.UnknownEvidenceInspection, error) {
+	if s.inspect != nil {
+		return s.inspect(ctx, sessionID, eventID)
+	}
+	return app.UnknownEvidenceInspection{State: app.EvidenceNotFound}, nil
 }
 
 func (s servicesStub) LibraryOverview(ctx context.Context) (app.LibraryOverview, error) {

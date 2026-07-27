@@ -120,7 +120,7 @@ func TestProbeAndPrepareInspectEightCompleteRecords(t *testing.T) {
 		t.Fatalf("Probe() = %#v", probe)
 	}
 	sink, _ := importSource(t, source, nil, nil)
-	if sink.session.ID != "window-session" || sink.session.Import.AdapterName != "claude" || sink.session.Import.AdapterVersion != "1" || sink.session.Import.NormalizationVersion != "1" {
+	if sink.session.ID != "window-session" || sink.session.Import.AdapterName != "claude" || sink.session.Import.AdapterVersion != "1" || sink.session.Import.NormalizationVersion != NormalizationVersion {
 		t.Fatalf("session metadata = %#v", sink.session)
 	}
 
@@ -152,7 +152,7 @@ func TestProbeTreatsClaudeStructuralRecordsAsCertain(t *testing.T) {
 	}
 }
 
-func TestNullMessagesAreNormalizedAsUnknown(t *testing.T) {
+func TestNullMessagesAreRetainedAsMalformedDiagnostics(t *testing.T) {
 	tests := map[string]string{
 		"message": `{"type":"user","message":null}`,
 		"content": `{"type":"assistant","message":{"role":"assistant","content":null}}`,
@@ -160,9 +160,10 @@ func TestNullMessagesAreNormalizedAsUnknown(t *testing.T) {
 	for name, record := range tests {
 		t.Run(name, func(t *testing.T) {
 			sink, _ := importSource(t, bytesSource(name, []byte(record+"\n")), nil, nil)
-			got := events(sink.records)
-			if len(got) != 1 || got[0].Kind != model.EventKindUnknown {
-				t.Fatalf("events = %#v, want one unknown event", got)
+			if len(sink.records) != 1 || len(sink.records[0].Events) != 0 ||
+				len(sink.records[0].Diagnostics) != 1 ||
+				sink.records[0].Diagnostics[0].InterpretationReason != model.InterpretationStructurallyInvalidKnownRecord {
+				t.Fatalf("record = %#v, want retained malformed diagnostic", sink.records)
 			}
 		})
 	}

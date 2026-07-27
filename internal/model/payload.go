@@ -1,6 +1,10 @@
 package model
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+	"unicode/utf8"
+)
 
 // NormalizedData is implemented only by source-neutral payloads in this
 // package. Adapters map source records into these types rather than extending
@@ -130,9 +134,43 @@ type SummaryData struct {
 
 func (SummaryData) eventKind() EventKind { return EventKindSummary }
 
-// UnknownData preserves the source's record label when one is available. The
-// full unsupported record remains accessible through Event.RawRecord.
+// UnknownReason states why valid timeline evidence could not be mapped to a
+// typed canonical event.
+type UnknownReason string
+
+const (
+	UnknownUnsupportedRecordKind    UnknownReason = "unsupported_record_kind"
+	UnknownUnsupportedNestedVariant UnknownReason = "unsupported_nested_variant"
+	UnknownOriginalKindMaxBytes                   = 256
+)
+
+// BoundOriginalKind returns a valid UTF-8 classification label no larger than
+// UnknownOriginalKindMaxBytes. Raw retained bytes remain authoritative.
+func BoundOriginalKind(value string) string {
+	value = strings.ToValidUTF8(value, "\uFFFD")
+	if len(value) <= UnknownOriginalKindMaxBytes {
+		return value
+	}
+	value = value[:UnknownOriginalKindMaxBytes]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value
+}
+
+func (r UnknownReason) valid() bool {
+	switch r {
+	case UnknownUnsupportedRecordKind, UnknownUnsupportedNestedVariant:
+		return true
+	default:
+		return false
+	}
+}
+
+// UnknownData preserves bounded classification metadata for valid unsupported
+// evidence. The retained raw record remains authoritative.
 type UnknownData struct {
+	Reason       UnknownReason
 	OriginalKind string
 }
 
@@ -165,7 +203,20 @@ func validateNormalizedData(data NormalizedData) error {
 				return fmt.Errorf("usage token counts must not be negative")
 			}
 		}
-	case ToolCallData, ToolResultData, CommandData, PatchData, ErrorData, SummaryData, UnknownData:
+	case UnknownData:
+		if !value.Reason.valid() {
+			return fmt.Errorf("unsupported unknown reason %q", value.Reason)
+		}
+		if !utf8.ValidString(value.OriginalKind) {
+			return fmt.Errorf("unknown original kind must be valid UTF-8")
+		}
+		if len(value.OriginalKind) > UnknownOriginalKindMaxBytes {
+			return fmt.Errorf("unknown original kind exceeds %d bytes", UnknownOriginalKindMaxBytes)
+		}
+		if strings.TrimSpace(value.OriginalKind) == "" {
+			return fmt.Errorf("unknown original kind is required")
+		}
+	case ToolCallData, ToolResultData, CommandData, PatchData, ErrorData, SummaryData:
 		// Empty fields represent incomplete evidence and remain valid.
 	default:
 		return fmt.Errorf("unsupported normalized data type %T", data)

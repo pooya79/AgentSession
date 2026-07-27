@@ -26,6 +26,9 @@ func (c contractConsumer) EventDetail(ctx context.Context, request app.EventDeta
 func (c contractConsumer) EventLocations(ctx context.Context, ids []model.EventID) (map[model.EventID]app.EventLocation, error) {
 	return c.services.EventLocations(ctx, ids)
 }
+func (c contractConsumer) InspectUnknownEvidence(ctx context.Context, sessionID model.SessionID, eventID model.EventID) (app.UnknownEvidenceInspection, error) {
+	return c.services.InspectUnknownEvidence(ctx, sessionID, eventID)
+}
 func (c contractConsumer) ProjectionStatus(ctx context.Context, sessionID model.SessionID) (app.ProjectionStatus, error) {
 	return c.services.ProjectionStatus(ctx, sessionID)
 }

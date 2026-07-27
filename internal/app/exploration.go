@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pooya79/AgentSession/internal/model"
+	"github.com/pooya79/AgentSession/internal/redaction"
 	"github.com/pooya79/AgentSession/internal/storage"
 )
 
@@ -27,6 +28,9 @@ const (
 	SessionPreviewMaxRunes = 240
 	// maximumIdentifierSize bounds untrusted route and cursor identifiers.
 	maximumIdentifierSize = 512
+	// UnknownInspectionMaxBytes is the fixed decoded-content cap for explicit
+	// retained Unknown-evidence inspection.
+	UnknownInspectionMaxBytes = 64 * 1024
 )
 
 // ErrInvalidRequest marks exploration input rejected before a storage read.
@@ -53,6 +57,22 @@ type DiagnosticSynopsis struct {
 	Omitted     int64
 }
 
+// InterpretationCoverageState describes interpretation independently of
+// canonical evidence integrity and session outcome.
+type InterpretationCoverageState string
+
+const (
+	InterpretationFullyInterpreted     InterpretationCoverageState = "fully_interpreted"
+	InterpretationPartiallyInterpreted InterpretationCoverageState = "partially_interpreted"
+)
+
+// InterpretationCoverage contains exact committed coverage counts.
+type InterpretationCoverage struct {
+	State            InterpretationCoverageState
+	UnknownEvents    int64
+	MalformedRecords int64
+}
+
 // SessionSummary is the presentation-safe canonical evidence summary for one session.
 type SessionSummary struct {
 	ID             model.SessionID
@@ -67,6 +87,7 @@ type SessionSummary struct {
 	EventCount     int64
 	State          EvidenceState
 	Diagnostics    DiagnosticSynopsis
+	Interpretation InterpretationCoverage
 	// Projections reports derived-data readiness separately from State, which
 	// describes canonical evidence only.
 	Projections ProjectionSummary
@@ -105,11 +126,12 @@ type TimelineRequest struct {
 
 // TimelinePage contains bounded canonical event summaries and their evidence state.
 type TimelinePage struct {
-	State        EvidenceState
-	Events       []model.EventSummary
-	NextCursor   string
-	Diagnostics  DiagnosticSynopsis
-	FocusedEvent model.EventID
+	State          EvidenceState
+	Events         []model.EventSummary
+	NextCursor     string
+	Diagnostics    DiagnosticSynopsis
+	FocusedEvent   model.EventID
+	Interpretation InterpretationCoverage
 }
 
 // EventLocation identifies the retained session and ordering position of an event.
@@ -128,11 +150,25 @@ type EventDetailRequest struct {
 
 // EventDetail combines a lightweight envelope, optional payload, and bounded diagnostics.
 type EventDetail struct {
-	State       EvidenceState
-	Event       model.EventSummary
-	RawRecord   model.RawRecordRef
-	Payload     model.NormalizedData
-	Diagnostics DiagnosticSynopsis
+	State          EvidenceState
+	Event          model.EventSummary
+	RawRecord      model.RawRecordRef
+	Payload        model.NormalizedData
+	Diagnostics    DiagnosticSynopsis
+	Interpretation InterpretationCoverage
+}
+
+// UnknownEvidenceInspection is returned only by an explicit Unknown-event
+// action and never by ordinary exploration reads.
+type UnknownEvidenceInspection struct {
+	State          EvidenceState
+	SessionID      model.SessionID
+	EventID        model.EventID
+	Text           string
+	OriginalSize   int64
+	ReturnedSize   int64
+	Truncated      bool
+	RedactionCount int
 }
 
 // Explorer exposes bounded, validated reads over retained canonical evidence.
@@ -147,6 +183,7 @@ type Explorer interface {
 	EventDetail(context.Context, EventDetailRequest) (EventDetail, error)
 	// EventLocations resolves a bounded set of event IDs without loading payloads.
 	EventLocations(context.Context, []model.EventID) (map[model.EventID]EventLocation, error)
+	InspectUnknownEvidence(context.Context, model.SessionID, model.EventID) (UnknownEvidenceInspection, error)
 }
 
 // explorationService validates presentation requests before delegating to storage.
@@ -205,6 +242,10 @@ func (s *explorationService) ListSessions(ctx context.Context, request ListSessi
 			return SessionPage{}, fmt.Errorf("list imported sessions: diagnostics for %q: %w", row.ID, err)
 		}
 		synopsis := diagnosticSynopsis(diagnostics)
+		coverage, err := s.interpretationCoverage(ctx, row.ID)
+		if err != nil {
+			return SessionPage{}, fmt.Errorf("list imported sessions: interpretation coverage for %q: %w", row.ID, err)
+		}
 		state := EvidenceComplete
 		if synopsis.Total > 0 {
 			state = EvidencePartial
@@ -214,7 +255,7 @@ func (s *explorationService) ListSessions(ctx context.Context, request ListSessi
 			ID: row.ID, Title: row.Title, Summary: row.Summary, StartedAt: row.StartedAt, EndedAt: row.EndedAt,
 			LastActivityAt: row.LastActivityAt, SourceID: row.SourceID, AgentName: row.AgentName,
 			Preview:    sessionPreview(row.Summary, row.FirstUserMessage),
-			EventCount: row.EventCount, State: state, Diagnostics: synopsis,
+			EventCount: row.EventCount, State: state, Diagnostics: synopsis, Interpretation: coverage,
 		})
 	}
 	if len(rows) > 0 && request.Cursor != "" && (!backward || more) {
@@ -287,6 +328,10 @@ func (s *explorationService) Timeline(ctx context.Context, request TimelineReque
 		return TimelinePage{}, fmt.Errorf("read timeline diagnostics for %q: %w", request.SessionID, err)
 	}
 	synopsis := diagnosticSynopsis(diagnostics)
+	coverage, err := s.interpretationCoverage(ctx, request.SessionID)
+	if err != nil {
+		return TimelinePage{}, fmt.Errorf("read timeline interpretation coverage for %q: %w", request.SessionID, err)
+	}
 	state := EvidenceComplete
 	if synopsis.Total > 0 {
 		state = EvidencePartial
@@ -294,7 +339,7 @@ func (s *explorationService) Timeline(ctx context.Context, request TimelineReque
 			state = EvidenceUnavailable
 		}
 	}
-	page := TimelinePage{State: state, Events: rows, Diagnostics: synopsis, FocusedEvent: request.FocusedEvent}
+	page := TimelinePage{State: state, Events: rows, Diagnostics: synopsis, FocusedEvent: request.FocusedEvent, Interpretation: coverage}
 	if more && len(rows) > 0 {
 		page.NextCursor, err = encodeCursor(cursorEnvelope{Kind: "timeline", SessionID: request.SessionID, Sequence: rows[len(rows)-1].Sequence})
 		if err != nil {
@@ -348,6 +393,10 @@ func (s *explorationService) EventDetail(ctx context.Context, request EventDetai
 		return EventDetail{}, fmt.Errorf("read event %q diagnostics: %w", request.EventID, err)
 	}
 	detail := EventDetail{State: EvidenceComplete, Event: envelope.EventSummary, RawRecord: envelope.RawRecord, Diagnostics: diagnosticSynopsis(diagnostics)}
+	detail.Interpretation, err = s.interpretationCoverage(ctx, request.SessionID)
+	if err != nil {
+		return EventDetail{}, fmt.Errorf("read event %q interpretation coverage: %w", request.EventID, err)
+	}
 	if detail.Diagnostics.Total > 0 {
 		detail.State = EvidencePartial
 	}
@@ -363,6 +412,76 @@ func (s *explorationService) EventDetail(ctx context.Context, request EventDetai
 		detail.Payload = payload
 	}
 	return detail, nil
+}
+
+func (s *explorationService) interpretationCoverage(ctx context.Context, sessionID model.SessionID) (InterpretationCoverage, error) {
+	value, err := s.reader.InterpretationCoverage(ctx, sessionID)
+	if err != nil {
+		return InterpretationCoverage{}, err
+	}
+	state := InterpretationFullyInterpreted
+	if value.UnknownEvents > 0 || value.MalformedRecords > 0 {
+		state = InterpretationPartiallyInterpreted
+	}
+	return InterpretationCoverage{State: state, UnknownEvents: value.UnknownEvents, MalformedRecords: value.MalformedRecords}, nil
+}
+
+// InspectUnknownEvidence explicitly loads, redacts, and caps retained content
+// for one Unknown event after verifying session ownership and event kind.
+func (s *explorationService) InspectUnknownEvidence(ctx context.Context, sessionID model.SessionID, eventID model.EventID) (UnknownEvidenceInspection, error) {
+	if err := validateIdentifier("session", string(sessionID)); err != nil {
+		return UnknownEvidenceInspection{}, err
+	}
+	if err := validateEventID(eventID); err != nil {
+		return UnknownEvidenceInspection{}, err
+	}
+	envelope, found, err := s.reader.EventEnvelope(ctx, sessionID, eventID)
+	if err != nil {
+		return UnknownEvidenceInspection{}, fmt.Errorf("inspect unknown event %q: %w", eventID, err)
+	}
+	if !found {
+		return UnknownEvidenceInspection{State: EvidenceNotFound}, nil
+	}
+	if envelope.SessionID != sessionID {
+		return UnknownEvidenceInspection{State: EvidenceNotFound}, nil
+	}
+	if envelope.Kind != model.EventKindUnknown {
+		return UnknownEvidenceInspection{}, fmt.Errorf("%w: event %q is not Unknown evidence", ErrInvalidRequest, eventID)
+	}
+	prefix, found, err := s.reader.RawRecordPrefix(ctx, sessionID, envelope.RawRecord.ID, UnknownInspectionMaxBytes)
+	if err != nil {
+		return UnknownEvidenceInspection{}, fmt.Errorf("inspect unknown event %q retained record: %w", eventID, err)
+	}
+	if !found {
+		return UnknownEvidenceInspection{State: EvidenceUnavailable, SessionID: sessionID, EventID: eventID}, nil
+	}
+	text := strings.ToValidUTF8(string(prefix.Content), "\uFFFD")
+	truncatedInput := prefix.OriginalSize > int64(len(prefix.Content))
+	var redactions int
+	if truncatedInput {
+		text, redactions = redaction.TruncatedText(text)
+	} else {
+		text, redactions = redaction.Text(text)
+	}
+	redactedSize := len(text)
+	text = truncateUTF8Bytes(text, UnknownInspectionMaxBytes)
+	return UnknownEvidenceInspection{
+		State: EvidenceComplete, SessionID: sessionID, EventID: eventID, Text: text,
+		OriginalSize: prefix.OriginalSize, ReturnedSize: int64(len(text)),
+		Truncated:      truncatedInput || len(text) < redactedSize,
+		RedactionCount: redactions,
+	}, nil
+}
+
+func truncateUTF8Bytes(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	value = value[:limit]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value
 }
 
 // cursorEnvelope is the versioned, opaque wire representation for exploration cursors.

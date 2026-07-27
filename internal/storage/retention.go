@@ -87,3 +87,45 @@ func DecodePayload(payload EncodedPayload) ([]byte, error) {
 		return nil, fmt.Errorf("unsupported retained payload encoding %q", payload.Encoding)
 	}
 }
+
+// DecodePayloadPrefix decodes at most limit bytes while retaining the exact
+// original size metadata. It avoids materializing large retained records for
+// explicit evidence inspection.
+func DecodePayloadPrefix(payload EncodedPayload, limit int64) ([]byte, error) {
+	if limit < 0 {
+		return nil, fmt.Errorf("negative retained payload prefix limit %d", limit)
+	}
+	if payload.PolicyVersion != FullRetentionPolicyVersion {
+		return nil, fmt.Errorf("unsupported retention policy version %d", payload.PolicyVersion)
+	}
+	if payload.OriginalSize < 0 {
+		return nil, fmt.Errorf("negative retained payload size %d", payload.OriginalSize)
+	}
+	want := limit
+	if payload.OriginalSize < want {
+		want = payload.OriginalSize
+	}
+	switch payload.Encoding {
+	case EncodingIdentity:
+		if int64(len(payload.Content)) != payload.OriginalSize {
+			return nil, fmt.Errorf("payload size %d does not match recorded size %d", len(payload.Content), payload.OriginalSize)
+		}
+		return append([]byte(nil), payload.Content[:want]...), nil
+	case EncodingZlib:
+		reader, err := zlib.NewReader(bytes.NewReader(payload.Content))
+		if err != nil {
+			return nil, fmt.Errorf("open compressed retained payload: %w", err)
+		}
+		content, readErr := io.ReadAll(io.LimitReader(reader, want))
+		closeErr := reader.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("decompress retained payload prefix: %w", readErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close compressed retained payload: %w", closeErr)
+		}
+		return content, nil
+	default:
+		return nil, fmt.Errorf("unsupported retained payload encoding %q", payload.Encoding)
+	}
+}

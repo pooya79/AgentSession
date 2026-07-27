@@ -70,6 +70,12 @@ type detailLoadedMsg struct {
 	err        error
 }
 
+type unknownEvidenceLoadedMsg struct {
+	generation uint64
+	inspection app.UnknownEvidenceInspection
+	err        error
+}
+
 // importStartedMsg reports whether the UI started or joined the shared
 // application-owned import-all workflow.
 type importStartedMsg struct {
@@ -232,6 +238,13 @@ func loadDetail(ctx context.Context, services app.Services, generation uint64, s
 			SessionID: sessionID, EventID: eventID, IncludePayload: true,
 		})
 		return detailLoadedMsg{generation: generation, detail: detail, err: err}
+	}
+}
+
+func loadUnknownEvidence(ctx context.Context, services app.Services, generation uint64, sessionID model.SessionID, eventID model.EventID) tea.Cmd {
+	return func() tea.Msg {
+		inspection, err := services.InspectUnknownEvidence(ctx, sessionID, eventID)
+		return unknownEvidenceLoadedMsg{generation: generation, inspection: inspection, err: err}
 	}
 }
 
@@ -488,6 +501,17 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncViewports()
 		return m, nil
+	case unknownEvidenceLoadedMsg:
+		if msg.generation != m.requestGeneration {
+			return m, nil
+		}
+		m.detailState.inspectionLoading = false
+		m.detailState.inspectionErr = visibleError(msg.err)
+		if msg.err == nil {
+			m.detailState.inspection = msg.inspection
+		}
+		m.syncViewports()
+		return m, nil
 	case importStartedMsg:
 		if msg.generation != m.observeGeneration {
 			return m, nil
@@ -591,7 +615,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 // busy reports whether any visible request or application-owned workflow needs
 // spinner animation.
 func (m Model) busy() bool {
-	return m.sessionsState.loading || m.sessionsState.overviewLoading || m.timelineState.loading || m.detailState.loading ||
+	return m.sessionsState.loading || m.sessionsState.overviewLoading || m.timelineState.loading || m.detailState.loading || m.detailState.inspectionLoading ||
 		m.projectionsState.loading || m.projectionsState.status.Active || m.indexingState.status.Active
 }
 
@@ -702,6 +726,14 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case "r":
 		return m.refresh()
+	case "u":
+		if m.screen == detailScreen && m.detailState.detail.Event.Kind == model.EventKindUnknown && !m.detailState.inspectionLoading {
+			ctx := m.replaceRequest()
+			m.detailState.inspection = app.UnknownEvidenceInspection{}
+			m.detailState.inspectionErr = nil
+			m.detailState.inspectionLoading = true
+			return m, m.startSpinner(loadUnknownEvidence(ctx, m.services, m.requestGeneration, m.sessionsState.selected, m.detailState.detail.Event.ID))
+		}
 	case "t":
 		if m.screen == projectionsScreen {
 			if !m.retryAvailable() {
@@ -802,6 +834,9 @@ func (m *Model) back() (tea.Model, tea.Cmd) {
 		m.detailState.detail = app.EventDetail{}
 		m.detailState.err = nil
 		m.detailState.loading = false
+		m.detailState.inspection = app.UnknownEvidenceInspection{}
+		m.detailState.inspectionErr = nil
+		m.detailState.inspectionLoading = false
 		m.detailState.viewport.GotoTop()
 	case projectionsScreen:
 		m.stopProjectionObservation()
@@ -832,6 +867,9 @@ func (m *Model) refresh() (tea.Model, tea.Cmd) {
 		}
 		ctx := m.replaceRequest()
 		m.detailState.loading, m.detailState.err = true, nil
+		m.detailState.inspection = app.UnknownEvidenceInspection{}
+		m.detailState.inspectionErr = nil
+		m.detailState.inspectionLoading = false
 		m.detailState.viewport.GotoTop()
 		event := m.timelineState.page.Events[m.timelineState.cursor]
 		return m, m.startSpinner(loadDetail(ctx, m.services, m.requestGeneration, m.sessionsState.selected, event.ID))
@@ -1430,6 +1468,10 @@ func (m Model) detailContentLines() []string {
 	lines = append(lines,
 		fmt.Sprintf("#%d · %s · %s", event.Sequence, event.Kind, evidenceLabel(m.detailState.detail.State)),
 		event.Summary,
+		fmt.Sprintf("Interpretation: %s · %d Unknown events · %d malformed records",
+			m.detailState.detail.Interpretation.State,
+			m.detailState.detail.Interpretation.UnknownEvents,
+			m.detailState.detail.Interpretation.MalformedRecords),
 	)
 	if m.detailState.detail.Diagnostics.Total > 0 {
 		lines = append(lines, diagnosticSummary(m.detailState.detail.Diagnostics))
@@ -1447,6 +1489,22 @@ func (m Model) detailContentLines() []string {
 		lines = append(lines, "Could not render normalized payload: "+err.Error())
 	} else {
 		lines = append(lines, strings.Split(string(payload), "\n")...)
+	}
+	if event.Kind == model.EventKindUnknown {
+		lines = append(lines, "", "Retained Unknown evidence")
+		switch {
+		case m.detailState.inspectionLoading:
+			lines = append(lines, m.spinner.View()+" Loading and redacting retained evidence…")
+		case m.detailState.inspectionErr != nil:
+			lines = append(lines, "Inspection failed: "+m.detailState.inspectionErr.Error())
+		case m.detailState.inspection.EventID != "":
+			inspection := m.detailState.inspection
+			lines = append(lines, fmt.Sprintf("%d of %d bytes · %d redactions · truncated: %t",
+				inspection.ReturnedSize, inspection.OriginalSize, inspection.RedactionCount, inspection.Truncated))
+			lines = append(lines, strings.Split(inspection.Text, "\n")...)
+		default:
+			lines = append(lines, "Press u to inspect a redacted, bounded copy.")
+		}
 	}
 	return lines
 }
@@ -1548,6 +1606,9 @@ func (m Model) helpLine(width int) string {
 	case projectionsScreen:
 		return "↑/↓ select · r refresh · t retry implemented · b rebuild selected · a rebuild all when available · Esc timeline · ? help"
 	default:
+		if m.detailState.detail.Event.Kind == model.EventKindUnknown {
+			return "↑/↓ or j/k scroll · u inspect Unknown · Esc timeline · r reload · ? help · q quit"
+		}
 		return "↑/↓ or j/k scroll · g/G top/bottom · PgUp/PgDn scroll · Esc timeline · r reload · ? help · q quit"
 	}
 }

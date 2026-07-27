@@ -41,6 +41,9 @@ func (runtimeExplorerStub) EventDetail(context.Context, EventDetailRequest) (Eve
 func (runtimeExplorerStub) EventLocations(context.Context, []model.EventID) (map[model.EventID]EventLocation, error) {
 	return nil, nil
 }
+func (runtimeExplorerStub) InspectUnknownEvidence(context.Context, model.SessionID, model.EventID) (UnknownEvidenceInspection, error) {
+	return UnknownEvidenceInspection{}, nil
+}
 
 func TestRuntimeListSessionsPreservesCanonicalPageWhenProjectionStatusFails(t *testing.T) {
 	summary := ProjectionSummary{Ready: 1, Usable: 1}

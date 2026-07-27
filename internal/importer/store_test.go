@@ -146,7 +146,7 @@ func validBatchForTest(sequence int64) ImportBatch {
 			Sequence:  sequence,
 			Kind:      model.EventKindUnknown,
 			Summary:   "record",
-			Data:      model.UnknownData{OriginalKind: "test"},
+			Data:      model.UnknownData{Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "test"},
 			RawRecord: model.RawRecordRef{ID: "raw-1", SourceID: "source-1", RecordSequence: &recordSequence, ContentHash: "raw-hash"},
 		}},
 		Checkpoint: ImportCheckpoint{
