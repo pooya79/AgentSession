@@ -97,7 +97,7 @@ func normalizeLegacyPart(record logicalRecord, data map[string]json.RawMessage, 
 		}
 		return []model.Event{event}, diagnostics, err
 	case "tool":
-		return normalizeTool(record, data, sessionID, sequence, "opencode.part.tool.invalid", "part:tool:state:")
+		return normalizeTool(record, data, sessionID, sequence, "opencode.part.tool.invalid", "part:tool:state:", false)
 	case "patch":
 		return normalizePatch(record, data, sessionID, sequence)
 	case "file":
@@ -112,10 +112,10 @@ func normalizeLegacyPart(record logicalRecord, data map[string]json.RawMessage, 
 	}
 }
 
-func normalizeTool(record logicalRecord, data map[string]json.RawMessage, sessionID model.SessionID, sequence int64, diagnosticCode, residualPrefix string) ([]model.Event, []model.Diagnostic, error) {
+func normalizeTool(record logicalRecord, data map[string]json.RawMessage, sessionID model.SessionID, sequence int64, diagnosticCode, residualPrefix string, allowAliases bool) ([]model.Event, []model.Diagnostic, error) {
 	callID, callPresent, callOK := optionalString(data, "callID")
 	toolName, toolPresent, toolOK := optionalString(data, "tool")
-	if !strings.HasPrefix(diagnosticCode, "opencode.part.") {
+	if allowAliases {
 		if !callPresent {
 			callID, callPresent, callOK = optionalString(data, "id")
 		}
@@ -265,11 +265,11 @@ func normalizeRetry(record logicalRecord, data map[string]json.RawMessage, sessi
 
 func normalizeSessionMessage(record logicalRecord, data map[string]json.RawMessage, sessionID model.SessionID, sequence int64) ([]model.Event, []model.Diagnostic, error) {
 	typeName := record.rowType
-	if typeName == "" {
-		return nil, []model.Diagnostic{missingDiagnostic("opencode.session_message.type.missing", "The OpenCode session message row has no type discriminator.")}, nil
-	}
 	if record.rowTypePresent && !record.rowTypeValid {
 		return nil, []model.Diagnostic{invalidDiagnostic("opencode.session_message.type.missing", "The OpenCode session message row has an invalid type discriminator.")}, nil
+	}
+	if typeName == "" {
+		return nil, []model.Diagnostic{missingDiagnostic("opencode.session_message.type.missing", "The OpenCode session message row has no type discriminator.")}, nil
 	}
 	var diagnostics []model.Diagnostic
 	if nested, present, valid := optionalString(data, "type"); present && (!valid || nested != typeName) {
@@ -323,8 +323,6 @@ func normalizeSessionAssistant(record logicalRecord, data map[string]json.RawMes
 	var diagnostics []model.Diagnostic
 	if raw, present := data["content"]; !present || json.Unmarshal(raw, &entries) != nil {
 		diagnostics = append(diagnostics, invalidDiagnostic("opencode.session_message.assistant.invalid", "The OpenCode assistant content array is malformed."))
-	} else {
-		// entries populated
 	}
 	var events []model.Event
 	for index, raw := range entries {
@@ -355,7 +353,7 @@ func normalizeSessionAssistant(record logicalRecord, data map[string]json.RawMes
 			}
 			events = append(events, event)
 		case "tool":
-			toolEvents, toolDiagnostics, err := normalizeTool(record, entry, sessionID, sequence+int64(len(events)), "opencode.session_message.assistant.invalid", "session_message:assistant:tool:state:")
+			toolEvents, toolDiagnostics, err := normalizeTool(record, entry, sessionID, sequence+int64(len(events)), "opencode.session_message.assistant.invalid", "session_message:assistant:tool:state:", true)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -427,11 +425,11 @@ func normalizeAssistantEvidence(record logicalRecord, data map[string]json.RawMe
 
 func normalizeDurableEvent(record logicalRecord, data map[string]json.RawMessage, sessionID model.SessionID, sequence int64) ([]model.Event, []model.Diagnostic, error) {
 	typeName := record.rowType
-	if typeName == "" {
-		return nil, []model.Diagnostic{missingDiagnostic("opencode.event.type.missing", "The OpenCode durable event row has no type discriminator.")}, nil
-	}
 	if record.rowTypePresent && !record.rowTypeValid {
 		return nil, []model.Diagnostic{invalidDiagnostic("opencode.event.type.missing", "The OpenCode durable event row has an invalid type discriminator.")}, nil
+	}
+	if typeName == "" {
+		return nil, []model.Diagnostic{missingDiagnostic("opencode.event.type.missing", "The OpenCode durable event row has no type discriminator.")}, nil
 	}
 	var diagnostics []model.Diagnostic
 	if nested, present, valid := optionalString(data, "type"); present && (!valid || nested != typeName) {
@@ -441,7 +439,10 @@ func normalizeDurableEvent(record logicalRecord, data map[string]json.RawMessage
 	case "session.next.prompted", "session.next.prompt.admitted", "session.next.synthetic", "session.next.context.updated", "session.next.text.ended":
 		text, present, valid := firstString(data, "text", "prompt", "content")
 		if prompt, ok := objectValue(data["prompt"]); ok {
-			text, present, valid = optionalString(prompt, "text")
+			text, present, valid = firstString(data, "text", "content")
+			if nested, nestedPresent, nestedValid := optionalString(prompt, "text"); nestedPresent && nestedValid {
+				text, present, valid = nested, true, true
+			}
 		}
 		if !present || !valid {
 			return nil, append(diagnostics, durableInvalid(typeName, "The OpenCode durable message event has invalid required text.")), nil
@@ -646,14 +647,7 @@ func newEvent(record logicalRecord, sessionID model.SessionID, sequence int64, o
 	if err != nil {
 		return model.Event{}, err
 	}
-	var timestampValue any = record.timeCreated
-	if record.table == "event" {
-		var object map[string]json.RawMessage
-		_ = json.Unmarshal(record.data, &object)
-		timestampValue = rawScalar(object["timestamp"])
-	}
-	timestamp, _ := millisecondTime(timestampValue, "opencode.event.timestamp.invalid")
-	return model.Event{ID: id, SessionID: sessionID, Sequence: sequence, Timestamp: timestamp, Kind: kind, Summary: summary, SearchableText: searchable, Data: data}, nil
+	return model.Event{ID: id, SessionID: sessionID, Sequence: sequence, Timestamp: record.timestamp, Kind: kind, Summary: summary, SearchableText: searchable, Data: data}, nil
 }
 
 func reidentifyEvent(event model.Event, record logicalRecord, sessionID model.SessionID, ordinal uint64, suffix string) (model.Event, error) {

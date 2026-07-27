@@ -66,6 +66,12 @@ func TestGenerationSelectionUsesOneAuthoritativeTimeline(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
+		if len(tables) < 2 {
+			t.Fatalf("child %d tables = %v, want session and selected-generation records", i, tables)
+		}
+		if tables[0] != "session" {
+			t.Fatalf("child %d first table = %q, want session: %v", i, tables[0], tables)
+		}
 		for _, table := range tables[1:] {
 			if i == 0 && table != "event" {
 				t.Fatalf("durable child retained cross-generation table %q: %v", table, tables)
@@ -132,6 +138,109 @@ func TestGenerationSpecificFormatsAndMappings(t *testing.T) {
 				t.Fatalf("kinds = %v, want %v", kinds, test.kinds)
 			}
 		})
+	}
+}
+
+func TestMalformedVariantsAreDiagnosedRetainedAndDoNotStopImport(t *testing.T) {
+	ctx := context.Background()
+	indexDB, err := storageSQLite.Open(ctx, filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer indexDB.Close()
+	store, err := storageSQLite.NewImportStore(indexDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := importer.NewCoordinator(store, []importer.Adapter{New()}, nil, importer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := coordinator.ImportAll(ctx, sourceFor(createNamedFixture(t, "malformed_variants.sql")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1", len(results))
+	}
+
+	diagnostics, err := store.RecordDiagnostics(ctx, results[0].SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDiagnostics := map[string]bool{
+		"opencode.record.data.malformed":         false,
+		"opencode.session_message.type.conflict": false,
+		"opencode.session_message.user.invalid":  false,
+	}
+	for _, diagnostic := range diagnostics {
+		if _, wanted := wantDiagnostics[diagnostic.Diagnostic.Code]; wanted {
+			wantDiagnostics[diagnostic.Diagnostic.Code] = true
+		}
+	}
+	for code, found := range wantDiagnostics {
+		if !found {
+			t.Errorf("diagnostic %q missing from %#v", code, diagnostics)
+		}
+	}
+
+	wantRawIDs := map[string]bool{
+		`"value":"null_data"`:  false,
+		`"value":"empty_data"`: false,
+		`"value":"array_data"`: false,
+		`"value":"known_bad"`:  false,
+	}
+	rows, err := indexDB.Query(`SELECT id FROM raw_records WHERE session_id = ? ORDER BY record_sequence`, results[0].SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawCount := 0
+	for rows.Next() {
+		rawCount++
+		var id model.RawRecordID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		record, found, err := store.RawRecord(ctx, id)
+		if err != nil || !found {
+			rows.Close()
+			t.Fatalf("raw record %q = %v, %v", id, found, err)
+		}
+		for marker := range wantRawIDs {
+			if strings.Contains(string(record.Content), marker) {
+				wantRawIDs[marker] = true
+			}
+		}
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if rawCount != 8 {
+		t.Fatalf("raw record count = %d, want 8", rawCount)
+	}
+	for marker, found := range wantRawIDs {
+		if !found {
+			t.Errorf("malformed raw record marker %s was not retained", marker)
+		}
+	}
+
+	summaries, err := store.EventSummaries(ctx, results[0].SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundAfter := false
+	for _, summary := range summaries {
+		event, found, err := store.Event(ctx, summary.ID)
+		if err != nil || !found {
+			t.Fatalf("event %q = %v, %v", summary.ID, found, err)
+		}
+		if message, ok := event.Data.(model.MessageData); ok && message.Text == "valid after malformed" {
+			foundAfter = true
+		}
+	}
+	if !foundAfter {
+		t.Fatalf("valid row after malformed variants was not normalized: %#v", summaries)
 	}
 }
 
@@ -254,6 +363,49 @@ func TestNormalizeRejectsNullDataAsStructurallyInvalid(t *testing.T) {
 	if err != nil || len(events) != 0 || len(diagnostics) != 1 ||
 		diagnostics[0].InterpretationReason != model.InterpretationStructurallyInvalidKnownRecord {
 		t.Fatalf("normalize(null) = events %#v, diagnostics %#v, err %v", events, diagnostics, err)
+	}
+}
+
+func TestNormalizeClassifiesPresentNonStringDiscriminatorAsInvalid(t *testing.T) {
+	for _, table := range []string{"session_message", "event"} {
+		t.Run(table, func(t *testing.T) {
+			events, diagnostics, err := (&prepared{}).normalize(logicalRecord{
+				table: table, rowTypePresent: true, rowTypeValid: false, data: []byte(`{}`),
+			}, "session", 0)
+			if err != nil || len(events) != 0 || len(diagnostics) != 1 ||
+				diagnostics[0].InterpretationReason != model.InterpretationStructurallyInvalidKnownRecord {
+				t.Fatalf("normalize(non-string type) = events %#v, diagnostics %#v, err %v", events, diagnostics, err)
+			}
+		})
+	}
+}
+
+func TestDurablePromptObjectOnlyOverridesWithValidNestedText(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want string
+	}{
+		{name: "missing nested preserves text", data: `{"text":"top-level","prompt":{}}`, want: "top-level"},
+		{name: "invalid nested preserves text", data: `{"text":"top-level","prompt":{"text":{"bad":true}}}`, want: "top-level"},
+		{name: "missing nested preserves content", data: `{"prompt":{},"content":"fallback"}`, want: "fallback"},
+		{name: "valid nested overrides text", data: `{"text":"top-level","prompt":{"text":"nested"}}`, want: "nested"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record := logicalRecord{
+				table: "event", nativeID: "event", rowType: "session.next.prompted",
+				rowTypePresent: true, rowTypeValid: true, data: []byte(test.data),
+			}
+			events, diagnostics, err := (&prepared{}).normalize(record, "session", 0)
+			if err != nil || len(diagnostics) != 0 || len(events) != 1 {
+				t.Fatalf("normalize durable prompt = events %#v, diagnostics %#v, err %v", events, diagnostics, err)
+			}
+			message, ok := events[0].Data.(model.MessageData)
+			if !ok || message.Text != test.want {
+				t.Fatalf("message = %#v, want text %q", events[0].Data, test.want)
+			}
+		})
 	}
 }
 

@@ -76,14 +76,13 @@ func (a *Adapter) Probe(ctx context.Context, source importer.Source) (importer.P
 		return importer.ProbeResult{}, fmt.Errorf("open OpenCode database for probe: %w", err)
 	}
 	defer view.close()
-	schema, ok, err := probeSchema(ctx, view.tx)
+	_, ok, err := probeSchema(ctx, view.tx)
 	if err != nil {
 		return importer.ProbeResult{}, fmt.Errorf("probe OpenCode schema: %w", err)
 	}
 	if !ok {
 		return importer.ProbeResult{Confidence: importer.ProbeUnsupported}, nil
 	}
-	_ = schema
 	return importer.ProbeResult{Confidence: importer.ProbeCertain, FormatVersion: FormatVersion}, nil
 }
 
@@ -102,7 +101,7 @@ func (a *Adapter) PrepareContainer(ctx context.Context, source importer.Source) 
 	if err != nil || !ok {
 		_ = view.close()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("probe OpenCode schema for %q: %w", source.LocalPath, err)
 		}
 		return nil, errors.New("database does not contain a supported OpenCode schema")
 	}
@@ -409,10 +408,11 @@ func (p *prepared) Verify(ctx context.Context, state importer.SourceState) (impo
 		return importer.SourceReplaced, nil
 	}
 	digest := sha256.New()
-	var count int64
+	var count, total int64
 	var lastKey string
 	prefix := hex.EncodeToString(digest.Sum(nil))
 	err := p.eachRecord(ctx, func(record logicalRecord) error {
+		total++
 		if count < cursor.Count {
 			writeFingerprint(digest, record.raw)
 			count++
@@ -434,10 +434,6 @@ func (p *prepared) Verify(ctx context.Context, state importer.SourceState) (impo
 	}
 	if prefix != fingerprint.SHA256 {
 		return importer.SourceMutated, nil
-	}
-	var total int64
-	if err := p.eachRecord(ctx, func(logicalRecord) error { total++; return nil }); err != nil {
-		return "", err
 	}
 	if total == cursor.Count {
 		return importer.SourceUnchanged, nil
@@ -483,16 +479,11 @@ func (p *prepared) stream(ctx context.Context, start int64, sink importer.Import
 		if err != nil {
 			return err
 		}
-		if record.table != "session" && p.selected.generation != generationEvent {
-			if _, diagnostic := millisecondTime(record.timeCreated, "opencode.record.time_created.invalid"); diagnostic != nil {
-				diagnostics = append(diagnostics, *diagnostic)
-			}
-		} else if record.table == "event" {
-			var eventData map[string]json.RawMessage
-			if json.Unmarshal(record.data, &eventData) == nil {
-				if _, diagnostic := millisecondTime(rawScalar(eventData["timestamp"]), "opencode.event.timestamp.invalid"); diagnostic != nil {
-					diagnostics = append(diagnostics, *diagnostic)
-				}
+		switch record.table {
+		case "session":
+		default:
+			if record.timestampDiagnostic != nil {
+				diagnostics = append(diagnostics, *record.timestampDiagnostic)
 			}
 		}
 		diagnostics = boundDiagnostics(diagnostics)
@@ -603,18 +594,20 @@ type encodedRow struct {
 }
 
 type logicalRecord struct {
-	table          string
-	key            string
-	nativeID       string
-	messageID      string
-	rowType        string
-	rowTypePresent bool
-	rowTypeValid   bool
-	data           []byte
-	dataIsBlob     bool
-	messageData    []byte
-	timeCreated    any
-	raw            []byte
+	table               string
+	key                 string
+	nativeID            string
+	messageID           string
+	rowType             string
+	rowTypePresent      bool
+	rowTypeValid        bool
+	data                []byte
+	dataIsBlob          bool
+	messageData         []byte
+	timeCreated         any
+	timestamp           *time.Time
+	timestampDiagnostic *model.Diagnostic
+	raw                 []byte
 }
 
 func (p *prepared) eachRecord(ctx context.Context, accept func(logicalRecord) error) error {
@@ -812,6 +805,16 @@ func makeRecord(table string, names []string, values []any, keyPrefix, messageID
 			seq = values[i]
 		}
 	}
+	timestampValue := record.timeCreated
+	timestampCode := "opencode.record.time_created.invalid"
+	if table == "event" {
+		var eventData map[string]json.RawMessage
+		if json.Unmarshal(record.data, &eventData) == nil {
+			timestampValue = rawScalar(eventData["timestamp"])
+		}
+		timestampCode = "opencode.event.timestamp.invalid"
+	}
+	record.timestamp, record.timestampDiagnostic = millisecondTime(timestampValue, timestampCode)
 	switch table {
 	case "message":
 		record.key = "message:" + valueKey(record.timeCreated) + ":" + record.nativeID
