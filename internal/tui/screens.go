@@ -38,10 +38,13 @@ type timelineState struct {
 // detailState retains the last usable detail while a refresh is in flight or
 // fails, allowing the UI to represent partial availability honestly.
 type detailState struct {
-	detail   app.EventDetail
-	loading  bool
-	err      error
-	viewport viewport.Model
+	detail            app.EventDetail
+	loading           bool
+	err               error
+	inspection        app.UnknownEvidenceInspection
+	inspectionLoading bool
+	inspectionErr     error
+	viewport          viewport.Model
 }
 
 // indexingState contains the latest observation of application-owned import

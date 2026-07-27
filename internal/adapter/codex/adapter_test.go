@@ -192,7 +192,9 @@ func TestMalformedAndUnknownRecordsRetainExactBytes(t *testing.T) {
 		t.Fatalf("malformed bytes = %q", sink.records[1].RawRecord.Content)
 	}
 	unknown := sink.records[2]
-	if len(unknown.Events) != 1 || unknown.Events[0].Kind != model.EventKindUnknown || unknown.Events[0].Data.(model.UnknownData).OriginalKind != "future_rollout_item:future_nested" {
+	if len(unknown.Events) != 1 || unknown.Events[0].Kind != model.EventKindUnknown ||
+		unknown.Events[0].Data.(model.UnknownData).OriginalKind != "future_rollout_item" ||
+		unknown.Events[0].Data.(model.UnknownData).Reason != model.UnknownUnsupportedRecordKind {
 		t.Fatalf("unknown envelope = %#v", unknown)
 	}
 }

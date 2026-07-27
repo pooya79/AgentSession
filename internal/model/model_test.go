@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestSessionValidate(t *testing.T) {
@@ -84,7 +85,7 @@ func TestEventKindsAndPayloadValidation(t *testing.T) {
 		UsageData{},
 		ErrorData{},
 		SummaryData{},
-		UnknownData{},
+		UnknownData{Reason: UnknownUnsupportedRecordKind, OriginalKind: "future"},
 	}
 	kinds := EventKinds()
 	if len(kinds) != len(payloads) {
@@ -97,11 +98,30 @@ func TestEventKindsAndPayloadValidation(t *testing.T) {
 		}
 	}
 
-	unknown := validEvent("unknown-event", 0, EventKindUnknown, UnknownData{})
+	unknown := validEvent("unknown-event", 0, EventKindUnknown, UnknownData{Reason: UnknownUnsupportedRecordKind, OriginalKind: "future"})
 	unknown.Timestamp = nil
 	unknown.SearchableText = ""
 	if err := unknown.Validate(); err != nil {
 		t.Fatalf("incomplete unknown event Validate() error = %v", err)
+	}
+}
+
+func TestUnknownDataRequiresReasonAndBoundedOriginalKind(t *testing.T) {
+	event := validEvent("unknown-reason", 0, EventKindUnknown, UnknownData{OriginalKind: "future"})
+	if err := event.Validate(); err == nil {
+		t.Fatal("UnknownData without reason validated")
+	}
+	event.Data = UnknownData{Reason: UnknownReason("other"), OriginalKind: "future"}
+	if err := event.Validate(); err == nil {
+		t.Fatal("UnknownData with invalid reason validated")
+	}
+	bounded := BoundOriginalKind(strings.Repeat("界", UnknownOriginalKindMaxBytes))
+	if len(bounded) > UnknownOriginalKindMaxBytes || !utf8.ValidString(bounded) {
+		t.Fatalf("BoundOriginalKind() returned %d invalid bytes", len(bounded))
+	}
+	event.Data = UnknownData{Reason: UnknownUnsupportedNestedVariant, OriginalKind: bounded}
+	if err := event.Validate(); err != nil {
+		t.Fatalf("bounded UnknownData Validate() error = %v", err)
 	}
 }
 

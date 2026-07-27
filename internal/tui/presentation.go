@@ -120,6 +120,7 @@ func (m Model) helpLines() []string {
 		"  r            refresh current evidence; rescan from overview screens",
 		"  i            inspect indexing details from sessions",
 		"  x            inspect projection lifecycle from a timeline",
+		"  u            inspect redacted retained evidence for an Unknown event",
 		"  t            retry implemented pending or failed projections",
 		"  b            rebuild the focused projection when implemented",
 		"  a            rebuild all only when every projection is implemented",

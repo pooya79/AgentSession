@@ -32,10 +32,36 @@ type Diagnostic struct {
 	Severity Severity
 	Message  string
 
+	// InterpretationReason categorizes only diagnostics proving that a complete
+	// retained record could not be structurally interpreted. Other diagnostics
+	// leave it empty.
+	InterpretationReason InterpretationReason
+
 	// Evidence references are optional because a source-level diagnostic may
 	// be known before a canonical event can be produced.
 	EventIDs     []EventID
 	RawRecordIDs []RawRecordID
+}
+
+// InterpretationReason is a source-neutral malformed-record category.
+type InterpretationReason string
+
+const (
+	// InterpretationMissingDiscriminant identifies a complete record or nested
+	// value that lacks the field needed to select its canonical interpretation.
+	InterpretationMissingDiscriminant InterpretationReason = "missing_discriminant"
+	// InterpretationStructurallyInvalidKnownRecord identifies a complete record
+	// that claims a known shape but cannot be normalized as that shape.
+	InterpretationStructurallyInvalidKnownRecord InterpretationReason = "structurally_invalid_known_record"
+)
+
+func (r InterpretationReason) valid() bool {
+	switch r {
+	case "", InterpretationMissingDiscriminant, InterpretationStructurallyInvalidKnownRecord:
+		return true
+	default:
+		return false
+	}
 }
 
 // RecordDiagnostic associates a recoverable normalization diagnostic with one
@@ -76,6 +102,9 @@ func (d Diagnostic) Validate() error {
 	}
 	if strings.TrimSpace(d.Message) == "" {
 		return fmt.Errorf("diagnostic message is required")
+	}
+	if !d.InterpretationReason.valid() {
+		return fmt.Errorf("unsupported interpretation reason %q", d.InterpretationReason)
 	}
 	if err := validateEvidenceIDs(d.EventIDs); err != nil {
 		return err

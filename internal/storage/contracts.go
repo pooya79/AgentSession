@@ -63,6 +63,21 @@ type DiagnosticPage struct {
 	Total       int64
 }
 
+// InterpretationCoverage contains exact counts derived from canonical events
+// and categorized malformed-record diagnostics.
+type InterpretationCoverage struct {
+	UnknownEvents    int64
+	MalformedRecords int64
+}
+
+// RawRecordPrefix is a bounded lazy read of authoritative retained evidence.
+// OriginalSize describes the complete decoded record, while Content contains
+// only the requested prefix.
+type RawRecordPrefix struct {
+	Content      []byte
+	OriginalSize int64
+}
+
 // ExplorationReader is the narrow authoritative read contract consumed by
 // the shared application explorer.
 type ExplorationReader interface {
@@ -84,6 +99,10 @@ type ExplorationReader interface {
 	EventPayload(context.Context, model.SessionID, model.EventID) (model.NormalizedData, bool, error)
 	// Diagnostics returns an exact total with at most the requested number of entries.
 	Diagnostics(context.Context, model.SessionID, *model.EventID, int) (DiagnosticPage, error)
+	// InterpretationCoverage returns exact canonical counts of Unknown events and malformed records for a session.
+	InterpretationCoverage(context.Context, model.SessionID) (InterpretationCoverage, error)
+	// RawRecordPrefix lazily decodes at most limit bytes of a retained raw record's content.
+	RawRecordPrefix(context.Context, model.SessionID, model.RawRecordID, int64) (RawRecordPrefix, bool, error)
 }
 
 // SessionReader exposes lightweight timelines separately from full evidence.

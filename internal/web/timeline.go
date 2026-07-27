@@ -102,7 +102,7 @@ func (h *handler) timelineFragment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound)
 		return
 	}
-	render(w, r, http.StatusOK, eventRows(sessionID, page, app.EventDetail{}, "", nil))
+	render(w, r, http.StatusOK, eventRows(sessionID, page, app.EventDetail{}, "", nil, h.csrf))
 }
 
 // eventRedirect resolves an event through shared services before choosing its canonical URL.
@@ -147,5 +147,29 @@ func (h *handler) eventFragment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError)
 		return
 	}
-	render(w, r, http.StatusOK, eventDetail(detail, payload, h.resolveDiagnostics(r.Context(), sessionID, detail.Diagnostics.Diagnostics)))
+	render(w, r, http.StatusOK, eventDetail(detail, payload, h.resolveDiagnostics(r.Context(), sessionID, detail.Diagnostics.Diagnostics), h.csrf))
+}
+
+// unknownEvidenceFragment performs the explicit, CSRF-protected retained
+// evidence action. Raw content never appears in URLs or generic error bodies.
+func (h *handler) unknownEvidenceFragment(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w) {
+		return
+	}
+	if _, ok := h.validMutation(w, r); !ok {
+		return
+	}
+	sessionID := model.SessionID(r.PathValue("session"))
+	eventID := model.EventID(r.PathValue("event"))
+	inspection, err := h.services.InspectUnknownEvidence(r.Context(), sessionID, eventID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if inspection.State == app.EvidenceNotFound {
+		writeError(w, http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	render(w, r, http.StatusOK, unknownEvidence(inspection))
 }

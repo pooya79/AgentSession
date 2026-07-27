@@ -31,6 +31,8 @@ type servicesStub struct {
 	timelineErr         error
 	detail              app.EventDetail
 	detailErr           error
+	inspection          app.UnknownEvidenceInspection
+	inspectionErr       error
 	projections         app.ProjectionStatus
 	projectionErr       error
 	projectionAction    app.ProjectionAction
@@ -97,6 +99,12 @@ func (s *servicesStub) EventDetail(_ context.Context, request app.EventDetailReq
 	defer s.mu.Unlock()
 	s.detailCalls = append(s.detailCalls, request)
 	return s.detail, s.detailErr
+}
+
+func (s *servicesStub) InspectUnknownEvidence(context.Context, model.SessionID, model.EventID) (app.UnknownEvidenceInspection, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inspection, s.inspectionErr
 }
 
 func (s *servicesStub) ProjectionStatus(context.Context, model.SessionID) (app.ProjectionStatus, error) {
@@ -465,6 +473,34 @@ func TestRequestFailuresAndUnavailableEvidence(t *testing.T) {
 	}
 	if got := m.View().Content; !strings.Contains(got, "Timeline evidence is unavailable") {
 		t.Fatalf("unavailable timeline view = %q", got)
+	}
+}
+
+func TestUnknownEvidenceInspectionStatesAreRenderedExplicitly(t *testing.T) {
+	event := testEvent("event-1", 1)
+	event.Kind = model.EventKindUnknown
+	m := New(context.Background(), &servicesStub{})
+	m.sessionsState.selected = "session-1"
+	m.detailState.detail = app.EventDetail{
+		State:   app.EvidenceComplete,
+		Event:   event,
+		Payload: model.UnknownData{Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "future"},
+	}
+
+	tests := map[app.EvidenceState]struct {
+		eventID model.EventID
+		want    string
+	}{
+		app.EvidenceUnavailable: {eventID: event.ID, want: "Retained evidence for this event is no longer available."},
+		app.EvidenceNotFound:    {want: "This event's retained evidence could not be located."},
+	}
+	for state, test := range tests {
+		m.detailState.inspection = app.UnknownEvidenceInspection{
+			State: state, EventID: test.eventID,
+		}
+		if got := strings.Join(m.detailContentLines(), "\n"); !strings.Contains(got, test.want) {
+			t.Errorf("state %q detail = %q, want %q", state, got, test.want)
+		}
 	}
 }
 

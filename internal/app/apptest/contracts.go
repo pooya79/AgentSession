@@ -26,6 +26,8 @@ type Consumer interface {
 	EventDetail(context.Context, app.EventDetailRequest) (app.EventDetail, error)
 	// EventLocations resolves bounded evidence references.
 	EventLocations(context.Context, []model.EventID) (map[model.EventID]app.EventLocation, error)
+	// InspectUnknownEvidence exposes the same explicit retained-evidence action.
+	InspectUnknownEvidence(context.Context, model.SessionID, model.EventID) (app.UnknownEvidenceInspection, error)
 	// ProjectionStatus reports secondary derived-data readiness separately.
 	ProjectionStatus(context.Context, model.SessionID) (app.ProjectionStatus, error)
 	// RetryProjections schedules retryable derived-data work.
@@ -110,6 +112,9 @@ func RunConsumerContract(t *testing.T, consumer Consumer) {
 	withPayload, err := consumer.EventDetail(ctx, app.EventDetailRequest{SessionID: sessionID, EventID: eventID, IncludePayload: true})
 	if err != nil || withPayload.Payload == nil || withPayload.Event.ID != withoutPayload.Event.ID {
 		t.Fatalf("EventDetail(payload) = (%#v, %v)", withPayload, err)
+	}
+	if _, err := consumer.InspectUnknownEvidence(ctx, sessionID, eventID); !errors.Is(err, app.ErrInvalidRequest) {
+		t.Fatalf("InspectUnknownEvidence(typed) error = %v, want invalid request", err)
 	}
 	mismatch, err := consumer.EventDetail(ctx, app.EventDetailRequest{SessionID: "other-session", EventID: eventID})
 	if err != nil || mismatch.State != app.EvidenceNotFound {

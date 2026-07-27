@@ -82,6 +82,12 @@ func eventFragmentURL(sessionID model.SessionID, eventID model.EventID) string {
 	return sessionURL(sessionID) + "/fragments/event/" + url.PathEscape(string(eventID))
 }
 
+// unknownEvidenceFragmentURL builds the explicit retained-evidence inspection
+// endpoint for a session-owned Unknown event.
+func unknownEvidenceFragmentURL(sessionID model.SessionID, eventID model.EventID) string {
+	return sessionURL(sessionID) + "/fragments/event/" + url.PathEscape(string(eventID)) + "/unknown-evidence"
+}
+
 // projectionsFragmentURL builds the projection polling endpoint.
 func projectionsFragmentURL(sessionID model.SessionID) string {
 	return sessionURL(sessionID) + "/fragments/projections"

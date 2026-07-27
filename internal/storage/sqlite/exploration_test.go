@@ -57,6 +57,31 @@ func TestListSessionsOrdersVariablePrecisionTimestampsChronologicallyAcrossPages
 	}
 }
 
+func TestInterpretationCoverageCountsUnknownEventsAndDistinctMalformedRecords(t *testing.T) {
+	t.Parallel()
+	store := openImportStore(t)
+	insertExplorationSession(t, store, "coverage", "codex", nil, nil)
+	insertExplorationEvent(t, store, "coverage", 0, nil, "unknown", "future", `{"Reason":"unsupported_record_kind","OriginalKind":"future"}`)
+	insertExplorationEvent(t, store, "coverage", 1, nil, "message", "known", `{"Role":"user","Text":"known"}`)
+	_, err := store.db.Exec(`
+		INSERT INTO record_diagnostics (
+			session_id, raw_record_id, ordinal, code, severity, message,
+			interpretation_reason, event_ids_json, raw_record_ids_json
+		) VALUES
+			('coverage', 'raw-coverage-1', 0, 'missing', 'warning', 'missing type',
+			 'missing_discriminant', '[]', '["raw-coverage-1"]'),
+			('coverage', 'raw-coverage-1', 1, 'invalid', 'warning', 'invalid body',
+			 'structurally_invalid_known_record', '[]', '["raw-coverage-1"]')
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coverage, err := store.InterpretationCoverage(context.Background(), "coverage")
+	if err != nil || coverage.UnknownEvents != 1 || coverage.MalformedRecords != 1 {
+		t.Fatalf("InterpretationCoverage() = (%#v, %v)", coverage, err)
+	}
+}
+
 func TestListSessionsSupportsBackwardKeysetPages(t *testing.T) {
 	t.Parallel()
 

@@ -73,6 +73,14 @@ func TestProbeRequiresSchemaAndLocalPath(t *testing.T) {
 	}
 }
 
+func TestNormalizeRejectsNullDataAsStructurallyInvalid(t *testing.T) {
+	events, diagnostics, err := (&prepared{}).normalize(logicalRecord{table: "message", data: []byte("null")}, "session", 0)
+	if err != nil || len(events) != 0 || len(diagnostics) != 1 ||
+		diagnostics[0].InterpretationReason != model.InterpretationStructurallyInvalidKnownRecord {
+		t.Fatalf("normalize(null) = events %#v, diagnostics %#v, err %v", events, diagnostics, err)
+	}
+}
+
 func TestCoordinatorImportsLogicalSessionsAndRetainsRows(t *testing.T) {
 	ctx := context.Background()
 	sourcePath := createFixture(t)

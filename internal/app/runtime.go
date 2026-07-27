@@ -237,6 +237,11 @@ func (r *Runtime) EventLocations(ctx context.Context, eventIDs []model.EventID) 
 	return r.explorer.EventLocations(ctx, eventIDs)
 }
 
+// InspectUnknownEvidence delegates the explicit retained-evidence action.
+func (r *Runtime) InspectUnknownEvidence(ctx context.Context, sessionID model.SessionID, eventID model.EventID) (UnknownEvidenceInspection, error) {
+	return r.explorer.InspectUnknownEvidence(ctx, sessionID, eventID)
+}
+
 // ProjectionStatus exposes the runtime-owned projection lifecycle service.
 func (r *Runtime) ProjectionStatus(ctx context.Context, sessionID model.SessionID) (ProjectionStatus, error) {
 	return r.projections.ProjectionStatus(ctx, sessionID)

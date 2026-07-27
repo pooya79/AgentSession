@@ -403,7 +403,12 @@ func (p *prepared) envelope(line []byte, offset, sequence int64, session model.S
 	envelope := importer.RecordEnvelope{RawRecord: model.RawRecord{Ref: ref, Content: append([]byte(nil), line...)}}
 	var record wireRecord
 	if err := json.Unmarshal(trimLineEnding(line), &record); err != nil {
-		envelope.Diagnostics = []model.Diagnostic{{Code: "codex.record.malformed", Severity: model.SeverityWarning, Message: "A complete Codex rollout record is malformed JSON and was retained.", RawRecordIDs: []model.RawRecordID{rawID}}}
+		envelope.Diagnostics = []model.Diagnostic{{
+			Code: "codex.record.malformed", Severity: model.SeverityWarning,
+			Message:              "A complete Codex rollout record is malformed JSON and was retained.",
+			InterpretationReason: model.InterpretationStructurallyInvalidKnownRecord,
+			RawRecordIDs:         []model.RawRecordID{rawID},
+		}}
 		return envelope, nil
 	}
 	event, diagnostic, emit, err := p.normalize(record, ref, sequence, session.ID)
@@ -427,16 +432,49 @@ func (p *prepared) normalize(record wireRecord, ref model.RawRecordRef, sequence
 	if record.Type == "session_meta" {
 		return model.Event{}, nil, false, nil
 	}
+	if strings.TrimSpace(record.Type) == "" {
+		return model.Event{}, &model.Diagnostic{
+			Code: "codex.record.type.missing", Severity: model.SeverityWarning,
+			Message:              "The complete Codex record has no type discriminant and was retained.",
+			InterpretationReason: model.InterpretationMissingDiscriminant,
+		}, false, nil
+	}
 	kind, summary, searchable, data, native, supported := normalizeRecord(record, p.ordinal, string(sessionID))
 	if supported && data == nil {
 		return model.Event{}, nil, false, nil
 	}
 	if !supported {
 		label := record.Type
-		if nested := nestedType(record.Payload); nested != "" {
-			label += ":" + nested
+		reason := model.UnknownUnsupportedRecordKind
+		if record.Type == "response_item" || record.Type == "event_msg" || record.Type == "compacted" {
+			if record.Type == "compacted" {
+				return model.Event{}, &model.Diagnostic{
+					Code: "codex.record.structure.invalid", Severity: model.SeverityWarning,
+					Message:              "A known Codex record has an invalid structure and was retained.",
+					InterpretationReason: model.InterpretationStructurallyInvalidKnownRecord,
+				}, false, nil
+			}
+			nested, validStructure := nestedType(record.Payload)
+			if !validStructure {
+				return model.Event{}, &model.Diagnostic{
+					Code: "codex.record.structure.invalid", Severity: model.SeverityWarning,
+					Message:              "A known Codex record has an invalid structure and was retained.",
+					InterpretationReason: model.InterpretationStructurallyInvalidKnownRecord,
+				}, false, nil
+			}
+			if nested == "" {
+				return model.Event{}, &model.Diagnostic{
+					Code: "codex.record.discriminant.missing", Severity: model.SeverityWarning,
+					Message:              "A known Codex record has no nested type discriminant and was retained.",
+					InterpretationReason: model.InterpretationMissingDiscriminant,
+				}, false, nil
+			}
+			if nested != "" {
+				label += ":" + nested
+			}
+			reason = model.UnknownUnsupportedNestedVariant
 		}
-		kind, summary, data = model.EventKindUnknown, "Unsupported Codex record: "+label, model.UnknownData{OriginalKind: label}
+		kind, summary, data = model.EventKindUnknown, "Unsupported Codex record: "+label, model.UnknownData{Reason: reason, OriginalKind: model.BoundOriginalKind(label)}
 		searchable = label
 	}
 	eventID, err := model.NewEventID(model.EventIDInput{Native: native, SourceID: ref.SourceID, RecordSequence: ref.RecordSequence, ByteRange: ref.ByteRange, RecordHash: ref.ContentHash})

@@ -668,7 +668,7 @@ func testUnknownEventForSource(ref model.RawRecordRef, sequence int64) model.Eve
 	}
 	return model.Event{
 		ID: id, SessionID: "session-fixture", Sequence: sequence, Kind: model.EventKindUnknown,
-		Summary: "unknown source record", Data: model.UnknownData{OriginalKind: "fixture"}, RawRecord: ref,
+		Summary: "unknown source record", Data: model.UnknownData{Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "fixture"}, RawRecord: ref,
 	}
 }
 

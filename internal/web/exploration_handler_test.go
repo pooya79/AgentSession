@@ -79,3 +79,51 @@ func TestEventRedirectUsesCanonicalLocation(t *testing.T) {
 		t.Fatalf("redirect = %d %q", response.Code, response.Header().Get("Location"))
 	}
 }
+
+func TestUnknownEvidenceInspectionIsCSRFProtectedNoStoreAndEscaped(t *testing.T) {
+	eventID := validEventID("c")
+	sessionID := model.SessionID("session")
+	inspectionState := app.EvidenceComplete
+	services := servicesStub{
+		timeline: func(_ context.Context, request app.TimelineRequest) (app.TimelinePage, error) {
+			return app.TimelinePage{State: app.EvidenceComplete, Events: []model.EventSummary{{
+				ID: eventID, SessionID: sessionID, Kind: model.EventKindUnknown, Summary: "future",
+			}}}, nil
+		},
+		detail: func(context.Context, app.EventDetailRequest) (app.EventDetail, error) {
+			return app.EventDetail{
+				State:   app.EvidenceComplete,
+				Event:   model.EventSummary{ID: eventID, SessionID: sessionID, Kind: model.EventKindUnknown},
+				Payload: model.UnknownData{Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "future"},
+			}, nil
+		},
+		inspect: func(context.Context, model.SessionID, model.EventID) (app.UnknownEvidenceInspection, error) {
+			return app.UnknownEvidenceInspection{
+				State: inspectionState, SessionID: sessionID, EventID: eventID,
+				Text: "<script>alert(1)</script>", OriginalSize: 30, ReturnedSize: 25, RedactionCount: 1,
+			}, nil
+		},
+	}
+	handler := NewHandler(services)
+	page := request(t, handler, http.MethodGet, focusedTimelineURL(sessionID, eventID), nil, nil)
+	csrf := extractCSRF(t, page.Body.String())
+	target := unknownEvidenceFragmentURL(sessionID, eventID)
+	rejected := request(t, handler, http.MethodPost, target, strings.NewReader("csrf=wrong"), map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
+	if rejected.Code != http.StatusBadRequest {
+		t.Fatalf("CSRF rejection status = %d", rejected.Code)
+	}
+	response := request(t, handler, http.MethodPost, target, strings.NewReader(url.Values{"csrf": {csrf}}.Encode()), map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" ||
+		strings.Contains(response.Body.String(), "<script>alert") ||
+		!strings.Contains(response.Body.String(), "&lt;script&gt;alert") {
+		t.Fatalf("inspection response = %d headers=%v body=%q", response.Code, response.Header(), response.Body.String())
+	}
+
+	inspectionState = app.EvidenceUnavailable
+	response = request(t, handler, http.MethodPost, target, strings.NewReader(url.Values{"csrf": {csrf}}.Encode()), map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
+	if response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), "Retained evidence is unavailable") ||
+		strings.Contains(response.Body.String(), "Redacted retained evidence") {
+		t.Fatalf("unavailable inspection response = %d body=%q", response.Code, response.Body.String())
+	}
+}

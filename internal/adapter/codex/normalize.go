@@ -146,12 +146,12 @@ func qualifiedNative(typeName, id, sessionID string) *model.NativeEventIdentity 
 	return &model.NativeEventIdentity{Scope: model.NativeEventIDSession, SessionID: sessionID, EventID: typeName + ":" + id}
 }
 
-func nestedType(raw json.RawMessage) string {
+func nestedType(raw json.RawMessage) (string, bool) {
 	var payload map[string]json.RawMessage
 	if json.Unmarshal(raw, &payload) != nil {
-		return ""
+		return "", false
 	}
-	return rawString(payload["type"])
+	return rawString(payload["type"]), true
 }
 
 func rawString(raw json.RawMessage) string {

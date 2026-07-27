@@ -528,7 +528,7 @@ func canonicalSourceDigest(ctx context.Context, tx *sql.Tx, sourceID model.Sourc
 		`SELECT e.id, e.session_id, e.sequence, e.timestamp, e.kind, e.summary, e.searchable_text, e.data_json, e.message_role, e.raw_record_id, e.raw_source_id, e.raw_record_sequence, e.raw_byte_offset, e.raw_byte_length, e.raw_content_hash, e.retention_policy_version, e.payload_storage FROM events e JOIN sessions s ON s.id = e.session_id WHERE s.source_id = ? ORDER BY e.id`,
 		`SELECT p.event_id, p.retention_policy_version, p.storage_encoding, p.original_size, p.content FROM event_payloads p JOIN events e ON e.id = p.event_id JOIN sessions s ON s.id = e.session_id WHERE s.source_id = ? ORDER BY p.event_id`,
 		`SELECT d.session_id, d.position, d.code, d.severity, d.message, d.event_ids_json, d.raw_record_ids_json FROM session_diagnostics d JOIN sessions s ON s.id = d.session_id WHERE s.source_id = ? ORDER BY d.session_id, d.position`,
-		`SELECT d.session_id, d.raw_record_id, d.ordinal, d.code, d.severity, d.message, d.event_ids_json, d.raw_record_ids_json FROM record_diagnostics d JOIN sessions s ON s.id = d.session_id WHERE s.source_id = ? ORDER BY d.session_id, d.raw_record_id, d.ordinal`,
+		`SELECT d.session_id, d.raw_record_id, d.ordinal, d.code, d.severity, d.message, d.interpretation_reason, d.event_ids_json, d.raw_record_ids_json FROM record_diagnostics d JOIN sessions s ON s.id = d.session_id WHERE s.source_id = ? ORDER BY d.session_id, d.raw_record_id, d.ordinal`,
 		`SELECT source_id, record_sequence, state_version, cursor, fingerprint FROM import_checkpoints WHERE source_id = ? ORDER BY source_id`,
 	}
 	for tableIndex, query := range queries {
@@ -1117,14 +1117,15 @@ func selectSessionDiagnostics(ctx context.Context, tx *sql.Tx, sessionID model.S
 }
 
 type storedRecordDiagnostic struct {
-	SessionID        string
-	RawRecordID      string
-	Ordinal          int64
-	Code             string
-	Severity         string
-	Message          string
-	EventIDsJSON     string
-	RawRecordIDsJSON string
+	SessionID            string
+	RawRecordID          string
+	Ordinal              int64
+	Code                 string
+	Severity             string
+	Message              string
+	InterpretationReason string
+	EventIDsJSON         string
+	RawRecordIDsJSON     string
 }
 
 func recordDiagnosticForStorage(sessionID model.SessionID, diagnostic model.RecordDiagnostic) (storedRecordDiagnostic, error) {
@@ -1137,14 +1138,15 @@ func recordDiagnosticForStorage(sessionID model.SessionID, diagnostic model.Reco
 		return storedRecordDiagnostic{}, fmt.Errorf("encode raw record IDs: %w", err)
 	}
 	return storedRecordDiagnostic{
-		SessionID:        string(sessionID),
-		RawRecordID:      string(diagnostic.RawRecordID),
-		Ordinal:          diagnostic.Ordinal,
-		Code:             diagnostic.Diagnostic.Code,
-		Severity:         string(diagnostic.Diagnostic.Severity),
-		Message:          diagnostic.Diagnostic.Message,
-		EventIDsJSON:     string(eventIDs),
-		RawRecordIDsJSON: string(rawRecordIDs),
+		SessionID:            string(sessionID),
+		RawRecordID:          string(diagnostic.RawRecordID),
+		Ordinal:              diagnostic.Ordinal,
+		Code:                 diagnostic.Diagnostic.Code,
+		Severity:             string(diagnostic.Diagnostic.Severity),
+		Message:              diagnostic.Diagnostic.Message,
+		InterpretationReason: string(diagnostic.Diagnostic.InterpretationReason),
+		EventIDsJSON:         string(eventIDs),
+		RawRecordIDsJSON:     string(rawRecordIDs),
 	}, nil
 }
 
@@ -1155,11 +1157,11 @@ func persistRecordDiagnostic(ctx context.Context, tx *sql.Tx, sessionID model.Se
 	}
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO record_diagnostics (
-			session_id, raw_record_id, ordinal, code, severity, message, event_ids_json, raw_record_ids_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			session_id, raw_record_id, ordinal, code, severity, message, interpretation_reason, event_ids_json, raw_record_ids_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(raw_record_id, ordinal) DO NOTHING
 	`, stored.SessionID, stored.RawRecordID, stored.Ordinal, stored.Code, stored.Severity, stored.Message,
-		stored.EventIDsJSON, stored.RawRecordIDsJSON)
+		stored.InterpretationReason, stored.EventIDsJSON, stored.RawRecordIDsJSON)
 	if err != nil {
 		return false, fmt.Errorf("insert record diagnostic: %w", err)
 	}
@@ -1183,11 +1185,11 @@ func persistRecordDiagnostic(ctx context.Context, tx *sql.Tx, sessionID model.Se
 func selectStoredRecordDiagnostic(ctx context.Context, queryer rowQueryer, rawRecordID model.RawRecordID, ordinal int64) (storedRecordDiagnostic, bool, error) {
 	var diagnostic storedRecordDiagnostic
 	err := queryer.QueryRowContext(ctx, `
-		SELECT session_id, raw_record_id, ordinal, code, severity, message, event_ids_json, raw_record_ids_json
+		SELECT session_id, raw_record_id, ordinal, code, severity, message, interpretation_reason, event_ids_json, raw_record_ids_json
 		FROM record_diagnostics WHERE raw_record_id = ? AND ordinal = ?
 	`, rawRecordID, ordinal).Scan(
 		&diagnostic.SessionID, &diagnostic.RawRecordID, &diagnostic.Ordinal, &diagnostic.Code,
-		&diagnostic.Severity, &diagnostic.Message, &diagnostic.EventIDsJSON, &diagnostic.RawRecordIDsJSON,
+		&diagnostic.Severity, &diagnostic.Message, &diagnostic.InterpretationReason, &diagnostic.EventIDsJSON, &diagnostic.RawRecordIDsJSON,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return storedRecordDiagnostic{}, false, nil
@@ -1444,7 +1446,7 @@ func (s *ImportStore) RecordDiagnostics(ctx context.Context, sessionID model.Ses
 		return nil, errors.New("sqlite import store: read record diagnostics: session ID is required")
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT d.raw_record_id, d.ordinal, d.code, d.severity, d.message,
+		SELECT d.raw_record_id, d.ordinal, d.code, d.severity, d.message, d.interpretation_reason,
 		       d.event_ids_json, d.raw_record_ids_json
 		FROM record_diagnostics d
 		JOIN raw_records r ON r.id = d.raw_record_id
@@ -1462,7 +1464,7 @@ func (s *ImportStore) RecordDiagnostics(ctx context.Context, sessionID model.Ses
 		var eventIDs, rawRecordIDs string
 		if err := rows.Scan(
 			&diagnostic.RawRecordID, &diagnostic.Ordinal, &diagnostic.Diagnostic.Code,
-			&diagnostic.Diagnostic.Severity, &diagnostic.Diagnostic.Message, &eventIDs, &rawRecordIDs,
+			&diagnostic.Diagnostic.Severity, &diagnostic.Diagnostic.Message, &diagnostic.Diagnostic.InterpretationReason, &eventIDs, &rawRecordIDs,
 		); err != nil {
 			return nil, fmt.Errorf("sqlite import store: scan record diagnostic for session %q: %w", sessionID, err)
 		}

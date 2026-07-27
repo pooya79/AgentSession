@@ -2,7 +2,7 @@
 
 This document describes the target architecture for AgentSession v0.1. It explains the system boundaries, data flow, component ownership, and dependency rules contributors should preserve as the application grows.
 
-For the decision behind this design, see [ADR-001](decisions/001-modular-go-application.md). For day-to-day engineering rules, see [AGENTS.md](../AGENTS.md).
+For the decision behind this design, see [ADR-001](decisions/001-modular-go-application.md). Canonical unsupported evidence, malformed-record boundaries, derived interpretation coverage, and bounded inspection are defined in [ADR-015](decisions/015-canonical-unknown-event-contract.md). For day-to-day engineering rules, see [AGENTS.md](../AGENTS.md).
 
 ## Goals and constraints
 

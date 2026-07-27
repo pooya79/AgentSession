@@ -373,11 +373,26 @@ func (p *prepared) envelope(line []byte, offset, sequence int64, session model.S
 	envelope := importer.RecordEnvelope{RawRecord: model.RawRecord{Ref: ref, Content: append([]byte(nil), line...)}}
 	var record wireRecord
 	if err := json.Unmarshal(trimLineEnding(line), &record); err != nil {
-		envelope.Diagnostics = []model.Diagnostic{{Code: "claude.record.malformed", Severity: model.SeverityWarning, Message: "A complete Claude Code record is malformed JSON and was retained.", RawRecordIDs: []model.RawRecordID{rawID}}}
+		envelope.Diagnostics = []model.Diagnostic{{
+			Code: "claude.record.malformed", Severity: model.SeverityWarning,
+			Message:              "A complete Claude Code record is malformed JSON and was retained.",
+			InterpretationReason: model.InterpretationStructurallyInvalidKnownRecord,
+			RawRecordIDs:         []model.RawRecordID{rawID},
+		}}
+		return envelope, nil
+	}
+	if strings.TrimSpace(record.Type) == "" {
+		envelope.Diagnostics = []model.Diagnostic{{
+			Code: "claude.record.type.missing", Severity: model.SeverityWarning,
+			Message:              "The complete Claude record has no type discriminant and was retained.",
+			InterpretationReason: model.InterpretationMissingDiscriminant,
+			RawRecordIDs:         []model.RawRecordID{rawID},
+		}}
 		return envelope, nil
 	}
 
-	drafts := normalizeRecord(record)
+	drafts, interpretationReason := normalizeRecord(record)
+	var eventIDs []model.EventID
 	for ordinal, draft := range drafts {
 		eventID, err := claudeEventID(record.UUID, p.sessionID, uint64(ordinal), len(drafts), ref)
 		if err != nil {
@@ -386,6 +401,16 @@ func (p *prepared) envelope(line []byte, offset, sequence int64, session model.S
 		event := model.Event{ID: eventID, SessionID: session.ID, Sequence: p.eventSeq, Kind: draft.kind, Summary: draft.summary, SearchableText: draft.searchable, Data: draft.data, RawRecord: ref}
 		p.eventSeq++
 		envelope.Events = append(envelope.Events, event)
+		eventIDs = append(eventIDs, eventID)
+	}
+	if interpretationReason != "" {
+		envelope.Diagnostics = append(envelope.Diagnostics, model.Diagnostic{
+			Code: "claude.record.structure.invalid", Severity: model.SeverityWarning,
+			Message:              "A known Claude record has an invalid structure and was retained.",
+			InterpretationReason: interpretationReason,
+			EventIDs:             eventIDs,
+			RawRecordIDs:         []model.RawRecordID{rawID},
+		})
 	}
 	if value := strings.TrimSpace(record.Timestamp); value != "" {
 		parsed, err := time.Parse(time.RFC3339Nano, value)

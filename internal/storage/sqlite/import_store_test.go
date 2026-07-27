@@ -33,7 +33,7 @@ func TestImportStoreRoundTripAndStableSourceOrder(t *testing.T) {
 		model.UsageData{InputTokens: int64Pointer(10), OutputTokens: int64Pointer(5)},
 		model.ErrorData{Code: "failed", Message: "failure"},
 		model.SummaryData{Text: "summary"},
-		model.UnknownData{OriginalKind: "future"},
+		model.UnknownData{Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "future"},
 	}
 	batch.Events = make([]model.Event, 0, len(payloads))
 	batch.RawRecords = make([]model.RawRecord, 0, len(payloads))
@@ -477,7 +477,7 @@ func TestImportStoreReconciliationReplacesStaleEvidenceAndRegressedCheckpoint(t 
 		Kind:           model.EventKindUnknown,
 		Summary:        "stale event",
 		SearchableText: "stale",
-		Data:           model.UnknownData{OriginalKind: "stale"},
+		Data:           model.UnknownData{Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "stale"},
 		RawRecord:      secondRef,
 	})
 	original.RecordDiagnostics = append(original.RecordDiagnostics, model.RecordDiagnostic{

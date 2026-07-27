@@ -34,7 +34,7 @@ templ timelinePage(view timelineView) {
 				<h2 id="events-title">Events</h2>
 				@timelineEvidenceState(view.Page, view.DiagnosticRefs)
 				<div class="timeline">
-					@eventRows(view.SessionID, view.Page, view.Focused, view.FocusedPayload, view.DiagnosticRefs)
+					@eventRows(view.SessionID, view.Page, view.Focused, view.FocusedPayload, view.DiagnosticRefs, view.CSRF)
 				</div>
 			</section>
 		</main>
@@ -48,11 +48,12 @@ templ timelineEvidenceState(page app.TimelinePage, refs map[model.EventID]eventR
 	} else if page.State == app.EvidencePartial {
 		<p class="notice warning">This timeline contains partial evidence. Review diagnostics before drawing conclusions.</p>
 	}
+	<p class="metadata">Interpretation: { string(page.Interpretation.State) } · { strconvFormatInt(page.Interpretation.UnknownEvents) } Unknown events · { strconvFormatInt(page.Interpretation.MalformedRecords) } malformed records</p>
 	@diagnosticSynopsis(page.Diagnostics, refs)
 }
 
 // eventRows renders ordered event summaries and cursor-based continuation controls.
-templ eventRows(sessionID model.SessionID, page app.TimelinePage, focused app.EventDetail, payload string, refs map[model.EventID]eventReference) {
+templ eventRows(sessionID model.SessionID, page app.TimelinePage, focused app.EventDetail, payload string, refs map[model.EventID]eventReference, csrf string) {
 	if len(page.Events) == 0 {
 		<p class="empty-state">No normalized events are available.</p>
 	} else {
@@ -68,7 +69,7 @@ templ eventRows(sessionID model.SessionID, page app.TimelinePage, focused app.Ev
 					<a class="button quiet" href={ templ.URL(focusedTimelineURL(sessionID, event.ID)) } hx-get={ eventFragmentURL(sessionID, event.ID) } hx-target={ "#" + eventAnchorID(event.ID) + " .event-detail" } hx-swap="innerHTML" hx-push-url={ focusedTimelineURL(sessionID, event.ID) }>Inspect event detail</a>
 					<div class="event-detail" aria-live="polite">
 						if focused.Event.ID == event.ID {
-							@eventDetail(focused, payload, refs)
+							@eventDetail(focused, payload, refs, csrf)
 						}
 					</div>
 				</div>
@@ -81,7 +82,7 @@ templ eventRows(sessionID model.SessionID, page app.TimelinePage, focused app.Ev
 }
 
 // eventDetail renders an explicitly requested normalized payload and its diagnostics.
-templ eventDetail(detail app.EventDetail, payload string, refs map[model.EventID]eventReference) {
+templ eventDetail(detail app.EventDetail, payload string, refs map[model.EventID]eventReference, csrf string) {
 	<div class={ "detail-panel state-" + string(detail.State) }>
 		if detail.State == app.EvidenceUnavailable || detail.Payload == nil {
 			<p class="notice warning">The normalized payload is unavailable. This is not evidence of success.</p>
@@ -89,6 +90,30 @@ templ eventDetail(detail app.EventDetail, payload string, refs map[model.EventID
 			<h3>Normalized payload</h3>
 			<pre>{ payload }</pre>
 		}
+		if detail.Event.Kind == model.EventKindUnknown {
+			<form method="post" action={ templ.SafeURL(unknownEvidenceFragmentURL(detail.Event.SessionID, detail.Event.ID)) } hx-post={ unknownEvidenceFragmentURL(detail.Event.SessionID, detail.Event.ID) } hx-target="next .unknown-evidence" hx-swap="innerHTML">
+				<input type="hidden" name="csrf" value={ csrf }/>
+				<button type="submit" class="button quiet">Inspect retained Unknown evidence</button>
+			</form>
+			<div class="unknown-evidence" aria-live="polite"></div>
+		}
 		@diagnosticSynopsis(detail.Diagnostics, refs)
 	</div>
+}
+
+templ unknownEvidence(inspection app.UnknownEvidenceInspection) {
+	if inspection.State == app.EvidenceUnavailable {
+		<p class="notice warning">Retained evidence is unavailable. This is not evidence of success.</p>
+	} else {
+		<div class="retained-evidence">
+			<h3>Redacted retained evidence</h3>
+			<p class="metadata">
+				{ strconvFormatInt(inspection.ReturnedSize) } of { strconvFormatInt(inspection.OriginalSize) } bytes · { strconvFormatInt(int64(inspection.RedactionCount)) } redactions
+				if inspection.Truncated {
+					<span>· truncated</span>
+				}
+			</p>
+			<pre>{ inspection.Text }</pre>
+		</div>
+	}
 }
