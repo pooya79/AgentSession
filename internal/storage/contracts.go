@@ -71,6 +71,8 @@ type InterpretationCoverage struct {
 }
 
 // RawRecordPrefix is a bounded lazy read of authoritative retained evidence.
+// OriginalSize describes the complete decoded record, while Content contains
+// only the requested prefix.
 type RawRecordPrefix struct {
 	Content      []byte
 	OriginalSize int64

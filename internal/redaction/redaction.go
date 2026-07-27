@@ -7,6 +7,9 @@ import (
 	"regexp"
 )
 
+// patterns is deliberately small and deterministic: it covers the secret
+// forms promised by the retained-evidence inspection contract without trying
+// to classify arbitrary session content.
 var patterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?is)-----BEGIN [^-]*PRIVATE KEY-----.*?(?:-----END [^-]*PRIVATE KEY-----|$)`),
 	regexp.MustCompile(`(?im)(authorization\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\r\n,}]+)`),
@@ -14,6 +17,8 @@ var patterns = []*regexp.Regexp{
 	regexp.MustCompile(`\b(?:sk-ant-[A-Za-z0-9_-]{12,}|sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,})\b`),
 }
 
+// truncatedProviderToken catches a recognized token whose suffix may fall
+// beyond the bounded raw-record prefix.
 var truncatedProviderToken = regexp.MustCompile(`(?:sk-(?:ant-)?|ghp_|github_pat_|xox[baprs]-|AKIA|AIza)[A-Za-z0-9_-]{4,}$`)
 
 // Text replaces recognized secret forms with numbered placeholders.

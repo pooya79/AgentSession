@@ -47,7 +47,11 @@ type Diagnostic struct {
 type InterpretationReason string
 
 const (
-	InterpretationMissingDiscriminant            InterpretationReason = "missing_discriminant"
+	// InterpretationMissingDiscriminant identifies a complete record or nested
+	// value that lacks the field needed to select its canonical interpretation.
+	InterpretationMissingDiscriminant InterpretationReason = "missing_discriminant"
+	// InterpretationStructurallyInvalidKnownRecord identifies a complete record
+	// that claims a known shape but cannot be normalized as that shape.
 	InterpretationStructurallyInvalidKnownRecord InterpretationReason = "structurally_invalid_known_record"
 )
 

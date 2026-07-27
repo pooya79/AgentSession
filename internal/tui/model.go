@@ -241,6 +241,8 @@ func loadDetail(ctx context.Context, services app.Services, generation uint64, s
 	}
 }
 
+// loadUnknownEvidence performs the explicit bounded inspection action. Its
+// generation prevents a response from leaking into a later detail screen.
 func loadUnknownEvidence(ctx context.Context, services app.Services, generation uint64, sessionID model.SessionID, eventID model.EventID) tea.Cmd {
 	return func() tea.Msg {
 		inspection, err := services.InspectUnknownEvidence(ctx, sessionID, eventID)

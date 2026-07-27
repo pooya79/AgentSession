@@ -139,9 +139,15 @@ func (SummaryData) eventKind() EventKind { return EventKindSummary }
 type UnknownReason string
 
 const (
-	UnknownUnsupportedRecordKind    UnknownReason = "unsupported_record_kind"
+	// UnknownUnsupportedRecordKind identifies a valid unsupported top-level
+	// timeline record.
+	UnknownUnsupportedRecordKind UnknownReason = "unsupported_record_kind"
+	// UnknownUnsupportedNestedVariant identifies a valid unsupported variant
+	// nested within an otherwise recognized timeline record.
 	UnknownUnsupportedNestedVariant UnknownReason = "unsupported_nested_variant"
-	UnknownOriginalKindMaxBytes                   = 256
+	// UnknownOriginalKindMaxBytes bounds classification metadata copied from an
+	// untrusted source record.
+	UnknownOriginalKindMaxBytes = 256
 )
 
 // BoundOriginalKind returns a valid UTF-8 classification label no larger than

@@ -62,11 +62,16 @@ type DiagnosticSynopsis struct {
 type InterpretationCoverageState string
 
 const (
-	InterpretationFullyInterpreted     InterpretationCoverageState = "fully_interpreted"
+	// InterpretationFullyInterpreted means every committed record was either
+	// mapped to typed canonical evidence or intentionally ignored as metadata.
+	InterpretationFullyInterpreted InterpretationCoverageState = "fully_interpreted"
+	// InterpretationPartiallyInterpreted means committed evidence contains at
+	// least one Unknown event or categorized malformed record.
 	InterpretationPartiallyInterpreted InterpretationCoverageState = "partially_interpreted"
 )
 
-// InterpretationCoverage contains exact committed coverage counts.
+// InterpretationCoverage contains exact committed coverage counts. It is
+// independent of EvidenceState and any derived session outcome.
 type InterpretationCoverage struct {
 	State            InterpretationCoverageState
 	UnknownEvents    int64
@@ -183,6 +188,8 @@ type Explorer interface {
 	EventDetail(context.Context, EventDetailRequest) (EventDetail, error)
 	// EventLocations resolves a bounded set of event IDs without loading payloads.
 	EventLocations(context.Context, []model.EventID) (map[model.EventID]EventLocation, error)
+	// InspectUnknownEvidence returns a bounded, redacted view of the retained
+	// record for one session-owned Unknown event.
 	InspectUnknownEvidence(context.Context, model.SessionID, model.EventID) (UnknownEvidenceInspection, error)
 }
 
@@ -414,6 +421,8 @@ func (s *explorationService) EventDetail(ctx context.Context, request EventDetai
 	return detail, nil
 }
 
+// interpretationCoverage maps exact storage counts to the source-neutral
+// application state shared by both presentation layers.
 func (s *explorationService) interpretationCoverage(ctx context.Context, sessionID model.SessionID) (InterpretationCoverage, error) {
 	value, err := s.reader.InterpretationCoverage(ctx, sessionID)
 	if err != nil {
@@ -473,6 +482,8 @@ func (s *explorationService) InspectUnknownEvidence(ctx context.Context, session
 	}, nil
 }
 
+// truncateUTF8Bytes returns at most limit bytes without splitting a UTF-8
+// encoding. Callers provide a non-negative limit.
 func truncateUTF8Bytes(value string, limit int) string {
 	if len(value) <= limit {
 		return value
