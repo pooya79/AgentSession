@@ -216,6 +216,9 @@ func TestDelayedMetadataUsesOneProbePrepareInspection(t *testing.T) {
 
 func TestMalformedKnownAndFutureVariantsStayDistinct(t *testing.T) {
 	sink, _ := importSource(t, fixtureSource(t, "malformed_future_0.145.0.jsonl"), nil, nil)
+	if len(sink.records) != 8 {
+		t.Fatalf("imported records = %d, want 8 before variant checks", len(sink.records))
+	}
 	for _, index := range []int{1, 2, 3} {
 		record := sink.records[index]
 		if len(record.Events) != 0 || len(record.Diagnostics) != 1 {
@@ -591,8 +594,12 @@ func TestPrepareStopsAtWindowAndReplaysEveryByte(t *testing.T) {
 	}
 	prepared := view.(*prepared)
 	replayName := prepared.replay.Name()
-	if tracker.readBytes != windowEnd {
-		t.Fatalf("Prepare() read %d bytes, want exact eight-record window %d", tracker.readBytes, windowEnd)
+	replayInfo, err := prepared.replay.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayInfo.Size() != int64(windowEnd) {
+		t.Fatalf("Prepare() replayed %d bytes, want exact eight-record window %d", replayInfo.Size(), windowEnd)
 	}
 	sink := &captureSink{}
 	if err := prepared.Import(context.Background(), nil, sink); err != nil {
@@ -669,7 +676,7 @@ func TestLargeRecordIsDeliveredBeforeRemainderIsConsumed(t *testing.T) {
 	}
 }
 
-func TestReadFailureStopsImport(t *testing.T) {
+func TestReadFailureStopsPrepare(t *testing.T) {
 	line := []byte("{\"timestamp\":\"2025-01-01T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"read-failure\"}}\n")
 	want := errors.New("injected read failure")
 	reader := &trackingReadCloser{reader: bytes.NewReader(line), failAfter: len(line), fail: want}

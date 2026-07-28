@@ -575,7 +575,10 @@ func boolField(object map[string]json.RawMessage, key string) (bool, bool) {
 		return false, false
 	}
 	var value bool
-	return value, json.Unmarshal(raw, &value) == nil
+	if json.Unmarshal(raw, &value) != nil {
+		return false, false
+	}
+	return value, true
 }
 
 func optionalBoolField(object map[string]json.RawMessage, key string) (*bool, bool) {
@@ -596,7 +599,10 @@ func intField(object map[string]json.RawMessage, key string) (int, bool) {
 		return 0, false
 	}
 	var value int
-	return value, json.Unmarshal(raw, &value) == nil
+	if json.Unmarshal(raw, &value) != nil {
+		return 0, false
+	}
+	return value, true
 }
 
 func int64Field(object map[string]json.RawMessage, key string) (int64, bool) {
@@ -605,7 +611,10 @@ func int64Field(object map[string]json.RawMessage, key string) (int64, bool) {
 		return 0, false
 	}
 	var value int64
-	return value, json.Unmarshal(raw, &value) == nil
+	if json.Unmarshal(raw, &value) != nil {
+		return 0, false
+	}
+	return value, true
 }
 
 func rawJSONText(raw json.RawMessage) (string, bool) {
@@ -617,13 +626,6 @@ func rawJSONText(raw json.RawMessage) (string, bool) {
 		return "", false
 	}
 	return compact.String(), true
-}
-
-func rawObjectText(raw json.RawMessage) (string, bool) {
-	if _, ok := objectValue(raw); !ok {
-		return "", false
-	}
-	return rawJSONText(raw)
 }
 
 func typedObjectText(raw json.RawMessage) (string, bool) {

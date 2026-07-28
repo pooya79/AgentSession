@@ -1,4 +1,5 @@
-// Package codex imports Codex CLI rollout JSONL files.
+// Package codex implements discovery and streaming import of Codex CLI rollout
+// JSONL files.
 package codex
 
 import (
@@ -21,11 +22,16 @@ import (
 )
 
 const (
-	AdapterVersion       model.Version = "1"
-	ModelVersion         model.Version = "1"
-	NormalizationVersion model.Version = "2"
-	CursorVersion        model.Version = "codex-rollout-cursor-v1"
-	FingerprintVersion   model.Version = "codex-rollout-fingerprint-v1"
+	// AdapterVersion identifies the persisted Codex adapter implementation.
+	AdapterVersion model.Version = "1"
+	// ModelVersion identifies the canonical event model emitted by this adapter.
+	ModelVersion model.Version = "1"
+	// NormalizationVersion identifies the Codex-to-canonical normalization rules.
+	NormalizationVersion model.Version = "1"
+	// CursorVersion identifies the persisted Codex rollout cursor schema.
+	CursorVersion model.Version = "codex-rollout-cursor-v1"
+	// FingerprintVersion identifies the persisted Codex source fingerprint schema.
+	FingerprintVersion model.Version = "codex-rollout-fingerprint-v1"
 
 	formatLegacy         = "codex-rollout-jsonl-v1"
 	formatOrdinal        = "codex-rollout-jsonl-v2-ordinal"
@@ -35,13 +41,19 @@ const (
 	maxRecordDiagnostics = 8
 )
 
+// Adapter probes and imports Codex CLI rollout files.
 type Adapter struct{}
 
+// New returns a Codex rollout adapter.
 func New() *Adapter { return &Adapter{} }
 
-func (*Adapter) Name() string           { return "codex" }
+// Name returns the stable adapter name persisted with imported sessions.
+func (*Adapter) Name() string { return "codex" }
+
+// Version returns the persisted Codex adapter implementation version.
 func (*Adapter) Version() model.Version { return AdapterVersion }
 
+// Probe inspects a bounded initial record window to identify a Codex rollout.
 func (a *Adapter) Probe(ctx context.Context, source importer.Source) (importer.ProbeResult, error) {
 	if err := source.Validate(); err != nil {
 		return importer.ProbeResult{}, err
@@ -51,7 +63,7 @@ func (a *Adapter) Probe(ctx context.Context, source importer.Source) (importer.P
 		return importer.ProbeResult{}, fmt.Errorf("open rollout for probe: %w", err)
 	}
 	defer r.Close()
-	inspection, err := inspectInitial(ctx, r, nil)
+	inspection, err := inspectInitial(ctx, bufio.NewReaderSize(r, readBuffer), nil)
 	if err != nil {
 		return importer.ProbeResult{}, fmt.Errorf("inspect rollout probe: %w", err)
 	}
@@ -69,6 +81,7 @@ func (a *Adapter) Probe(ctx context.Context, source importer.Source) (importer.P
 	}, nil
 }
 
+// Prepare opens a Codex rollout for verification, reconciliation, or import.
 func (a *Adapter) Prepare(ctx context.Context, source importer.Source) (importer.PreparedSource, error) {
 	if err := source.Validate(); err != nil {
 		return nil, err
@@ -82,21 +95,22 @@ func (a *Adapter) Prepare(ctx context.Context, source importer.Source) (importer
 		_ = stream.Close()
 		return nil, fmt.Errorf("create rollout replay file: %w", err)
 	}
+	cleanup := func() {
+		_ = errors.Join(stream.Close(), replay.Close(), os.Remove(replay.Name()))
+	}
+	reader := bufio.NewReaderSize(stream, readBuffer)
 	replayWriter := bufio.NewWriterSize(replay, readBuffer)
-	inspection, err := inspectInitial(ctx, stream, replayWriter)
+	inspection, err := inspectInitial(ctx, reader, replayWriter)
 	if err != nil {
-		name := replay.Name()
-		_ = errors.Join(stream.Close(), replay.Close(), os.Remove(name))
+		cleanup()
 		return nil, fmt.Errorf("inspect rollout header window: %w", err)
 	}
 	if err := replayWriter.Flush(); err != nil {
-		name := replay.Name()
-		_ = errors.Join(stream.Close(), replay.Close(), os.Remove(name))
+		cleanup()
 		return nil, fmt.Errorf("flush rollout replay file: %w", err)
 	}
 	if _, err := replay.Seek(0, io.SeekStart); err != nil {
-		name := replay.Name()
-		_ = errors.Join(stream.Close(), replay.Close(), os.Remove(name))
+		cleanup()
 		return nil, fmt.Errorf("rewind rollout replay file: %w", err)
 	}
 	view := &prepared{
@@ -104,7 +118,7 @@ func (a *Adapter) Prepare(ctx context.Context, source importer.Source) (importer
 		source:       source,
 		sourceStream: stream,
 		replay:       replay,
-		reader:       bufio.NewReaderSize(io.MultiReader(replay, stream), readBuffer),
+		reader:       bufio.NewReaderSize(io.MultiReader(replay, reader), readBuffer),
 		ordinal:      inspection.ordinal,
 		cliVersion:   inspection.cliVersion,
 		sessionID:    inspection.sessionID,
@@ -144,42 +158,38 @@ type initialInspection struct {
 	diagnostics       []model.Diagnostic
 }
 
-func inspectInitial(ctx context.Context, reader io.Reader, replay io.Writer) (initialInspection, error) {
+func inspectInitial(ctx context.Context, reader *bufio.Reader, replay io.Writer) (initialInspection, error) {
 	result := initialInspection{cliVersion: "unknown"}
 	for recordIndex := 0; recordIndex < initialRecords; recordIndex++ {
 		prefix := make([]byte, 0, inspectionPrefix)
-		complete := false
 		for {
 			if err := ctx.Err(); err != nil {
 				return initialInspection{}, err
 			}
-			var one [1]byte
-			_, err := io.ReadFull(reader, one[:])
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					if len(prefix) > 0 {
-						result.possibleMalformed = result.possibleMalformed || looksCodexLike(prefix)
+			fragment, err := reader.ReadSlice('\n')
+			if len(fragment) > 0 {
+				if replay != nil {
+					if _, writeErr := replay.Write(fragment); writeErr != nil {
+						return initialInspection{}, fmt.Errorf("write rollout replay file: %w", writeErr)
 					}
-					return result, nil
 				}
-				return initialInspection{}, err
-			}
-			value := one[0]
-			if replay != nil {
-				if _, err := replay.Write([]byte{value}); err != nil {
-					return initialInspection{}, fmt.Errorf("write rollout replay file: %w", err)
+				if remaining := inspectionPrefix - len(prefix); remaining > 0 {
+					prefix = append(prefix, fragment[:min(remaining, len(fragment))]...)
 				}
 			}
-			if len(prefix) < inspectionPrefix {
-				prefix = append(prefix, value)
-			}
-			if value == '\n' {
-				complete = true
+			if err == nil {
 				break
 			}
-		}
-		if !complete {
-			return result, nil
+			if errors.Is(err, bufio.ErrBufferFull) {
+				continue
+			}
+			if errors.Is(err, io.EOF) {
+				if len(prefix) > 0 {
+					result.possibleMalformed = result.possibleMalformed || looksCodexLike(prefix)
+				}
+				return result, nil
+			}
+			return initialInspection{}, err
 		}
 		if len(prefix) == inspectionPrefix && prefix[len(prefix)-1] != '\n' {
 			result.possibleMalformed = result.possibleMalformed || looksCodexLike(prefix)
@@ -211,8 +221,7 @@ func inspectInitial(ctx context.Context, reader io.Reader, replay io.Writer) (in
 		if knownTopLevel(typeName) {
 			result.recognized = true
 		}
-		if ordinal, ok := validUint64(object["ordinal"]); ok {
-			_ = ordinal
+		if _, ok := validUint64(object["ordinal"]); ok {
 			result.ordinal = true
 		}
 		if result.sessionID != "" || typeName != "session_meta" {
