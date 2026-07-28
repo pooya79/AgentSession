@@ -152,6 +152,11 @@ type wireRecord struct {
 	Timestamp   string          `json:"timestamp"`
 	IsSidechain bool            `json:"isSidechain"`
 	Message     json.RawMessage `json:"message"`
+	Content     json.RawMessage `json:"content"`
+	Error       json.RawMessage `json:"error"`
+	Data        json.RawMessage `json:"data"`
+	Subtype     json.RawMessage `json:"subtype"`
+	Operation   json.RawMessage `json:"operation"`
 	Summary     string          `json:"summary"`
 }
 
@@ -391,7 +396,7 @@ func (p *prepared) envelope(line []byte, offset, sequence int64, session model.S
 		return envelope, nil
 	}
 
-	drafts, interpretationReason := normalizeRecord(record)
+	drafts, diagnosticDrafts := normalizeRecord(record)
 	var eventIDs []model.EventID
 	for ordinal, draft := range drafts {
 		eventID, err := claudeEventID(record.UUID, p.sessionID, uint64(ordinal), len(drafts), ref)
@@ -403,11 +408,11 @@ func (p *prepared) envelope(line []byte, offset, sequence int64, session model.S
 		envelope.Events = append(envelope.Events, event)
 		eventIDs = append(eventIDs, eventID)
 	}
-	if interpretationReason != "" {
+	for _, draft := range boundDiagnosticDrafts(diagnosticDrafts) {
 		envelope.Diagnostics = append(envelope.Diagnostics, model.Diagnostic{
-			Code: "claude.record.structure.invalid", Severity: model.SeverityWarning,
-			Message:              "A known Claude record has an invalid structure and was retained.",
-			InterpretationReason: interpretationReason,
+			Code: draft.code, Severity: model.SeverityWarning,
+			Message:              draft.message,
+			InterpretationReason: draft.reason,
 			EventIDs:             eventIDs,
 			RawRecordIDs:         []model.RawRecordID{rawID},
 		})
@@ -426,6 +431,7 @@ func (p *prepared) envelope(line []byte, offset, sequence int64, session model.S
 			}
 		}
 	}
+	envelope.Diagnostics = boundClaudeDiagnostics(envelope.Diagnostics, rawID, eventIDs)
 	return envelope, nil
 }
 
@@ -645,11 +651,38 @@ func compositeFormat(cli string) model.Version {
 
 func knownTopLevel(kind string) bool {
 	switch kind {
-	case "user", "assistant", "system", "summary", "file-history-snapshot", "progress", "queue-operation":
+	case "user", "assistant", "system", "summary", "file-history-snapshot", "progress", "queue-operation",
+		"attachment", "turn_duration", "status", "rate_limit_event", "last-prompt", "agent-name", "custom-title",
+		"context", "context-update":
 		return true
 	default:
 		return false
 	}
+}
+
+func boundDiagnosticDrafts(values []diagnosticDraft) []diagnosticDraft {
+	if len(values) <= maxRecordDiagnostics {
+		return values
+	}
+	values = append([]diagnosticDraft(nil), values[:maxRecordDiagnostics-1]...)
+	return append(values, diagnosticDraft{
+		code:    "claude.diagnostics.truncated",
+		message: "Additional Claude record diagnostics were omitted.",
+	})
+}
+
+func boundClaudeDiagnostics(values []model.Diagnostic, rawID model.RawRecordID, eventIDs []model.EventID) []model.Diagnostic {
+	if len(values) <= maxRecordDiagnostics {
+		return values
+	}
+	values = append([]model.Diagnostic(nil), values[:maxRecordDiagnostics-1]...)
+	return append(values, model.Diagnostic{
+		Code:         "claude.diagnostics.truncated",
+		Severity:     model.SeverityWarning,
+		Message:      "Additional Claude record diagnostics were omitted.",
+		EventIDs:     append([]model.EventID(nil), eventIDs...),
+		RawRecordIDs: []model.RawRecordID{rawID},
+	})
 }
 
 func hasJSONField(data []byte, name string) bool {
@@ -662,7 +695,11 @@ func hasJSONField(data []byte, name string) bool {
 }
 
 func looksClaudeLike(line []byte) bool {
-	for _, label := range []string{"user", "assistant", "summary", "file-history-snapshot"} {
+	for _, label := range []string{
+		"user", "assistant", "system", "summary", "file-history-snapshot", "progress",
+		"queue-operation", "attachment", "turn_duration", "status", "rate_limit_event",
+		"last-prompt", "agent-name", "custom-title", "context", "context-update",
+	} {
 		if bytes.Contains(line, []byte(`"type":"`+label)) || bytes.Contains(line, []byte(`"type": "`+label)) {
 			return true
 		}

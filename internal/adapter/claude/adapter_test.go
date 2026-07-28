@@ -152,6 +152,26 @@ func TestProbeTreatsClaudeStructuralRecordsAsCertain(t *testing.T) {
 	}
 }
 
+func TestProbeAndPrepareSkipMalformedAndSparseLeadingRecords(t *testing.T) {
+	data := []byte("{\"type\":\"assistant\"\n" +
+		"{\"custom\":true}\n" +
+		"{\"type\":\"file-history-snapshot\"}\n" +
+		"{\"type\":\"user\",\"sessionId\":\"delayed-session\",\"version\":\"2.1.179\",\"message\":{\"role\":\"user\",\"content\":\"late metadata\"}}\n")
+	source := bytesSource("delayed-metadata", data)
+	probe, err := New().Probe(context.Background(), source)
+	if err != nil || probe.Confidence != importer.ProbeCertain ||
+		probe.FormatVersion != "claude-code-jsonl-v1+cli-2.1.179" ||
+		len(probe.Diagnostics) != 1 {
+		t.Fatalf("Probe() = %#v, %v", probe, err)
+	}
+	sink, _ := importSource(t, source, nil, nil)
+	if sink.session.ID != "delayed-session" ||
+		sink.session.Import.FormatVersion != "claude-code-jsonl-v1+cli-2.1.179" ||
+		len(sink.records) != 4 || len(events(sink.records)) != 1 {
+		t.Fatalf("delayed import = session %#v records %#v", sink.session, sink.records)
+	}
+}
+
 func TestNullMessagesAreRetainedAsMalformedDiagnostics(t *testing.T) {
 	tests := map[string]string{
 		"message": `{"type":"user","message":null}`,
@@ -236,6 +256,132 @@ func TestToolInputPreservesExactJSONNumbers(t *testing.T) {
 	}
 }
 
+func TestObservedRecordClassification(t *testing.T) {
+	sink, _ := importSource(t, fixtureSource(t, "observed.jsonl"), nil, nil)
+	got := events(sink.records)
+	wantKinds := []model.EventKind{
+		model.EventKindMessage,
+		model.EventKindSummary,
+		model.EventKindSummary,
+		model.EventKindError,
+		model.EventKindMessage,
+		model.EventKindMessage,
+	}
+	if len(sink.records) != 18 || len(got) != len(wantKinds) {
+		t.Fatalf("records/events = %d/%d, want 18/%d", len(sink.records), len(got), len(wantKinds))
+	}
+	for index, want := range wantKinds {
+		if got[index].Kind != want {
+			t.Fatalf("event %d kind = %q, want %q", index, got[index].Kind, want)
+		}
+	}
+	if !strings.Contains(got[0].Summary, "sidechain") {
+		t.Fatalf("sidechain summary = %q", got[0].Summary)
+	}
+	for index := 6; index < len(sink.records); index++ {
+		if len(sink.records[index].Events) != 0 || len(sink.records[index].Diagnostics) != 0 {
+			t.Fatalf("metadata record %d = %#v", index, sink.records[index])
+		}
+	}
+}
+
+func TestOfficialServerBlocksAndOpaqueBlocks(t *testing.T) {
+	sink, _ := importSource(t, fixtureSource(t, "official_blocks.jsonl"), nil, nil)
+	got := events(sink.records)
+	if len(got) != 15 {
+		t.Fatalf("events = %d, want 15", len(got))
+	}
+	call, ok := got[0].Data.(model.ToolCallData)
+	if !ok || call.CallID != "srv-1" || call.ToolName != "web_search" || call.Input != `{"query":"sanitized"}` {
+		t.Fatalf("server tool call = %#v", got[0].Data)
+	}
+	for index := 1; index <= 6; index++ {
+		unknown, ok := got[index].Data.(model.UnknownData)
+		if !ok || unknown.Reason != model.UnknownUnsupportedNestedVariant {
+			t.Fatalf("opaque block %d = %#v", index, got[index])
+		}
+		if strings.Contains(got[index].SearchableText, "not searchable") ||
+			strings.Contains(got[index].SearchableText, "opaque encrypted fixture") {
+			t.Fatalf("opaque payload leaked into search: %q", got[index].SearchableText)
+		}
+	}
+	for index := 7; index < len(got); index++ {
+		result, ok := got[index].Data.(model.ToolResultData)
+		if !ok || result.CallID == "" || !json.Valid([]byte(result.Output)) {
+			t.Fatalf("structured result %d = %#v", index, got[index].Data)
+		}
+	}
+	if !bytes.Contains(sink.records[0].RawRecord.Content, []byte("opaque encrypted fixture")) ||
+		!bytes.Contains(sink.records[0].RawRecord.Content, []byte("not searchable")) {
+		t.Fatal("opaque evidence was not preserved in the raw record")
+	}
+}
+
+func TestNestedMetadataUnknownAndMalformedClassification(t *testing.T) {
+	tests := []struct {
+		name       string
+		record     string
+		wantKind   model.EventKind
+		wantReason model.InterpretationReason
+	}{
+		{"unknown system", `{"type":"system","subtype":"future_system"}`, model.EventKindUnknown, ""},
+		{"unknown progress", `{"type":"progress","data":{"type":"future_progress"}}`, model.EventKindUnknown, ""},
+		{"unknown queue", `{"type":"queue-operation","operation":"future_operation"}`, model.EventKindUnknown, ""},
+		{"unknown attachment", `{"type":"attachment","subtype":"future_attachment"}`, model.EventKindUnknown, ""},
+		{"missing system subtype", `{"type":"system","content":"text"}`, "", model.InterpretationMissingDiscriminant},
+		{"missing progress subtype", `{"type":"progress","data":{}}`, "", model.InterpretationMissingDiscriminant},
+		{"invalid queue operation", `{"type":"queue-operation","operation":false}`, "", model.InterpretationStructurallyInvalidKnownRecord},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sink, _ := importSource(t, bytesSource(tt.name, []byte(tt.record+"\n")), nil, nil)
+			if tt.wantKind != "" {
+				if len(sink.records[0].Events) != 1 || sink.records[0].Events[0].Kind != tt.wantKind {
+					t.Fatalf("events = %#v", sink.records[0].Events)
+				}
+				unknown := sink.records[0].Events[0].Data.(model.UnknownData)
+				if unknown.Reason != model.UnknownUnsupportedNestedVariant {
+					t.Fatalf("unknown = %#v", unknown)
+				}
+				return
+			}
+			if len(sink.records[0].Events) != 0 || len(sink.records[0].Diagnostics) != 1 ||
+				sink.records[0].Diagnostics[0].InterpretationReason != tt.wantReason {
+				t.Fatalf("record = %#v", sink.records[0])
+			}
+		})
+	}
+}
+
+func TestMalformedBlocksDoNotSuppressValidSiblingsAndDiagnosticsAreBounded(t *testing.T) {
+	record := `{"type":"assistant","message":{"role":"user","content":[null,{"text":"missing type"},{"type":"text","text":false},{"type":"tool_use","id":"","name":"Read","input":{}},{"type":"text","text":"survives"}],"usage":{"input_tokens":-1,"output_tokens":9}}}`
+	sink, _ := importSource(t, bytesSource("mixed-malformed", []byte(record+"\n")), nil, nil)
+	got := events(sink.records)
+	if len(got) != 2 || got[0].Kind != model.EventKindMessage || got[0].Data.(model.MessageData).Text != "survives" ||
+		got[1].Kind != model.EventKindUsage || got[1].Data.(model.UsageData).OutputTokens == nil {
+		t.Fatalf("events = %#v", got)
+	}
+	if len(sink.records[0].Diagnostics) != 6 {
+		t.Fatalf("diagnostics = %#v", sink.records[0].Diagnostics)
+	}
+	for _, diagnostic := range sink.records[0].Diagnostics {
+		if len(diagnostic.EventIDs) != 2 || len(diagnostic.RawRecordIDs) != 1 {
+			t.Fatalf("diagnostic evidence = %#v", diagnostic)
+		}
+	}
+
+	var blocks []string
+	for index := 0; index < 12; index++ {
+		blocks = append(blocks, "null")
+	}
+	overflow := `{"type":"user","message":{"role":"user","content":[` + strings.Join(blocks, ",") + `]}}`
+	bounded, _ := importSource(t, bytesSource("diagnostic-overflow", []byte(overflow+"\n")), nil, nil)
+	diagnostics := bounded.records[0].Diagnostics
+	if len(diagnostics) != maxRecordDiagnostics || diagnostics[len(diagnostics)-1].Code != "claude.diagnostics.truncated" {
+		t.Fatalf("bounded diagnostics = %#v", diagnostics)
+	}
+}
+
 func TestUUIDIdentityIsSessionScopedAndQualifiedForMultipleEvents(t *testing.T) {
 	sink, _ := importSource(t, fixtureSource(t, "main.jsonl"), nil, nil)
 	got := events(sink.records)
@@ -290,7 +436,9 @@ func TestMalformedUnknownSidechainAndTimestampDiagnostics(t *testing.T) {
 		t.Fatalf("unknown record = %#v", sink.records[2])
 	}
 	sidechain := sink.records[3].Events
-	if len(sidechain) != 1 || sidechain[0].Kind != model.EventKindUnknown || sidechain[0].Data.(model.UnknownData).OriginalKind != "sidechain:assistant" {
+	if len(sidechain) != 1 || sidechain[0].Kind != model.EventKindMessage ||
+		sidechain[0].Data.(model.MessageData).Text != "branch work" ||
+		!strings.Contains(sidechain[0].Summary, "sidechain") {
 		t.Fatalf("sidechain = %#v", sidechain)
 	}
 }

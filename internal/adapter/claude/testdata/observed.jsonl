@@ -1,0 +1,18 @@
+{"type":"assistant","sessionId":"claude-observed","version":"2.1.160","uuid":"sidechain-message","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"sanitized branch response"}]}}
+{"type":"system","sessionId":"claude-observed","version":"2.1.160","uuid":"away","subtype":"away_summary","content":"sanitized away summary"}
+{"type":"system","sessionId":"claude-observed","version":"2.1.160","uuid":"compact","subtype":"compact_boundary","content":"sanitized compact summary"}
+{"type":"system","sessionId":"claude-observed","version":"2.1.171","uuid":"api-error","subtype":"api_error","message":"sanitized API error"}
+{"type":"system","sessionId":"claude-observed","version":"2.1.171","uuid":"local","subtype":"local_command","content":"sanitized local command notice"}
+{"type":"system","sessionId":"claude-observed","version":"2.1.171","uuid":"info","subtype":"informational","content":"sanitized information"}
+{"type":"system","sessionId":"claude-observed","version":"2.1.179","subtype":"turn_duration","durationMs":20}
+{"type":"queue-operation","sessionId":"claude-observed","version":"2.1.179","operation":"enqueue","content":"sanitized queued text"}
+{"type":"queue-operation","sessionId":"claude-observed","version":"2.1.179","operation":"dequeue"}
+{"type":"queue-operation","sessionId":"claude-observed","version":"2.1.179","operation":"remove","content":"sanitized discarded text"}
+{"type":"progress","sessionId":"claude-observed","version":"2.1.179","data":{"type":"hook_progress","hookEvent":"sanitized"}}
+{"type":"progress","sessionId":"claude-observed","version":"2.1.179","data":{"type":"mcp_progress","serverName":"sanitized"}}
+{"type":"progress","sessionId":"claude-observed","version":"2.1.179","data":{"type":"agent_progress"}}
+{"type":"progress","sessionId":"claude-observed","version":"2.1.179","data":{"type":"bash_progress"}}
+{"type":"progress","sessionId":"claude-observed","version":"2.1.179","data":{"type":"powershell_progress"}}
+{"type":"status","sessionId":"claude-observed","version":"2.1.179","status":"sanitized"}
+{"type":"attachment","sessionId":"claude-observed","version":"2.1.179","subtype":"file","content":{"name":"sanitized"}}
+{"type":"context","sessionId":"claude-observed","version":"2.1.179","content":{"kind":"sanitized"}}
