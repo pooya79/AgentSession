@@ -297,6 +297,17 @@ func TestNormalizationV1StateIsReplaced(t *testing.T) {
 	}
 }
 
+func TestParseErrorSupportsNestedOpenCodeErrorData(t *testing.T) {
+	raw := json.RawMessage(`{"name":"APIError","data":{"message":"request failed","statusCode":500}}`)
+	got, ok := parseError(raw, "assistant_error")
+	if !ok {
+		t.Fatal("parseError() rejected nested OpenCode error data")
+	}
+	if got.Code != "APIError" || got.Message != "request failed" {
+		t.Fatalf("parseError() = %#v", got)
+	}
+}
+
 func TestDiagnosticsAreBoundedPerRow(t *testing.T) {
 	values := make([]model.Diagnostic, 10)
 	for i := range values {

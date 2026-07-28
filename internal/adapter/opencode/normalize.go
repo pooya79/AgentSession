@@ -622,6 +622,11 @@ func parseError(raw json.RawMessage, fallbackCode string) (model.ErrorData, bool
 		return model.ErrorData{}, false
 	}
 	message, present, valid := optionalString(value, "message")
+	if !present {
+		if data, dataOK := objectValue(value["data"]); dataOK {
+			message, present, valid = optionalString(data, "message")
+		}
+	}
 	if !present || !valid {
 		return model.ErrorData{}, false
 	}

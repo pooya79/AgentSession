@@ -42,7 +42,10 @@ func normalizeRecord(record wireRecord) ([]eventDraft, []diagnosticDraft) {
 	case "queue-operation":
 		return normalizeQueueOperation(record)
 	case "attachment":
-		discriminant := nestedDiscriminant(record.Data)
+		discriminant := nestedDiscriminant(record.Attachment)
+		if !discriminant.present {
+			discriminant = nestedDiscriminant(record.Data)
+		}
 		if subtype, present, valid := requiredString(record.Subtype); present {
 			discriminant = nestedValue{value: subtype, present: true, valid: valid}
 		}
@@ -128,7 +131,10 @@ func normalizeNestedMetadata(parent string, discriminant nestedValue) ([]eventDr
 		}
 	case "attachment":
 		switch discriminant.value {
-		case "attachment", "context", "file", "directory", "selection", "diagnostic":
+		case "attachment", "context", "file", "directory", "selection", "diagnostic",
+			"task_reminder", "deferred_tools_delta", "skill_listing", "agent_listing_delta",
+			"queued_command", "diagnostics", "command_permissions", "edited_text_file",
+			"plan_mode_exit", "plan_mode", "nested_memory", "dynamic_skill":
 			known = true
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -336,6 +337,7 @@ func TestNestedMetadataUnknownAndMalformedClassification(t *testing.T) {
 		{"unknown progress", `{"type":"progress","data":{"type":"future_progress"}}`, model.EventKindUnknown, ""},
 		{"unknown queue", `{"type":"queue-operation","operation":"future_operation"}`, model.EventKindUnknown, ""},
 		{"unknown attachment", `{"type":"attachment","subtype":"future_attachment"}`, model.EventKindUnknown, ""},
+		{"unknown attachment object", `{"type":"attachment","attachment":{"type":"future_attachment"}}`, model.EventKindUnknown, ""},
 		{"missing system subtype", `{"type":"system","content":"text"}`, "", model.InterpretationMissingDiscriminant},
 		{"missing progress subtype", `{"type":"progress","data":{}}`, "", model.InterpretationMissingDiscriminant},
 		{"invalid queue operation", `{"type":"queue-operation","operation":false}`, "", model.InterpretationStructurallyInvalidKnownRecord},
@@ -358,6 +360,49 @@ func TestNestedMetadataUnknownAndMalformedClassification(t *testing.T) {
 				t.Fatalf("record = %#v", sink.records[0])
 			}
 		})
+	}
+}
+
+func TestObservedAttachmentObjectsAreMetadata(t *testing.T) {
+	for _, attachmentType := range []string{
+		"task_reminder", "deferred_tools_delta", "skill_listing", "agent_listing_delta",
+		"queued_command", "diagnostics", "command_permissions", "edited_text_file",
+		"plan_mode_exit", "plan_mode", "nested_memory", "dynamic_skill",
+	} {
+		t.Run(attachmentType, func(t *testing.T) {
+			record := fmt.Sprintf(`{"type":"attachment","attachment":{"type":%q}}`, attachmentType)
+			sink, _ := importSource(t, bytesSource(attachmentType, []byte(record+"\n")), nil, nil)
+			if len(sink.records) != 1 || len(sink.records[0].Events) != 0 || len(sink.records[0].Diagnostics) != 0 {
+				t.Fatalf("record = %#v", sink.records)
+			}
+		})
+	}
+}
+
+func TestAgentLogsUseDistinctCanonicalSessionIDs(t *testing.T) {
+	first, _ := importSource(t, bytesSource("agent-one", []byte(
+		`{"type":"assistant","sessionId":"parent","agentId":"agent-one","message":{"role":"assistant","content":"one"}}`+"\n",
+	)), nil, nil)
+	second, _ := importSource(t, bytesSource("agent-two", []byte(
+		`{"type":"assistant","sessionId":"parent","agentId":"agent-two","message":{"role":"assistant","content":"two"}}`+"\n",
+	)), nil, nil)
+
+	if first.session.ID == "parent" || second.session.ID == "parent" || first.session.ID == second.session.ID {
+		t.Fatalf("agent session IDs = %q, %q", first.session.ID, second.session.ID)
+	}
+	if first.session.ID != model.SessionID(agentSessionID("parent", "agent-one")) {
+		t.Fatalf("first agent session ID = %q", first.session.ID)
+	}
+}
+
+func TestAgentTaskLogProbesAsClaude(t *testing.T) {
+	source := bytesSource("agent-task-log", []byte(`{"type":"started","agentId":"agent-one","key":"task"}`+"\n"))
+	probe, err := New().Probe(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probe.Confidence != importer.ProbeCertain {
+		t.Fatalf("probe confidence = %d", probe.Confidence)
 	}
 }
 

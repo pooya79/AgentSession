@@ -82,6 +82,9 @@ func (a *Adapter) Probe(ctx context.Context, source importer.Source) (importer.P
 		if knownTopLevel(record.Type) || record.SessionID != "" || hasJSONField(trimLineEnding(line), "isSidechain") {
 			recognized = true
 		}
+		if strings.TrimSpace(record.AgentID) != "" {
+			recognized = true
+		}
 		if value := strings.TrimSpace(record.Version); value != "" {
 			cliVersion = value
 		}
@@ -136,6 +139,8 @@ func (a *Adapter) Prepare(ctx context.Context, source importer.Source) (importer
 	if view.sessionID == "" {
 		sum := sha256.Sum256([]byte(source.ID))
 		view.sessionID = "claude_" + hex.EncodeToString(sum[:])
+	} else if view.agentID != "" {
+		view.sessionID = agentSessionID(view.sessionID, view.agentID)
 	}
 	view.format = compositeFormat(view.cliVersion)
 	if _, err := replay.Seek(0, io.SeekStart); err != nil {
@@ -152,6 +157,7 @@ type wireRecord struct {
 	Type        string          `json:"type"`
 	UUID        string          `json:"uuid"`
 	SessionID   string          `json:"sessionId"`
+	AgentID     string          `json:"agentId"`
 	Version     string          `json:"version"`
 	Timestamp   string          `json:"timestamp"`
 	IsSidechain bool            `json:"isSidechain"`
@@ -159,6 +165,7 @@ type wireRecord struct {
 	Content     json.RawMessage `json:"content"`
 	Error       json.RawMessage `json:"error"`
 	Data        json.RawMessage `json:"data"`
+	Attachment  json.RawMessage `json:"attachment"`
 	Subtype     json.RawMessage `json:"subtype"`
 	Operation   json.RawMessage `json:"operation"`
 	Summary     string          `json:"summary"`
@@ -182,6 +189,7 @@ type prepared struct {
 	reader       *bufio.Reader
 	cliVersion   string
 	sessionID    string
+	agentID      string
 	format       model.Version
 
 	offset    int64
@@ -202,6 +210,9 @@ func (p *prepared) inspectRecord(line []byte, header probeRecordHeader, truncate
 		if p.sessionID == "" {
 			p.sessionID = strings.TrimSpace(record.SessionID)
 		}
+		if p.agentID == "" {
+			p.agentID = strings.TrimSpace(record.AgentID)
+		}
 		if value := strings.TrimSpace(record.Version); value != "" {
 			p.cliVersion = value
 		}
@@ -209,6 +220,9 @@ func (p *prepared) inspectRecord(line []byte, header probeRecordHeader, truncate
 	}
 	if p.sessionID == "" {
 		p.sessionID = strings.TrimSpace(header.sessionID)
+	}
+	if p.agentID == "" {
+		p.agentID = strings.TrimSpace(header.agentID)
 	}
 	if value := strings.TrimSpace(header.version); value != "" {
 		p.cliVersion = value
@@ -451,6 +465,11 @@ func claudeEventID(uuid, sessionID string, ordinal uint64, count int, ref model.
 	return model.NewEventID(model.EventIDInput{SourceID: ref.SourceID, RecordSequence: ref.RecordSequence, ByteRange: ref.ByteRange, RecordHash: ref.ContentHash, EventOrdinal: ordinal})
 }
 
+func agentSessionID(parentSessionID, agentID string) string {
+	sum := sha256.Sum256([]byte("agentsession:claude-agent-session-id:v1\x00" + parentSessionID + "\x00" + agentID))
+	return "claude_agent_" + hex.EncodeToString(sum[:])
+}
+
 func (p *prepared) Close() error {
 	if p.closed {
 		return nil
@@ -529,6 +548,7 @@ func replayLine(reader *bufio.Reader, replay io.Writer, captureLimit int) ([]byt
 
 type probeRecordHeader struct {
 	sessionID string
+	agentID   string
 	version   string
 }
 
@@ -627,13 +647,16 @@ func (p *probeHeaderInspector) finishString() {
 	switch p.capture {
 	case "key":
 		p.expectKey = false
-		if value == "sessionId" || value == "version" {
+		if value == "sessionId" || value == "agentId" || value == "version" {
 			p.pending = value
 		} else {
 			p.pending = ""
 		}
 	case "sessionId":
 		p.header.sessionID = value
+		p.pending = ""
+	case "agentId":
+		p.header.agentID = value
 		p.pending = ""
 	case "version":
 		p.header.version = value
@@ -720,5 +743,6 @@ func looksClaudeLike(line []byte) bool {
 			return true
 		}
 	}
-	return bytes.Contains(line, []byte(`"sessionId"`)) || bytes.Contains(line, []byte(`"isSidechain"`))
+	return bytes.Contains(line, []byte(`"sessionId"`)) || bytes.Contains(line, []byte(`"agentId"`)) ||
+		bytes.Contains(line, []byte(`"isSidechain"`))
 }
