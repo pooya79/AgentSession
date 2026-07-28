@@ -1,4 +1,5 @@
-// Package codex imports Codex CLI rollout JSONL files.
+// Package codex implements discovery and streaming import of Codex CLI rollout
+// JSONL files.
 package codex
 
 import (
@@ -21,24 +22,38 @@ import (
 )
 
 const (
-	AdapterVersion       model.Version = "1"
-	ModelVersion         model.Version = "1"
+	// AdapterVersion identifies the persisted Codex adapter implementation.
+	AdapterVersion model.Version = "1"
+	// ModelVersion identifies the canonical event model emitted by this adapter.
+	ModelVersion model.Version = "1"
+	// NormalizationVersion identifies the Codex-to-canonical normalization rules.
 	NormalizationVersion model.Version = "1"
-	CursorVersion        model.Version = "codex-rollout-cursor-v1"
-	FingerprintVersion   model.Version = "codex-rollout-fingerprint-v1"
+	// CursorVersion identifies the persisted Codex rollout cursor schema.
+	CursorVersion model.Version = "codex-rollout-cursor-v1"
+	// FingerprintVersion identifies the persisted Codex source fingerprint schema.
+	FingerprintVersion model.Version = "codex-rollout-fingerprint-v1"
 
-	formatLegacy  = "codex-rollout-jsonl-v1"
-	formatOrdinal = "codex-rollout-jsonl-v2-ordinal"
-	readBuffer    = 32 << 10
+	formatLegacy         = "codex-rollout-jsonl-v1"
+	formatOrdinal        = "codex-rollout-jsonl-v2-ordinal"
+	readBuffer           = 32 << 10
+	initialRecords       = 8
+	inspectionPrefix     = 64 << 10
+	maxRecordDiagnostics = 8
 )
 
+// Adapter probes and imports Codex CLI rollout files.
 type Adapter struct{}
 
+// New returns a Codex rollout adapter.
 func New() *Adapter { return &Adapter{} }
 
-func (*Adapter) Name() string           { return "codex" }
+// Name returns the stable adapter name persisted with imported sessions.
+func (*Adapter) Name() string { return "codex" }
+
+// Version returns the persisted Codex adapter implementation version.
 func (*Adapter) Version() model.Version { return AdapterVersion }
 
+// Probe inspects a bounded initial record window to identify a Codex rollout.
 func (a *Adapter) Probe(ctx context.Context, source importer.Source) (importer.ProbeResult, error) {
 	if err := source.Validate(); err != nil {
 		return importer.ProbeResult{}, err
@@ -48,62 +63,25 @@ func (a *Adapter) Probe(ctx context.Context, source importer.Source) (importer.P
 		return importer.ProbeResult{}, fmt.Errorf("open rollout for probe: %w", err)
 	}
 	defer r.Close()
-	reader := bufio.NewReaderSize(r, readBuffer)
-	if header, _ := reader.Peek(len("SQLite format 3\x00")); bytes.Equal(header, []byte("SQLite format 3\x00")) {
-		return importer.ProbeResult{Confidence: importer.ProbeUnsupported}, nil
+	inspection, err := inspectInitial(ctx, bufio.NewReaderSize(r, readBuffer), nil)
+	if err != nil {
+		return importer.ProbeResult{}, fmt.Errorf("inspect rollout probe: %w", err)
 	}
-	recognized, valid, ordinal := false, false, false
-	possibleMalformed := false
-	cli := "unknown"
-	var diagnostics []model.Diagnostic
-	for i := 0; i < 8; i++ {
-		if err := ctx.Err(); err != nil {
-			return importer.ProbeResult{}, err
-		}
-		line, complete, readErr := readLine(reader)
-		if len(line) == 0 && readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				break
-			}
-			return importer.ProbeResult{}, fmt.Errorf("read rollout probe: %w", readErr)
-		}
-		if !complete {
-			possibleMalformed = possibleMalformed || looksCodexLike(line)
-			break
-		}
-		var record wireRecord
-		if err := json.Unmarshal(trimLineEnding(line), &record); err != nil {
-			diagnostics = append(diagnostics, model.Diagnostic{Code: "codex.probe.malformed", Severity: model.SeverityWarning, Message: "A complete JSONL record is malformed."})
-			possibleMalformed = possibleMalformed || looksCodexLike(line)
-			continue
-		}
-		valid = true
-		if record.Ordinal != nil {
-			ordinal = true
-		}
-		if knownTopLevel(record.Type) {
-			recognized = true
-		}
-		if record.Type == "session_meta" {
-			var meta sessionMeta
-			if json.Unmarshal(record.Payload, &meta) == nil && strings.TrimSpace(meta.CLIVersion) != "" {
-				cli = strings.TrimSpace(meta.CLIVersion)
-			}
-		}
-		if readErr != nil {
-			break
-		}
-	}
-	if !valid && !possibleMalformed {
-		return importer.ProbeResult{Confidence: importer.ProbeUnsupported, Diagnostics: diagnostics}, nil
+	if !inspection.valid && !inspection.possibleMalformed {
+		return importer.ProbeResult{Confidence: importer.ProbeUnsupported, Diagnostics: inspection.diagnostics}, nil
 	}
 	confidence := importer.ProbePossible
-	if recognized {
+	if inspection.recognized {
 		confidence = importer.ProbeCertain
 	}
-	return importer.ProbeResult{Confidence: confidence, FormatVersion: compositeFormat(ordinal, cli), Diagnostics: diagnostics}, nil
+	return importer.ProbeResult{
+		Confidence:    confidence,
+		FormatVersion: compositeFormat(inspection.ordinal, inspection.cliVersion),
+		Diagnostics:   inspection.diagnostics,
+	}, nil
 }
 
+// Prepare opens a Codex rollout for verification, reconciliation, or import.
 func (a *Adapter) Prepare(ctx context.Context, source importer.Source) (importer.PreparedSource, error) {
 	if err := source.Validate(); err != nil {
 		return nil, err
@@ -112,13 +90,46 @@ func (a *Adapter) Prepare(ctx context.Context, source importer.Source) (importer
 	if err != nil {
 		return nil, fmt.Errorf("open rollout: %w", err)
 	}
-	view := &prepared{adapter: a, source: source, sourceStream: stream, reader: bufio.NewReaderSize(stream, readBuffer)}
-	view.first, view.firstComplete, err = readLine(view.reader)
-	if err != nil && !errors.Is(err, io.EOF) {
+	replay, err := os.CreateTemp("", "agentsession-codex-window-*")
+	if err != nil {
 		_ = stream.Close()
-		return nil, fmt.Errorf("read rollout header: %w", err)
+		return nil, fmt.Errorf("create rollout replay file: %w", err)
 	}
-	view.inspectHeader()
+	cleanup := func() {
+		_ = errors.Join(stream.Close(), replay.Close(), os.Remove(replay.Name()))
+	}
+	reader := bufio.NewReaderSize(stream, readBuffer)
+	replayWriter := bufio.NewWriterSize(replay, readBuffer)
+	inspection, err := inspectInitial(ctx, reader, replayWriter)
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("inspect rollout header window: %w", err)
+	}
+	if err := replayWriter.Flush(); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("flush rollout replay file: %w", err)
+	}
+	if _, err := replay.Seek(0, io.SeekStart); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("rewind rollout replay file: %w", err)
+	}
+	view := &prepared{
+		adapter:      a,
+		source:       source,
+		sourceStream: stream,
+		replay:       replay,
+		reader:       bufio.NewReaderSize(io.MultiReader(replay, reader), readBuffer),
+		ordinal:      inspection.ordinal,
+		cliVersion:   inspection.cliVersion,
+		sessionID:    inspection.sessionID,
+		startedAt:    inspection.startedAt,
+		diagnostics:  sessionInspectionDiagnostics(inspection.diagnostics),
+	}
+	if view.sessionID == "" {
+		sum := sha256.Sum256([]byte(source.ID))
+		view.sessionID = "codex_" + hex.EncodeToString(sum[:])
+	}
+	view.format = compositeFormat(view.ordinal, view.cliVersion)
 	return view, nil
 }
 
@@ -131,8 +142,225 @@ type wireRecord struct {
 
 type sessionMeta struct {
 	ID         string `json:"id"`
+	SessionID  string `json:"session_id"`
 	Timestamp  string `json:"timestamp"`
 	CLIVersion string `json:"cli_version"`
+}
+
+type initialInspection struct {
+	recognized        bool
+	valid             bool
+	ordinal           bool
+	possibleMalformed bool
+	cliVersion        string
+	sessionID         string
+	startedAt         *time.Time
+	diagnostics       []model.Diagnostic
+}
+
+func inspectInitial(ctx context.Context, reader *bufio.Reader, replay io.Writer) (initialInspection, error) {
+	result := initialInspection{cliVersion: "unknown"}
+	for recordIndex := 0; recordIndex < initialRecords; recordIndex++ {
+		prefix := make([]byte, 0, inspectionPrefix)
+		for {
+			if err := ctx.Err(); err != nil {
+				return initialInspection{}, err
+			}
+			fragment, err := reader.ReadSlice('\n')
+			if len(fragment) > 0 {
+				if replay != nil {
+					if _, writeErr := replay.Write(fragment); writeErr != nil {
+						return initialInspection{}, fmt.Errorf("write rollout replay file: %w", writeErr)
+					}
+				}
+				if remaining := inspectionPrefix - len(prefix); remaining > 0 {
+					prefix = append(prefix, fragment[:min(remaining, len(fragment))]...)
+				}
+			}
+			if err == nil {
+				break
+			}
+			if errors.Is(err, bufio.ErrBufferFull) {
+				continue
+			}
+			if errors.Is(err, io.EOF) {
+				if len(prefix) > 0 {
+					result.possibleMalformed = result.possibleMalformed || looksCodexLike(prefix)
+				}
+				return result, nil
+			}
+			return initialInspection{}, err
+		}
+		if len(prefix) == inspectionPrefix && prefix[len(prefix)-1] != '\n' {
+			result.possibleMalformed = result.possibleMalformed || looksCodexLike(prefix)
+			if header, ok := boundedRecordHeader(prefix); ok {
+				result.valid = true
+				if knownTopLevel(header.Type) {
+					result.recognized = true
+				}
+				if header.Ordinal != nil {
+					result.ordinal = true
+				}
+				if result.sessionID == "" && header.Type == "session_meta" {
+					if meta, ok := boundedSessionMeta(prefix); ok {
+						applySessionMeta(&result, meta, header.Timestamp)
+					}
+				}
+			}
+			continue
+		}
+		line := trimLineEnding(prefix)
+		var object map[string]json.RawMessage
+		if json.Unmarshal(line, &object) != nil || object == nil {
+			result.possibleMalformed = result.possibleMalformed || looksCodexLike(line)
+			result.diagnostics = append(result.diagnostics, probeMalformedDiagnostic())
+			continue
+		}
+		result.valid = true
+		typeName := rawString(object["type"])
+		if knownTopLevel(typeName) {
+			result.recognized = true
+		}
+		if _, ok := validUint64(object["ordinal"]); ok {
+			result.ordinal = true
+		}
+		if result.sessionID != "" || typeName != "session_meta" {
+			continue
+		}
+		var payload sessionMeta
+		if raw, ok := object["payload"]; !ok || json.Unmarshal(raw, &payload) != nil {
+			continue
+		}
+		applySessionMeta(&result, payload, rawString(object["timestamp"]))
+	}
+	return result, nil
+}
+
+func validUint64(raw json.RawMessage) (uint64, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	var value uint64
+	if json.Unmarshal(raw, &value) != nil {
+		return 0, false
+	}
+	return value, true
+}
+
+func boundedRecordHeader(prefix []byte) (wireRecord, bool) {
+	payloadKey := bytes.Index(prefix, []byte(`"payload"`))
+	if payloadKey < 0 {
+		return wireRecord{}, false
+	}
+	colonOffset := bytes.IndexByte(prefix[payloadKey+len(`"payload"`):], ':')
+	if colonOffset < 0 {
+		return wireRecord{}, false
+	}
+	colon := payloadKey + len(`"payload"`) + colonOffset
+	candidate := make([]byte, 0, colon+len(":null}"))
+	candidate = append(candidate, prefix[:colon+1]...)
+	candidate = append(candidate, []byte("null}")...)
+	var header wireRecord
+	if json.Unmarshal(candidate, &header) != nil {
+		return wireRecord{}, false
+	}
+	return header, true
+}
+
+func boundedSessionMeta(prefix []byte) (sessionMeta, bool) {
+	payloadKey := bytes.Index(prefix, []byte(`"payload"`))
+	if payloadKey < 0 {
+		return sessionMeta{}, false
+	}
+	payload := prefix[payloadKey+len(`"payload"`):]
+	meta := sessionMeta{}
+	meta.SessionID, _ = boundedStringField(payload, "session_id")
+	meta.ID, _ = boundedStringField(payload, "id")
+	meta.CLIVersion, _ = boundedStringField(payload, "cli_version")
+	meta.Timestamp, _ = boundedStringField(payload, "timestamp")
+	if strings.TrimSpace(meta.SessionID) == "" && strings.TrimSpace(meta.ID) == "" {
+		return sessionMeta{}, false
+	}
+	return meta, true
+}
+
+func boundedStringField(data []byte, key string) (string, bool) {
+	keyOffset := bytes.Index(data, []byte(`"`+key+`"`))
+	if keyOffset < 0 {
+		return "", false
+	}
+	rest := data[keyOffset+len(key)+2:]
+	colon := bytes.IndexByte(rest, ':')
+	if colon < 0 {
+		return "", false
+	}
+	rest = bytes.TrimLeft(rest[colon+1:], " \t\r\n")
+	if len(rest) == 0 || rest[0] != '"' {
+		return "", false
+	}
+	escaped := false
+	for index := 1; index < len(rest); index++ {
+		switch {
+		case escaped:
+			escaped = false
+		case rest[index] == '\\':
+			escaped = true
+		case rest[index] == '"':
+			var value string
+			if json.Unmarshal(rest[:index+1], &value) != nil {
+				return "", false
+			}
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func applySessionMeta(result *initialInspection, meta sessionMeta, recordTimestamp string) {
+	sessionID := strings.TrimSpace(meta.SessionID)
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(meta.ID)
+	}
+	if sessionID == "" {
+		return
+	}
+	result.sessionID = sessionID
+	if cli := strings.TrimSpace(meta.CLIVersion); cli != "" {
+		result.cliVersion = cli
+	}
+	timestamp := strings.TrimSpace(meta.Timestamp)
+	if timestamp == "" {
+		timestamp = strings.TrimSpace(recordTimestamp)
+	}
+	if timestamp == "" {
+		return
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, timestamp)
+	if err != nil {
+		result.diagnostics = append(result.diagnostics, model.Diagnostic{
+			Code: "codex.session.timestamp.invalid", Severity: model.SeverityWarning,
+			Message: "The Codex session metadata timestamp is malformed.",
+		})
+		return
+	}
+	result.startedAt = &parsed
+}
+
+func probeMalformedDiagnostic() model.Diagnostic {
+	return model.Diagnostic{
+		Code: "codex.probe.malformed", Severity: model.SeverityWarning,
+		Message: "A complete JSONL record in the initial inspection window is malformed.",
+	}
+}
+
+func sessionInspectionDiagnostics(diagnostics []model.Diagnostic) []model.Diagnostic {
+	var result []model.Diagnostic
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == "codex.session.timestamp.invalid" {
+			result = append(result, diagnostic)
+		}
+	}
+	return result
 }
 
 type cursorState struct {
@@ -147,60 +375,24 @@ type fingerprintState struct {
 }
 
 type prepared struct {
-	adapter       *Adapter
-	source        importer.Source
-	sourceStream  io.ReadCloser
-	reader        *bufio.Reader
-	first         []byte
-	firstComplete bool
-	firstUsed     bool
-	ordinal       bool
-	cliVersion    string
-	sessionID     string
-	format        model.Version
-	startedAt     *time.Time
-	diagnostics   []model.Diagnostic
+	adapter      *Adapter
+	source       importer.Source
+	sourceStream io.ReadCloser
+	replay       *os.File
+	reader       *bufio.Reader
+	ordinal      bool
+	cliVersion   string
+	sessionID    string
+	format       model.Version
+	startedAt    *time.Time
+	diagnostics  []model.Diagnostic
 
-	offset int64
-	seq    int64
-	digest hash.Hash
-	spool  *os.File
-	closed bool
-}
-
-func (p *prepared) inspectHeader() {
-	p.cliVersion = "unknown"
-	if p.firstComplete {
-		var record wireRecord
-		if json.Unmarshal(trimLineEnding(p.first), &record) == nil {
-			p.ordinal = record.Ordinal != nil
-			if record.Type == "session_meta" {
-				var meta sessionMeta
-				if json.Unmarshal(record.Payload, &meta) == nil {
-					p.sessionID = strings.TrimSpace(meta.ID)
-					if strings.TrimSpace(meta.CLIVersion) != "" {
-						p.cliVersion = strings.TrimSpace(meta.CLIVersion)
-					}
-					timestamp := strings.TrimSpace(meta.Timestamp)
-					if timestamp == "" {
-						timestamp = strings.TrimSpace(record.Timestamp)
-					}
-					if timestamp != "" {
-						if parsed, err := time.Parse(time.RFC3339Nano, timestamp); err == nil {
-							p.startedAt = &parsed
-						} else {
-							p.diagnostics = append(p.diagnostics, model.Diagnostic{Code: "codex.session.timestamp.invalid", Severity: model.SeverityWarning, Message: "The Codex session metadata timestamp is malformed."})
-						}
-					}
-				}
-			}
-		}
-	}
-	if p.sessionID == "" {
-		sum := sha256.Sum256([]byte(p.source.ID))
-		p.sessionID = "codex_" + hex.EncodeToString(sum[:])
-	}
-	p.format = compositeFormat(p.ordinal, p.cliVersion)
+	offset   int64
+	seq      int64
+	eventSeq int64
+	digest   hash.Hash
+	spool    *os.File
+	closed   bool
 }
 
 func (p *prepared) Verify(ctx context.Context, state importer.SourceState) (importer.SourceChange, error) {
@@ -231,6 +423,9 @@ func (p *prepared) Verify(ctx context.Context, state importer.SourceState) (impo
 		return importer.SourceMutated, nil
 	}
 	p.seq = state.Checkpoint.RecordSequence + 1
+	if state.LastEventSequence != nil {
+		p.eventSeq = *state.LastEventSequence + 1
+	}
 	if cursor.Offset == p.source.Size {
 		return importer.SourceUnchanged, nil
 	}
@@ -245,16 +440,6 @@ func (p *prepared) consumePrefix(ctx context.Context, target int64) error {
 	}
 	p.spool = spool
 	remaining := target
-	if remaining > 0 && len(p.first) > 0 {
-		if int64(len(p.first)) > remaining {
-			return fmt.Errorf("checkpoint offset %d splits the first JSONL record", target)
-		}
-		if err := p.writeVerified(p.first); err != nil {
-			return err
-		}
-		remaining -= int64(len(p.first))
-		p.firstUsed = true
-	}
 	buf := make([]byte, readBuffer)
 	for remaining > 0 {
 		if err := ctx.Err(); err != nil {
@@ -308,13 +493,12 @@ func (p *prepared) Reconcile(ctx context.Context, sink importer.ImportSink) erro
 		}
 		source = io.MultiReader(p.spool, p.reader)
 	} else {
-		source = io.MultiReader(bytes.NewReader(p.first), p.reader)
+		source = p.reader
 	}
 	p.reader = bufio.NewReaderSize(source, readBuffer)
-	p.first = nil
-	p.firstUsed = true
 	p.offset = 0
 	p.seq = 0
+	p.eventSeq = 0
 	p.digest = sha256.New()
 	return p.stream(ctx, sink, true)
 }
@@ -342,10 +526,11 @@ func (p *prepared) stream(ctx context.Context, sink importer.ImportSink, reconci
 				return err
 			}
 			p.offset += int64(len(line))
-			envelope, normalizeErr := p.envelope(line, start, p.seq, session)
+			envelope, normalizeErr := p.envelope(line, start, p.seq, p.eventSeq, session)
 			if normalizeErr != nil {
 				return normalizeErr
 			}
+			p.eventSeq += int64(len(envelope.Events))
 			envelope.Checkpoint, err = p.checkpoint(p.seq)
 			if err != nil {
 				return err
@@ -369,13 +554,6 @@ func (p *prepared) stream(ctx context.Context, sink importer.ImportSink, reconci
 }
 
 func (p *prepared) nextLine() ([]byte, bool, error) {
-	if !p.firstUsed {
-		p.firstUsed = true
-		if p.firstComplete {
-			return p.first, true, nil
-		}
-		return p.first, false, io.EOF
-	}
 	return readLine(p.reader)
 }
 
@@ -391,7 +569,7 @@ func (p *prepared) checkpoint(sequence int64) (importer.ImportCheckpoint, error)
 	return importer.ImportCheckpoint{SourceID: p.source.ID, RecordSequence: sequence, StateVersion: CursorVersion, Cursor: cursor, Fingerprint: fingerprint}, nil
 }
 
-func (p *prepared) envelope(line []byte, offset, sequence int64, session model.Session) (importer.RecordEnvelope, error) {
+func (p *prepared) envelope(line []byte, offset, sequence, eventSequence int64, session model.Session) (importer.RecordEnvelope, error) {
 	seq := sequence
 	rangeValue := model.ByteRange{Offset: offset, Length: int64(len(line))}
 	hashValue := model.HashRecord(line)
@@ -411,87 +589,99 @@ func (p *prepared) envelope(line []byte, offset, sequence int64, session model.S
 		}}
 		return envelope, nil
 	}
-	event, diagnostic, emit, err := p.normalize(record, ref, sequence, session.ID)
+	normalizedEvents, diagnostics, err := p.normalize(record, ref, eventSequence, session.ID)
 	if err != nil {
 		return importer.RecordEnvelope{}, err
 	}
-	if emit {
-		envelope.Events = []model.Event{event}
-	}
-	if diagnostic != nil {
-		diagnostic.RawRecordIDs = []model.RawRecordID{rawID}
-		if emit {
-			diagnostic.EventIDs = []model.EventID{event.ID}
+	envelope.Events = normalizedEvents
+	for i := range diagnostics {
+		diagnostics[i].RawRecordIDs = []model.RawRecordID{rawID}
+		if len(normalizedEvents) > 0 {
+			diagnostics[i].EventIDs = make([]model.EventID, 0, len(normalizedEvents))
+			for _, event := range normalizedEvents {
+				diagnostics[i].EventIDs = append(diagnostics[i].EventIDs, event.ID)
+			}
 		}
-		envelope.Diagnostics = []model.Diagnostic{*diagnostic}
 	}
+	envelope.Diagnostics = boundDiagnostics(diagnostics)
 	return envelope, nil
 }
 
-func (p *prepared) normalize(record wireRecord, ref model.RawRecordRef, sequence int64, sessionID model.SessionID) (model.Event, *model.Diagnostic, bool, error) {
+func (p *prepared) normalize(record wireRecord, ref model.RawRecordRef, eventSequence int64, sessionID model.SessionID) ([]model.Event, []model.Diagnostic, error) {
 	if record.Type == "session_meta" {
-		return model.Event{}, nil, false, nil
+		if _, ok := objectValue(record.Payload); !ok {
+			result := invalidKnown()
+			return nil, result.diagnostics, nil
+		}
+		return nil, nil, nil
 	}
 	if strings.TrimSpace(record.Type) == "" {
-		return model.Event{}, &model.Diagnostic{
+		return nil, []model.Diagnostic{{
 			Code: "codex.record.type.missing", Severity: model.SeverityWarning,
 			Message:              "The complete Codex record has no type discriminant and was retained.",
 			InterpretationReason: model.InterpretationMissingDiscriminant,
-		}, false, nil
+		}}, nil
 	}
-	kind, summary, searchable, data, native, supported := normalizeRecord(record, p.ordinal, string(sessionID))
-	if supported && data == nil {
-		return model.Event{}, nil, false, nil
-	}
-	if !supported {
+	result := normalizeRecord(record, p.ordinal, string(sessionID))
+	if !result.handled {
 		label := record.Type
 		reason := model.UnknownUnsupportedRecordKind
-		if record.Type == "response_item" || record.Type == "event_msg" || record.Type == "compacted" {
-			if record.Type == "compacted" {
-				return model.Event{}, &model.Diagnostic{
-					Code: "codex.record.structure.invalid", Severity: model.SeverityWarning,
-					Message:              "A known Codex record has an invalid structure and was retained.",
-					InterpretationReason: model.InterpretationStructurallyInvalidKnownRecord,
-				}, false, nil
-			}
-			nested, validStructure := nestedType(record.Payload)
-			if !validStructure {
-				return model.Event{}, &model.Diagnostic{
-					Code: "codex.record.structure.invalid", Severity: model.SeverityWarning,
-					Message:              "A known Codex record has an invalid structure and was retained.",
-					InterpretationReason: model.InterpretationStructurallyInvalidKnownRecord,
-				}, false, nil
-			}
-			if nested == "" {
-				return model.Event{}, &model.Diagnostic{
-					Code: "codex.record.discriminant.missing", Severity: model.SeverityWarning,
-					Message:              "A known Codex record has no nested type discriminant and was retained.",
-					InterpretationReason: model.InterpretationMissingDiscriminant,
-				}, false, nil
-			}
-			if nested != "" {
-				label += ":" + nested
-			}
+		if record.Type == "response_item" || record.Type == "event_msg" {
+			label += ":" + result.nested
 			reason = model.UnknownUnsupportedNestedVariant
 		}
-		kind, summary, data = model.EventKindUnknown, "Unsupported Codex record: "+label, model.UnknownData{Reason: reason, OriginalKind: model.BoundOriginalKind(label)}
-		searchable = label
+		label = model.BoundOriginalKind(label)
+		result.drafts = []eventDraft{{
+			kind: model.EventKindUnknown, summary: "Unsupported Codex record: " + label,
+			searchable: label,
+			data: model.UnknownData{
+				Reason: reason, OriginalKind: label,
+			},
+		}}
 	}
-	eventID, err := model.NewEventID(model.EventIDInput{Native: native, SourceID: ref.SourceID, RecordSequence: ref.RecordSequence, ByteRange: ref.ByteRange, RecordHash: ref.ContentHash})
-	if err != nil {
-		return model.Event{}, nil, false, err
+	events := make([]model.Event, 0, len(result.drafts))
+	for ordinal, draft := range result.drafts {
+		eventID, err := model.NewEventID(model.EventIDInput{
+			Native: draft.native, SourceID: ref.SourceID, RecordSequence: ref.RecordSequence,
+			ByteRange: ref.ByteRange, RecordHash: ref.ContentHash, EventOrdinal: uint64(ordinal),
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		events = append(events, model.Event{
+			ID: eventID, SessionID: sessionID, Sequence: eventSequence + int64(ordinal),
+			Kind: draft.kind, Summary: draft.summary, SearchableText: draft.searchable,
+			Data: draft.data, RawRecord: ref,
+		})
 	}
-	event := model.Event{ID: eventID, SessionID: sessionID, Sequence: sequence, Kind: kind, Summary: summary, SearchableText: searchable, Data: data, RawRecord: ref}
-	var diagnostic *model.Diagnostic
-	if strings.TrimSpace(record.Timestamp) != "" {
+	diagnostics := append([]model.Diagnostic(nil), result.diagnostics...)
+	if strings.TrimSpace(record.Timestamp) != "" && len(events) > 0 {
 		parsed, err := time.Parse(time.RFC3339Nano, record.Timestamp)
 		if err != nil {
-			diagnostic = &model.Diagnostic{Code: "codex.timestamp.invalid", Severity: model.SeverityWarning, Message: "The rollout timestamp is malformed; source order was preserved."}
+			diagnostics = append(diagnostics, model.Diagnostic{
+				Code: "codex.timestamp.invalid", Severity: model.SeverityWarning,
+				Message: "The rollout timestamp is malformed; source order was preserved.",
+			})
 		} else {
-			event.Timestamp = &parsed
+			for index := range events {
+				events[index].Timestamp = &parsed
+			}
 		}
 	}
-	return event, diagnostic, true, nil
+	return events, diagnostics, nil
+}
+
+func boundDiagnostics(diagnostics []model.Diagnostic) []model.Diagnostic {
+	if len(diagnostics) <= maxRecordDiagnostics {
+		return diagnostics
+	}
+	result := append([]model.Diagnostic(nil), diagnostics[:maxRecordDiagnostics-1]...)
+	result = append(result, model.Diagnostic{
+		Code: "codex.record.diagnostics.truncated", Severity: model.SeverityWarning,
+		Message:      "Additional Codex record diagnostics were omitted deterministically.",
+		RawRecordIDs: append([]model.RawRecordID(nil), diagnostics[0].RawRecordIDs...),
+	})
+	return result
 }
 
 func (p *prepared) Close() error {
@@ -502,6 +692,10 @@ func (p *prepared) Close() error {
 	var err error
 	if p.sourceStream != nil {
 		err = p.sourceStream.Close()
+	}
+	if p.replay != nil {
+		name := p.replay.Name()
+		err = errors.Join(err, p.replay.Close(), os.Remove(name))
 	}
 	if p.spool != nil {
 		name := p.spool.Name()

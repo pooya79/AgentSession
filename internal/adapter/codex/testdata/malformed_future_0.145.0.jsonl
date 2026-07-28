@@ -1,0 +1,8 @@
+{"timestamp":"2026-07-22T10:00:00Z","ordinal":0,"type":"session_meta","payload":{"id":"019c2000-0000-7000-8000-000000000145","cli_version":"0.145.0"}}
+{"timestamp":"2026-07-22T10:00:01Z","ordinal":1,"type":"response_item","payload":{}}
+{"timestamp":"2026-07-22T10:00:02Z","ordinal":2,"type":"response_item","payload":{"type":"function_call","name":"read_file","arguments":"{}"}}
+{"timestamp":"2026-07-22T10:00:03Z","ordinal":3,"type":"event_msg","payload":{"type":"exec_command_end","call_id":"call_bad","command":"not-an-array","cwd":"/workspace","exit_code":0}}
+{"timestamp":"2026-07-22T10:00:04Z","ordinal":4,"type":"response_item","payload":{"type":"future_response_variant","id":"future_sanitized","value":true}}
+{"timestamp":"2026-07-22T10:00:05Z","ordinal":5,"type":"event_msg","payload":{"type":"future_event_variant","value":true}}
+{"timestamp":"2026-07-22T10:00:06Z","ordinal":6,"type":"future_rollout_variant","payload":{"value":true}}
+{"timestamp":"2026-07-22T10:00:07Z","ordinal":7,"type":"response_item","payload":{"type":"message","id":"msg_after_malformed","role":"assistant","content":[{"type":"output_text","text":"Normalization continued."}]}}

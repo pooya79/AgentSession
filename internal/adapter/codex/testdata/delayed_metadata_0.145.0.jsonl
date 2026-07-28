@@ -1,0 +1,9 @@
+{"timestamp":"broken"
+{"timestamp":"2026-07-21T10:00:01Z","ordinal":0,"type":"response_item","payload":{"type":"message","id":"msg_before_meta","role":"user","content":[{"type":"input_text","text":"Metadata follows."}]}}
+{"timestamp":"2026-07-21T10:00:02Z","type":"session_meta","payload":[]}
+{"timestamp":"2026-07-21T10:00:03Z","type":"session_meta","payload":{"id":"","cli_version":"0.144.0"}}
+{"timestamp":"2026-07-21T10:00:04Z","type":"turn_context","payload":{"cwd":"/workspace/sanitized"}}
+{"timestamp":"2026-07-21T10:00:05Z","type":"session_meta","payload":{"id":"019c1000-0000-7000-8000-000000000145","session_id":"019c1000-0000-7000-8000-000000000145","cli_version":"0.145.0"}}
+{"timestamp":"2026-07-21T10:00:06Z","type":"event_msg","payload":{"type":"item_started","item":{"type":"reasoning"}}}
+{"timestamp":"2026-07-21T10:00:07Z","type":"world_state","payload":{}}
+{"timestamp":"2026-07-21T10:00:08Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":1}}}}
