@@ -62,6 +62,97 @@ func TestCoordinatorSQLiteRepeatedImportAndVersionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCoordinatorSQLiteNormalizationV2ReconcilesVersionOneAtomically(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "agentsession.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store, err := sqlite.NewImportStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := importer.NewCoordinator(store, []importer.Adapter{New()}, nil, importer.Options{BatchRecords: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := fixtureSource(t, "current_0.145.0.jsonl")
+	first, err := coordinator.Import(ctx, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.Events(ctx, first.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE sessions SET normalization_version = '1' WHERE id = ?`, first.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		UPDATE session_projection_states
+		SET status = 'ready', ready_version = target_version, ready_revision = target_revision
+		WHERE session_id = ? AND kind = 'search'
+	`, first.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := coordinator.Import(ctx, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Change != importer.SourceReplaced || !second.Reconciled {
+		t.Fatalf("version reconciliation result = %#v", second)
+	}
+	after, err := store.Events(ctx, first.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("events after reconciliation = %d, want %d", len(after), len(before))
+	}
+	for index := range after {
+		if after[index].ID != before[index].ID || after[index].Sequence != int64(index) {
+			t.Fatalf("event %d after reconciliation = ID %q sequence %d", index, after[index].ID, after[index].Sequence)
+		}
+	}
+	var sessions, records, eventsCount, distinctSequences int
+	var onlyVersion, projectionStatus string
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*), MIN(normalization_version)
+		FROM sessions WHERE source_id = ?
+	`, source.ID).Scan(&sessions, &onlyVersion); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM raw_records WHERE source_id = ?`, source.ID).Scan(&records); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COUNT(DISTINCT sequence) FROM events WHERE session_id = ?
+	`, first.SessionID).Scan(&eventsCount, &distinctSequences); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `
+		SELECT status FROM session_projection_states WHERE session_id = ? AND kind = 'search'
+	`, first.SessionID).Scan(&projectionStatus); err != nil {
+		t.Fatal(err)
+	}
+	if sessions != 1 || onlyVersion != string(NormalizationVersion) ||
+		records != 19 || eventsCount != len(before) || distinctSequences != eventsCount ||
+		projectionStatus != "pending" {
+		t.Fatalf(
+			"reconciled generation = sessions %d version %q records %d events %d distinct %d projection %q",
+			sessions, onlyVersion, records, eventsCount, distinctSequences, projectionStatus,
+		)
+	}
+	var staging int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM reconciliation_runs WHERE source_id = ?`, source.ID).Scan(&staging); err != nil {
+		t.Fatal(err)
+	}
+	if staging != 0 {
+		t.Fatalf("staged reconciliation rows remain: %d", staging)
+	}
+}
+
 func TestCoordinatorSQLiteLargeRawAndNormalizedPayloadsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "agentsession.db"))
