@@ -1,7 +1,7 @@
 BINARY := bin/agentsession
 PACKAGE := ./cmd/agentsession
-DATA_DIR ?= $(if $(XDG_DATA_HOME),$(XDG_DATA_HOME)/agentsession,$(HOME)/.local/share/agentsession)
-DATABASE := $(DATA_DIR)/agentsession.db
+# Optional equivalent of the application's --data-dir override for maintenance.
+DATA_DIR ?=
 VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -56,7 +56,7 @@ web: generate
 	go run $(PACKAGE) web
 
 remove-db:
-	rm -f -- "$(DATABASE)" "$(DATABASE)-wal" "$(DATABASE)-shm"
+	go run $(PACKAGE) $(if $(strip $(DATA_DIR)),--data-dir "$(DATA_DIR)",) database remove
 
 clean:
 	rm -rf bin

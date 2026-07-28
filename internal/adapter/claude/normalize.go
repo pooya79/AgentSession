@@ -9,6 +9,7 @@ import (
 	"github.com/pooya79/AgentSession/internal/model"
 )
 
+// maxRecordDiagnostics bounds diagnostics retained for one source record.
 const maxRecordDiagnostics = 8
 
 type eventDraft struct {
@@ -18,12 +19,16 @@ type eventDraft struct {
 	data       model.NormalizedData
 }
 
+// diagnosticDraft carries adapter-local diagnostic data until evidence
+// references and stable per-record codes can be attached.
 type diagnosticDraft struct {
 	code    string
 	message string
 	reason  model.InterpretationReason
 }
 
+// normalizeRecord dispatches one Claude wire record without allowing
+// source-specific shapes to escape into the canonical model.
 func normalizeRecord(record wireRecord) ([]eventDraft, []diagnosticDraft) {
 	switch record.Type {
 	case "user", "assistant":
@@ -50,6 +55,8 @@ func normalizeRecord(record wireRecord) ([]eventDraft, []diagnosticDraft) {
 	}
 }
 
+// normalizeSystem maps supported system subtypes and preserves future valid
+// subtypes as explainable unknown events.
 func normalizeSystem(record wireRecord) ([]eventDraft, []diagnosticDraft) {
 	subtype, present, valid := requiredString(record.Subtype)
 	if !present {
@@ -82,6 +89,8 @@ func normalizeSystem(record wireRecord) ([]eventDraft, []diagnosticDraft) {
 	}
 }
 
+// normalizeQueueOperation validates queue discriminants while treating known
+// operations as transient metadata.
 func normalizeQueueOperation(record wireRecord) ([]eventDraft, []diagnosticDraft) {
 	operation, present, valid := requiredString(record.Operation)
 	if !present {
@@ -101,6 +110,8 @@ func normalizeQueueOperation(record wireRecord) ([]eventDraft, []diagnosticDraft
 	}
 }
 
+// normalizeNestedMetadata classifies progress and attachment envelopes from
+// their nested discriminator.
 func normalizeNestedMetadata(parent string, discriminant nestedValue) ([]eventDraft, []diagnosticDraft) {
 	if !discriminant.present {
 		return nil, []diagnosticDraft{missingDiagnostic("claude."+parent+".type.missing", "The Claude "+parent+" record has no nested type discriminant.")}
@@ -127,6 +138,8 @@ func normalizeNestedMetadata(parent string, discriminant nestedValue) ([]eventDr
 	return []eventDraft{unknownDraft(parent+":"+discriminant.value, "Unsupported Claude "+parent+" variant", model.UnknownUnsupportedNestedVariant)}, nil
 }
 
+// normalizeMessage independently retains valid sibling blocks and diagnostics
+// so one malformed block does not suppress other evidence in the message.
 func normalizeMessage(record wireRecord) ([]eventDraft, []diagnosticDraft) {
 	if len(record.Message) == 0 || isJSONNull(record.Message) {
 		return nil, []diagnosticDraft{invalidDiagnostic("claude.message.invalid", "The Claude message object is missing or null.")}
@@ -183,6 +196,8 @@ func normalizeMessage(record wireRecord) ([]eventDraft, []diagnosticDraft) {
 	return result, diagnostics
 }
 
+// normalizeBlock maps one message content block; its final result reports
+// whether a canonical event was produced.
 func normalizeBlock(raw json.RawMessage, role model.MessageRole, sidechain bool) (eventDraft, *diagnosticDraft, bool) {
 	var block map[string]json.RawMessage
 	if json.Unmarshal(raw, &block) != nil || block == nil {
@@ -235,6 +250,8 @@ func normalizeBlock(raw json.RawMessage, role model.MessageRole, sidechain bool)
 	}
 }
 
+// validUnsupportedBlock distinguishes structurally valid opaque evidence from
+// malformed instances of known but unsupported block types.
 func validUnsupportedBlock(typeName string, block map[string]json.RawMessage) bool {
 	switch typeName {
 	case "thinking":
@@ -264,6 +281,8 @@ func validUnsupportedBlock(typeName string, block map[string]json.RawMessage) bo
 	}
 }
 
+// normalizeToolResult preserves textual or structured tool output while
+// rejecting missing, null, or malformed result fields.
 func normalizeToolResult(typeName string, block map[string]json.RawMessage, sidechain bool) (eventDraft, *diagnosticDraft, bool) {
 	callID, idPresent, idValid := firstRequiredString(block, "tool_use_id", "tool_call_id", "id")
 	if !idPresent || !idValid || callID == "" {
@@ -273,6 +292,9 @@ func normalizeToolResult(typeName string, block map[string]json.RawMessage, side
 	outputRaw, outputPresent := block["content"]
 	if !outputPresent {
 		outputRaw, outputPresent = block["output"]
+	}
+	if outputPresent && isJSONNull(outputRaw) {
+		outputPresent = false
 	}
 	output, outputValid := structuredOutput(outputRaw)
 	if !outputPresent || !outputValid {
@@ -299,6 +321,8 @@ func normalizeToolResult(typeName string, block map[string]json.RawMessage, side
 	}, nil, true
 }
 
+// normalizeUsage retains valid non-negative counters and diagnoses malformed
+// counters independently.
 func normalizeUsage(raw json.RawMessage) (model.UsageData, bool, []diagnosticDraft) {
 	if len(raw) == 0 || isJSONNull(raw) {
 		return model.UsageData{}, false, nil
@@ -329,6 +353,8 @@ func normalizeUsage(raw json.RawMessage) (model.UsageData, bool, []diagnosticDra
 	return data, data.InputTokens != nil || data.OutputTokens != nil || data.CacheReadTokens != nil || data.CacheWriteTokens != nil, diagnostics
 }
 
+// messageDraft constructs a canonical message draft with source provenance in
+// its presentation summary.
 func messageDraft(role model.MessageRole, value string, sidechain bool) eventDraft {
 	label := string(role)
 	if label != "" {
@@ -337,10 +363,12 @@ func messageDraft(role model.MessageRole, value string, sidechain bool) eventDra
 	return eventDraft{kind: model.EventKindMessage, summary: provenanceSummary(label+" message", sidechain), searchable: value, data: model.MessageData{Role: role, Text: value}}
 }
 
+// summaryDraft constructs a searchable canonical summary.
 func summaryDraft(label, text string) eventDraft {
 	return eventDraft{kind: model.EventKindSummary, summary: label, searchable: text, data: model.SummaryData{Text: text}}
 }
 
+// provenanceSummary marks sidechain evidence without changing canonical data.
 func provenanceSummary(summary string, sidechain bool) string {
 	if sidechain {
 		return summary + " (sidechain)"
@@ -352,10 +380,12 @@ func unknownDraft(label, summary string, reason model.UnknownReason) eventDraft 
 	return eventDraft{kind: model.EventKindUnknown, summary: summary + ": " + label, searchable: label, data: model.UnknownData{Reason: reason, OriginalKind: model.BoundOriginalKind(label)}}
 }
 
+// missingDiagnostic creates a missing-discriminant diagnostic draft.
 func missingDiagnostic(code, message string) diagnosticDraft {
 	return diagnosticDraft{code: code, message: message, reason: model.InterpretationMissingDiscriminant}
 }
 
+// invalidDiagnostic creates a structurally-invalid-record diagnostic draft.
 func invalidDiagnostic(code, message string) diagnosticDraft {
 	return diagnosticDraft{code: code, message: message, reason: model.InterpretationStructurallyInvalidKnownRecord}
 }
@@ -378,6 +408,8 @@ func messageRole(role, topLevel string) model.MessageRole {
 	}
 }
 
+// requiredString returns the decoded value followed by independent presence
+// and type-validity flags.
 func requiredString(raw json.RawMessage) (string, bool, bool) {
 	if len(raw) == 0 {
 		return "", false, false
@@ -389,6 +421,8 @@ func requiredString(raw json.RawMessage) (string, bool, bool) {
 	return value, true, true
 }
 
+// firstRequiredString reads the first present alias and reports that alias's
+// validity without falling through to lower-priority fields.
 func firstRequiredString(values map[string]json.RawMessage, names ...string) (string, bool, bool) {
 	for _, name := range names {
 		if raw, ok := values[name]; ok {
@@ -399,6 +433,8 @@ func firstRequiredString(values map[string]json.RawMessage, names ...string) (st
 	return "", false, false
 }
 
+// compactValue validates and compacts arbitrary JSON while distinguishing an
+// absent value from malformed JSON.
 func compactValue(raw json.RawMessage) (string, bool, bool) {
 	if len(raw) == 0 {
 		return "", false, false
@@ -410,6 +446,8 @@ func compactValue(raw json.RawMessage) (string, bool, bool) {
 	return compact.String(), true, true
 }
 
+// structuredOutput preserves strings directly, flattens arrays of textual
+// blocks, and otherwise retains valid JSON in compact form.
 func structuredOutput(raw json.RawMessage) (string, bool) {
 	if len(raw) == 0 {
 		return "", false
@@ -438,12 +476,15 @@ func structuredOutput(raw json.RawMessage) (string, bool) {
 	return value, valid
 }
 
+// nestedValue records a nested discriminator's value, presence, and validity
+// without collapsing malformed input into absence.
 type nestedValue struct {
 	value   string
 	present bool
 	valid   bool
 }
 
+// nestedDiscriminant extracts a nested object's type discriminator.
 func nestedDiscriminant(raw json.RawMessage) nestedValue {
 	if len(raw) == 0 || isJSONNull(raw) {
 		return nestedValue{}
@@ -456,6 +497,8 @@ func nestedDiscriminant(raw json.RawMessage) nestedValue {
 	return nestedValue{value: typeName, present: present, valid: valid}
 }
 
+// recordText finds text across documented Claude record fields in priority
+// order and reports malformed present text as invalid.
 func recordText(record wireRecord) (string, bool) {
 	for _, raw := range []json.RawMessage{record.Content, record.Message, record.Error, record.Data} {
 		if len(raw) == 0 {
@@ -480,6 +523,7 @@ func recordText(record wireRecord) (string, bool) {
 	return "", false
 }
 
+// isJSONNull recognizes JSON null with optional surrounding whitespace.
 func isJSONNull(raw json.RawMessage) bool {
 	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }

@@ -99,6 +99,8 @@ func (a *Adapter) Probe(ctx context.Context, source importer.Source) (importer.P
 	return importer.ProbeResult{Confidence: confidence, FormatVersion: compositeFormat(cliVersion), Diagnostics: diagnostics}, nil
 }
 
+// Prepare opens a replayable streaming view, scanning sparse leading records
+// for session metadata without loading the complete source into memory.
 func (a *Adapter) Prepare(ctx context.Context, source importer.Source) (importer.PreparedSource, error) {
 	if err := source.Validate(); err != nil {
 		return nil, err
@@ -144,6 +146,8 @@ func (a *Adapter) Prepare(ctx context.Context, source importer.Source) (importer
 	return view, nil
 }
 
+// wireRecord retains source-shaped fields as raw JSON where presence, null,
+// and type validity affect normalization.
 type wireRecord struct {
 	Type        string          `json:"type"`
 	UUID        string          `json:"uuid"`
@@ -366,6 +370,8 @@ func (p *prepared) checkpoint(sequence int64) (importer.ImportCheckpoint, error)
 	return importer.ImportCheckpoint{SourceID: p.source.ID, RecordSequence: sequence, StateVersion: CursorVersion, Cursor: cursor, Fingerprint: fingerprint}, nil
 }
 
+// envelope retains one raw line and attaches normalized events plus bounded,
+// evidence-backed diagnostics.
 func (p *prepared) envelope(line []byte, offset, sequence int64, session model.Session) (importer.RecordEnvelope, error) {
 	seq := sequence
 	rangeValue := model.ByteRange{Offset: offset, Length: int64(len(line))}
@@ -649,6 +655,8 @@ func compositeFormat(cli string) model.Version {
 	return model.Version(formatBase + "+cli-" + cli)
 }
 
+// knownTopLevel reports whether a type belongs to the observed Claude record
+// envelope vocabulary, including metadata-only records.
 func knownTopLevel(kind string) bool {
 	switch kind {
 	case "user", "assistant", "system", "summary", "file-history-snapshot", "progress", "queue-operation",
@@ -660,29 +668,35 @@ func knownTopLevel(kind string) bool {
 	}
 }
 
+// boundDiagnosticDrafts caps adapter-local diagnostics and reserves the final
+// position for an omission marker.
 func boundDiagnosticDrafts(values []diagnosticDraft) []diagnosticDraft {
-	if len(values) <= maxRecordDiagnostics {
-		return values
-	}
-	values = append([]diagnosticDraft(nil), values[:maxRecordDiagnostics-1]...)
-	return append(values, diagnosticDraft{
+	return boundDiagnostics(values, diagnosticDraft{
 		code:    "claude.diagnostics.truncated",
 		message: "Additional Claude record diagnostics were omitted.",
 	})
 }
 
+// boundClaudeDiagnostics caps finalized diagnostics and attaches the omitted
+// evidence references to its truncation marker.
 func boundClaudeDiagnostics(values []model.Diagnostic, rawID model.RawRecordID, eventIDs []model.EventID) []model.Diagnostic {
-	if len(values) <= maxRecordDiagnostics {
-		return values
-	}
-	values = append([]model.Diagnostic(nil), values[:maxRecordDiagnostics-1]...)
-	return append(values, model.Diagnostic{
+	return boundDiagnostics(values, model.Diagnostic{
 		Code:         "claude.diagnostics.truncated",
 		Severity:     model.SeverityWarning,
 		Message:      "Additional Claude record diagnostics were omitted.",
 		EventIDs:     append([]model.EventID(nil), eventIDs...),
 		RawRecordIDs: []model.RawRecordID{rawID},
 	})
+}
+
+// boundDiagnostics preserves slices within the cap and copies truncated
+// prefixes before appending the supplied marker.
+func boundDiagnostics[T any](values []T, marker T) []T {
+	if len(values) <= maxRecordDiagnostics {
+		return values
+	}
+	values = append([]T(nil), values[:maxRecordDiagnostics-1]...)
+	return append(values, marker)
 }
 
 func hasJSONField(data []byte, name string) bool {
@@ -694,6 +708,8 @@ func hasJSONField(data []byte, name string) bool {
 	return ok
 }
 
+// looksClaudeLike performs a bounded textual probe for Claude envelope markers
+// before full record decoding.
 func looksClaudeLike(line []byte) bool {
 	for _, label := range []string{
 		"user", "assistant", "system", "summary", "file-history-snapshot", "progress",

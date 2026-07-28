@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 
 	"github.com/pooya79/AgentSession/internal/adapter/claude"
@@ -66,14 +65,15 @@ func (e *BatchImportError) Error() string {
 
 // Runtime owns all long-lived application infrastructure.
 type Runtime struct {
-	paths       RuntimePaths
-	db          *sql.DB
-	discoverer  *discovery.Discoverer
-	store       *sqlitestore.ImportStore
-	imports     *ImportManager
-	importAll   *importAllCoordinator
-	explorer    Explorer
-	projections *ProjectionService
+	paths        RuntimePaths
+	db           *sql.DB
+	discoverer   *discovery.Discoverer
+	store        *sqlitestore.ImportStore
+	imports      *ImportManager
+	importAll    *importAllCoordinator
+	explorer     Explorer
+	projections  *ProjectionService
+	databaseLock *databaseLock
 
 	mu       sync.RWMutex
 	catalog  map[model.SourceID]discovery.Source
@@ -82,8 +82,9 @@ type Runtime struct {
 	shutdown sync.Mutex
 }
 
-// OpenRuntime creates the private database directory, migrates SQLite, and
-// composes discovery, adapters, importing, projections, and read services.
+// OpenRuntime creates the private database directory, acquires a shared
+// maintenance lock, migrates SQLite, and composes discovery, adapters,
+// importing, projections, and read services.
 func OpenRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 	var pathInputs PathInputs
 	var err error
@@ -112,6 +113,16 @@ func OpenRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 	if err := os.Chmod(paths.DataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("open runtime: protect data directory: %w", err)
 	}
+	databaseLock, err := acquireDatabaseLock(paths.DatabasePath, false)
+	if err != nil {
+		return nil, fmt.Errorf("open runtime: %w", err)
+	}
+	keepDatabaseLock := false
+	defer func() {
+		if !keepDatabaseLock {
+			_ = databaseLock.release()
+		}
+	}()
 	db, err := sqlitestore.Open(ctx, paths.DatabasePath)
 	if err != nil {
 		return nil, fmt.Errorf("open runtime: %w", err)
@@ -159,22 +170,11 @@ func OpenRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 	runtime := &Runtime{
 		paths: paths, db: db, discoverer: discoverer, store: store, imports: manager, explorer: explorer,
 		projections: NewProjectionService(projectionManager), catalog: make(map[model.SourceID]discovery.Source),
+		databaseLock: databaseLock,
 	}
 	runtime.importAll = newImportAllCoordinator(runtime.DiscoverSources, runtime.StartImport)
+	keepDatabaseLock = true
 	return runtime, nil
-}
-
-// currentPathInputs captures the current process environment for runtime path resolution.
-func currentPathInputs() (PathInputs, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return PathInputs{}, fmt.Errorf("resolve user home directory: %w", err)
-	}
-	working, err := os.Getwd()
-	if err != nil {
-		return PathInputs{}, fmt.Errorf("resolve working directory: %w", err)
-	}
-	return PathInputs{GOOS: runtime.GOOS, HomeDir: home, WorkingDir: working, LookupEnv: os.LookupEnv}, nil
 }
 
 // Paths returns the private index and configuration paths owned by AgentSession.
@@ -420,8 +420,9 @@ func (r *Runtime) accepting() error {
 	return nil
 }
 
-// Shutdown rejects new work, cancels and settles imports, then closes SQLite.
-// A context timeout leaves database closure retryable.
+// Shutdown rejects new work, cancels and settles imports, closes SQLite, and
+// releases the maintenance lock. A context timeout leaves database closure
+// retryable.
 func (r *Runtime) Shutdown(ctx context.Context) error {
 	r.shutdown.Lock()
 	defer r.shutdown.Unlock()
@@ -443,6 +444,9 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 	}
 	if err := r.db.Close(); err != nil {
 		return fmt.Errorf("shutdown runtime: close database: %w", err)
+	}
+	if err := r.databaseLock.release(); err != nil {
+		return fmt.Errorf("shutdown runtime: %w", err)
 	}
 	r.mu.Lock()
 	r.closed = true

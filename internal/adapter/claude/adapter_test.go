@@ -152,6 +152,8 @@ func TestProbeTreatsClaudeStructuralRecordsAsCertain(t *testing.T) {
 	}
 }
 
+// TestProbeAndPrepareSkipMalformedAndSparseLeadingRecords verifies that header
+// discovery continues until usable session metadata appears.
 func TestProbeAndPrepareSkipMalformedAndSparseLeadingRecords(t *testing.T) {
 	data := []byte("{\"type\":\"assistant\"\n" +
 		"{\"custom\":true}\n" +
@@ -256,6 +258,8 @@ func TestToolInputPreservesExactJSONNumbers(t *testing.T) {
 	}
 }
 
+// TestObservedRecordClassification verifies classifications derived from
+// sanitized locally observed Claude record shapes.
 func TestObservedRecordClassification(t *testing.T) {
 	sink, _ := importSource(t, fixtureSource(t, "observed.jsonl"), nil, nil)
 	got := events(sink.records)
@@ -285,6 +289,8 @@ func TestObservedRecordClassification(t *testing.T) {
 	}
 }
 
+// TestOfficialServerBlocksAndOpaqueBlocks verifies documented server-tool
+// mappings and the search boundary for opaque evidence.
 func TestOfficialServerBlocksAndOpaqueBlocks(t *testing.T) {
 	sink, _ := importSource(t, fixtureSource(t, "official_blocks.jsonl"), nil, nil)
 	got := events(sink.records)
@@ -317,6 +323,8 @@ func TestOfficialServerBlocksAndOpaqueBlocks(t *testing.T) {
 	}
 }
 
+// TestNestedMetadataUnknownAndMalformedClassification distinguishes future
+// valid variants from malformed known envelopes.
 func TestNestedMetadataUnknownAndMalformedClassification(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -353,6 +361,8 @@ func TestNestedMetadataUnknownAndMalformedClassification(t *testing.T) {
 	}
 }
 
+// TestMalformedBlocksDoNotSuppressValidSiblingsAndDiagnosticsAreBounded
+// verifies partial normalization and the per-record diagnostic cap.
 func TestMalformedBlocksDoNotSuppressValidSiblingsAndDiagnosticsAreBounded(t *testing.T) {
 	record := `{"type":"assistant","message":{"role":"user","content":[null,{"text":"missing type"},{"type":"text","text":false},{"type":"tool_use","id":"","name":"Read","input":{}},{"type":"text","text":"survives"}],"usage":{"input_tokens":-1,"output_tokens":9}}}`
 	sink, _ := importSource(t, bytesSource("mixed-malformed", []byte(record+"\n")), nil, nil)
@@ -420,6 +430,27 @@ func TestFallbackIdentityUsesPerRecordOrdinalsAndPreservesToolError(t *testing.T
 	}
 }
 
+// TestNullToolResultOutputIsMalformed verifies that explicit null output is
+// diagnosed rather than normalized as empty tool output.
+func TestNullToolResultOutputIsMalformed(t *testing.T) {
+	for _, field := range []string{"content", "output"} {
+		t.Run(field, func(t *testing.T) {
+			data := []byte(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","` + field + `":null}]}}` + "\n")
+			sink, _ := importSource(t, bytesSource("null-tool-result-"+field, data), nil, nil)
+			record := sink.records[0]
+			if len(record.Events) != 0 || len(record.Diagnostics) != 1 {
+				t.Fatalf("record = %#v", record)
+			}
+			if got := record.Diagnostics[0]; got.Code != "claude.content_block.tool_result.invalid.0" ||
+				got.InterpretationReason != model.InterpretationStructurallyInvalidKnownRecord {
+				t.Fatalf("diagnostic = %#v", got)
+			}
+		})
+	}
+}
+
+// TestMalformedUnknownSidechainAndTimestampDiagnostics verifies that malformed
+// evidence remains diagnosed while sidechain messages normalize normally.
 func TestMalformedUnknownSidechainAndTimestampDiagnostics(t *testing.T) {
 	sink, _ := importSource(t, fixtureSource(t, "malformed_unknown_sidechain.jsonl"), nil, nil)
 	if len(sink.records) != 4 {

@@ -36,6 +36,8 @@ func Execute(ctx context.Context, args []string, stdout, stderr io.Writer, info 
 	return cmd.ExecuteContext(ctx)
 }
 
+// newRootCommand composes presentation and maintenance commands around shared
+// global path options.
 func newRootCommand(info buildinfo.Info) *cobra.Command {
 	options := &rootOptions{}
 	cmd := &cobra.Command{
@@ -55,8 +57,35 @@ func newRootCommand(info buildinfo.Info) *cobra.Command {
 	cmd.CompletionOptions.DisableDefaultCmd = true
 	cmd.PersistentFlags().StringVar(&options.dataDir, "data-dir", "", "application data directory")
 	cmd.PersistentFlags().StringVar(&options.configDir, "config-dir", "", "application configuration directory")
-	cmd.AddCommand(newImportCommand(options), newWebCommand(options), newVersionCommand(info))
+	cmd.AddCommand(newDatabaseCommand(options), newImportCommand(options), newWebCommand(options), newVersionCommand(info))
 	return cmd
+}
+
+// newDatabaseCommand exposes application-owned index maintenance without
+// opening the normal runtime.
+func newDatabaseCommand(options *rootOptions) *cobra.Command {
+	database := &cobra.Command{
+		Use:   "database",
+		Short: "Maintain the local AgentSession database",
+		Args:  cobra.NoArgs,
+	}
+	database.AddCommand(&cobra.Command{
+		Use:   "remove",
+		Short: "Remove the database while AgentSession is stopped",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			paths, err := app.ResolveCurrentPaths(app.PathOptions{DataDir: options.dataDir})
+			if err != nil {
+				return err
+			}
+			if err := app.RemoveDatabase(paths); err != nil {
+				return err
+			}
+			writeTerminalText(cmd.OutOrStdout(), fmt.Sprintf("Removed AgentSession database at %s.\n", paths.DatabasePath))
+			return nil
+		},
+	})
+	return database
 }
 
 func newWebCommand(options *rootOptions) *cobra.Command {
