@@ -184,7 +184,12 @@ make check     # verify generation, vet, and test
 make build     # write the executable to bin/agentsession
 make run       # run the TUI
 make web       # run the web interface
+make remove-db # remove the index after all AgentSession processes stop
 ```
+
+`make remove-db` uses the same platform data-directory resolution as the
+application and refuses to remove an index that a running AgentSession process
+has open. Set `DATA_DIR` to remove an index created with `--data-dir`.
 
 ## Planned architecture
 

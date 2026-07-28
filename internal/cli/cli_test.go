@@ -13,6 +13,8 @@ import (
 	"github.com/pooya79/AgentSession/internal/buildinfo"
 )
 
+// TestHelpListsImplementedCommands keeps root help aligned with the actual
+// presentation and maintenance command set.
 func TestHelpListsImplementedCommands(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Execute(context.Background(), []string{"--help"}, &stdout, &stderr, buildinfo.Info{})
@@ -21,7 +23,7 @@ func TestHelpListsImplementedCommands(t *testing.T) {
 	}
 
 	output := stdout.String()
-	for _, command := range []string{"import", "web", "version"} {
+	for _, command := range []string{"database", "import", "web", "version"} {
 		if !strings.Contains(output, command) {
 			t.Errorf("help output does not contain %q", command)
 		}
@@ -30,6 +32,44 @@ func TestHelpListsImplementedCommands(t *testing.T) {
 		if strings.Contains(output, command) {
 			t.Errorf("help output unexpectedly contains %q", command)
 		}
+	}
+}
+
+// TestDatabaseRemoveUsesDataDirectoryOverride verifies that maintenance shares
+// the runtime's relative override resolution.
+func TestDatabaseRemoveUsesDataDirectoryOverride(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "relative-state")
+	databasePath := filepath.Join(dataDir, "agentsession.db")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{databasePath, databasePath + "-wal", databasePath + "-shm"} {
+		if err := os.WriteFile(path, []byte("fixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	previousWorkingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previousWorkingDirectory) })
+
+	var stdout, stderr bytes.Buffer
+	if err := Execute(context.Background(), []string{"--data-dir", "relative-state", "database", "remove"}, &stdout, &stderr, buildinfo.Info{}); err != nil {
+		t.Fatalf("Execute(database remove) error = %v", err)
+	}
+	for _, path := range []string{databasePath, databasePath + "-wal", databasePath + "-shm"} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("database file %q still exists: %v", path, err)
+		}
+	}
+	if !strings.Contains(stdout.String(), databasePath) {
+		t.Fatalf("output = %q, want resolved database path %q", stdout.String(), databasePath)
 	}
 }
 

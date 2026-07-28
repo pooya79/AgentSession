@@ -2,8 +2,10 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -131,6 +133,28 @@ func ResolveRuntimePaths(inputs PathInputs, options PathOptions) (RuntimePaths, 
 // ResolvePaths is a concise alias for ResolveRuntimePaths.
 func ResolvePaths(inputs PathInputs, options PathOptions) (RuntimePaths, error) {
 	return ResolveRuntimePaths(inputs, options)
+}
+
+// ResolveCurrentPaths applies the runtime path contract to the current process.
+func ResolveCurrentPaths(options PathOptions) (RuntimePaths, error) {
+	inputs, err := currentPathInputs()
+	if err != nil {
+		return RuntimePaths{}, err
+	}
+	return ResolveRuntimePaths(inputs, options)
+}
+
+// currentPathInputs captures the current process environment for runtime path resolution.
+func currentPathInputs() (PathInputs, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return PathInputs{}, fmt.Errorf("resolve user home directory: %w", err)
+	}
+	working, err := os.Getwd()
+	if err != nil {
+		return PathInputs{}, fmt.Errorf("resolve working directory: %w", err)
+	}
+	return PathInputs{GOOS: runtime.GOOS, HomeDir: home, WorkingDir: working, LookupEnv: os.LookupEnv}, nil
 }
 
 func platformClean(goos, value string) string {
