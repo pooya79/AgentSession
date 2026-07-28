@@ -78,7 +78,7 @@ func document(title string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</title><link rel=\"stylesheet\" href=\"/assets/styles.css\"><script src=\"/assets/htmx.min.js\" defer></script></head><body><a class=\"skip-link\" href=\"#main\">Skip to content</a><header class=\"site-header\"><a class=\"brand\" href=\"/\">AgentSession <span>Operations console</span></a><nav aria-label=\"Primary\"><a href=\"/\">Sessions</a> <a href=\"/indexing\">Indexing</a></nav><span class=\"privacy-mark\">Local · offline · read-only</span></header>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</title><link rel=\"stylesheet\" href=\"/assets/styles.css\"><script src=\"/assets/htmx.min.js\" defer></script></head><body><a class=\"skip-link\" href=\"#main\">Skip to content</a><header class=\"site-header\"><a class=\"brand\" href=\"/\">AgentSession <span>Operations console</span></a><nav aria-label=\"Primary\"><a href=\"/\">Sessions</a> <a href=\"/search\">Search</a> <a href=\"/indexing\">Indexing</a></nav><span class=\"privacy-mark\">Local · offline · read-only</span></header>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -124,7 +124,7 @@ func notice(message string) templ.Component {
 			var templ_7745c5c3_Var6 string
 			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(message)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/layout.templ`, Line: 39, Col: 51}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/layout.templ`, Line: 40, Col: 51}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {

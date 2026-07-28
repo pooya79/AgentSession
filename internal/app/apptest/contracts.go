@@ -34,6 +34,7 @@ type Consumer interface {
 	RetryProjections(context.Context, model.SessionID) (app.ProjectionAction, error)
 	// RebuildProjections schedules a validated projection rebuild.
 	RebuildProjections(context.Context, model.SessionID, string) (app.ProjectionAction, error)
+	Search(context.Context, app.SearchRequest) (app.SearchPage, error)
 }
 
 // Fixture is a runtime populated through discovery and the composed import path.
@@ -126,6 +127,13 @@ func RunConsumerContract(t *testing.T, consumer Consumer) {
 	}
 	if _, err := consumer.EventDetail(ctx, app.EventDetailRequest{SessionID: sessionID, EventID: "bad"}); !errors.Is(err, app.ErrInvalidRequest) {
 		t.Fatalf("EventDetail(invalid) error = %v, want invalid request", err)
+	}
+	searchPage, err := consumer.Search(ctx, app.SearchRequest{Query: "user", Limit: 1})
+	if err != nil || searchPage.State == app.EvidenceUnavailable || searchPage.Availability.Usable < 1 {
+		t.Fatalf("Search() = (%#v, %v), want current searchable projection", searchPage, err)
+	}
+	if _, err := consumer.Search(ctx, app.SearchRequest{Query: "kind:not-a-kind"}); !errors.Is(err, app.ErrInvalidRequest) {
+		t.Fatalf("Search(invalid) error = %v, want invalid request", err)
 	}
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()

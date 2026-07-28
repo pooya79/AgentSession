@@ -27,6 +27,14 @@ type servicesStub struct {
 	projectionStatus   func(context.Context, model.SessionID) (app.ProjectionStatus, error)
 	retryProjections   func(context.Context, model.SessionID) (app.ProjectionAction, error)
 	rebuildProjections func(context.Context, model.SessionID, string) (app.ProjectionAction, error)
+	search             func(context.Context, app.SearchRequest) (app.SearchPage, error)
+}
+
+func (s servicesStub) Search(ctx context.Context, request app.SearchRequest) (app.SearchPage, error) {
+	if s.search != nil {
+		return s.search(ctx, request)
+	}
+	return app.SearchPage{State: app.EvidenceComplete, Availability: app.SearchAvailability{State: app.EvidenceComplete}}, nil
 }
 
 func (s servicesStub) InspectUnknownEvidence(ctx context.Context, sessionID model.SessionID, eventID model.EventID) (app.UnknownEvidenceInspection, error) {

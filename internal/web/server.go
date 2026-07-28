@@ -45,6 +45,7 @@ func NewHandler(services app.Services) http.Handler {
 	mux.HandleFunc("GET /", h.dashboard)
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("GET /indexing", h.indexing)
+	mux.HandleFunc("GET /search", h.search)
 	mux.HandleFunc("POST /indexing/rescan", h.rescan)
 	mux.HandleFunc("GET /fragments/index-status", h.indexStatusFragment)
 	mux.HandleFunc("GET /fragments/index-strip", h.indexStripFragment)

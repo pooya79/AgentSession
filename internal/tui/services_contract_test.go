@@ -38,6 +38,9 @@ func (c contractConsumer) RetryProjections(ctx context.Context, sessionID model.
 func (c contractConsumer) RebuildProjections(ctx context.Context, sessionID model.SessionID, kind string) (app.ProjectionAction, error) {
 	return c.services.RebuildProjections(ctx, sessionID, kind)
 }
+func (c contractConsumer) Search(ctx context.Context, request app.SearchRequest) (app.SearchPage, error) {
+	return c.services.Search(ctx, request)
+}
 
 func TestSharedServiceContract(t *testing.T) {
 	fixture := apptest.NewFixture(t)

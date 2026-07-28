@@ -88,7 +88,7 @@ func styleStatusLine(styles theme, line string) string {
 func isScreenTitle(line string) bool {
 	for _, prefix := range []string{
 		"Imported sessions", "Indexing details", "Timeline", "Event detail",
-		"Projection lifecycle", "Keyboard help",
+		"Projection lifecycle", "Search canonical evidence", "Keyboard help",
 	} {
 		if strings.HasPrefix(line, prefix) {
 			return true
@@ -119,6 +119,7 @@ func (m Model) helpLines() []string {
 		"Actions",
 		"  r            refresh current evidence; rescan from overview screens",
 		"  i            inspect indexing details from sessions",
+		"  /            open search or edit the current search query",
 		"  x            inspect projection lifecycle from a timeline",
 		"  u            inspect redacted retained evidence for an Unknown event",
 		"  t            retry implemented pending or failed projections",

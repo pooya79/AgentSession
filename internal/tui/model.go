@@ -37,6 +37,7 @@ const (
 	timelineScreen
 	detailScreen
 	projectionsScreen
+	searchScreen
 )
 
 // sessionsLoadedMsg carries one bounded sessions page and the generation of
@@ -109,6 +110,12 @@ type projectionActionMsg struct {
 	err        error
 }
 
+type searchLoadedMsg struct {
+	generation uint64
+	page       app.SearchPage
+	err        error
+}
+
 // pollProjectionsMsg schedules one observation; it is not a repeating timer.
 type pollProjectionsMsg struct{ generation uint64 }
 
@@ -140,6 +147,7 @@ type Model struct {
 	detailState
 	indexingState
 	projectionsState
+	searchState
 
 	theme         theme
 	helpOpen      bool
@@ -218,6 +226,13 @@ func loadSessions(ctx context.Context, services app.Services, generation uint64,
 	return func() tea.Msg {
 		page, err := services.ListSessions(ctx, app.ListSessionsRequest{Cursor: cursor, Limit: pageSize})
 		return sessionsLoadedMsg{generation: generation, page: page, err: err}
+	}
+}
+
+func loadSearch(ctx context.Context, services app.Services, generation uint64, query, cursor string) tea.Cmd {
+	return func() tea.Msg {
+		page, err := services.Search(ctx, app.SearchRequest{Query: query, Cursor: cursor, Limit: pageSize})
+		return searchLoadedMsg{generation: generation, page: page, err: err}
 	}
 }
 
@@ -597,6 +612,19 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startSpinner(pollProjections(m.projectionsState.generation))
 		}
 		return m, nil
+	case searchLoadedMsg:
+		if msg.generation != m.requestGeneration {
+			return m, nil
+		}
+		m.searchState.loading = false
+		m.searchState.err = visibleError(msg.err)
+		if msg.err == nil {
+			m.searchState.page = msg.page
+			if m.searchState.cursor >= len(msg.page.Results) {
+				m.searchState.cursor = max(0, len(msg.page.Results)-1)
+			}
+		}
+		return m, nil
 	case pollProjectionsMsg:
 		if msg.generation != m.projectionsState.generation || m.projectionsState.cancel == nil || m.screen != projectionsScreen {
 			return m, nil
@@ -618,7 +646,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 // spinner animation.
 func (m Model) busy() bool {
 	return m.sessionsState.loading || m.sessionsState.overviewLoading || m.timelineState.loading || m.detailState.loading || m.detailState.inspectionLoading ||
-		m.projectionsState.loading || m.projectionsState.status.Active || m.indexingState.status.Active
+		m.projectionsState.loading || m.projectionsState.status.Active || m.indexingState.status.Active || m.searchState.loading
 }
 
 // visibleError suppresses expected cancellation from superseded presentation
@@ -653,6 +681,29 @@ func (m *Model) restoreSessionSelection() {
 
 // handleKey maps the documented controls to screen-aware navigation.
 func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
+	if m.screen == searchScreen && m.searchState.editing {
+		switch key {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "esc":
+			m.searchState.editing = false
+		case "enter":
+			m.searchState.editing = false
+			return m, m.runSearch("")
+		case "backspace":
+			runes := []rune(m.searchState.query)
+			if len(runes) > 0 {
+				m.searchState.query = string(runes[:len(runes)-1])
+			}
+		case "space":
+			m.searchState.query += " "
+		default:
+			if len([]rune(key)) == 1 && len(m.searchState.query)+len(key) <= 4096 {
+				m.searchState.query += key
+			}
+		}
+		return m, nil
+	}
 	if key == "ctrl+c" || key == "q" {
 		if m.requestCancel != nil {
 			m.requestCancel()
@@ -710,6 +761,12 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "esc":
 		return m.back()
+	case "/":
+		m.screen = searchScreen
+		m.searchState.editing = true
+		m.searchState.err = nil
+		m.stopObservation()
+		return m, nil
 	case "i":
 		if m.screen == sessionsScreen {
 			m.screen = indexingScreen
@@ -792,6 +849,14 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) runSearch(cursor string) tea.Cmd {
+	ctx := m.replaceRequest()
+	m.searchState.loading = true
+	m.searchState.err = nil
+	m.searchState.cursor = 0
+	return m.startSpinner(loadSearch(ctx, m.services, m.requestGeneration, m.searchState.query, cursor))
+}
+
 // retryAvailable reports whether at least one pending or failed projection has
 // a builder in the current runtime.
 func (m Model) retryAvailable() bool {
@@ -821,6 +886,11 @@ func (m Model) rebuildAllAvailable() bool {
 // Returning to sessions always refreshes committed imports.
 func (m *Model) back() (tea.Model, tea.Cmd) {
 	switch m.screen {
+	case searchScreen:
+		m.cancelRequest()
+		m.screen = sessionsScreen
+		m.searchState.editing = false
+		return m, tea.Batch(m.reloadSessions(), m.observeNow())
 	case indexingScreen:
 		m.screen = sessionsScreen
 		return m, m.reloadSessions()
@@ -855,6 +925,8 @@ func (m *Model) back() (tea.Model, tea.Cmd) {
 // on timeline/detail screens.
 func (m *Model) refresh() (tea.Model, tea.Cmd) {
 	switch m.screen {
+	case searchScreen:
+		return m, m.runSearch("")
 	case sessionsScreen, indexingScreen:
 		load := m.reloadSessions()
 		m.startObservation()
@@ -883,6 +955,10 @@ func (m *Model) refresh() (tea.Model, tea.Cmd) {
 // session identity synchronized with the sessions cursor.
 func (m *Model) move(delta int) {
 	switch m.screen {
+	case searchScreen:
+		if len(m.searchState.page.Results) > 0 {
+			m.searchState.cursor = clamp(m.searchState.cursor+delta, 0, len(m.searchState.page.Results)-1)
+		}
 	case sessionsScreen:
 		if len(m.sessionsState.page.Sessions) > 0 {
 			m.sessionsState.cursor = clamp(m.sessionsState.cursor+delta, 0, len(m.sessionsState.page.Sessions)-1)
@@ -905,6 +981,14 @@ func (m *Model) move(delta int) {
 // viewport boundary on long-form screens.
 func (m *Model) moveToBoundary(last bool) {
 	switch m.screen {
+	case searchScreen:
+		if len(m.searchState.page.Results) == 0 {
+			return
+		}
+		m.searchState.cursor = 0
+		if last {
+			m.searchState.cursor = len(m.searchState.page.Results) - 1
+		}
 	case sessionsScreen:
 		if len(m.sessionsState.page.Sessions) == 0 {
 			return
@@ -971,6 +1055,11 @@ func (m Model) pageStep() int {
 // bounded page.
 func (m *Model) nextPage() (tea.Model, tea.Cmd) {
 	switch m.screen {
+	case searchScreen:
+		if m.searchState.page.NextCursor == "" || m.searchState.loading {
+			return m, nil
+		}
+		return m, m.runSearch(m.searchState.page.NextCursor)
 	case sessionsScreen:
 		if m.sessionsState.page.NextCursor == "" || m.sessionsState.loading {
 			return m, nil
@@ -1005,6 +1094,11 @@ func (m *Model) nextPage() (tea.Model, tea.Cmd) {
 // previousPage reuses a cursor retained when the page was first visited.
 func (m *Model) previousPage() (tea.Model, tea.Cmd) {
 	switch m.screen {
+	case searchScreen:
+		if m.searchState.page.PreviousCursor == "" || m.searchState.loading {
+			return m, nil
+		}
+		return m, m.runSearch(m.searchState.page.PreviousCursor)
 	case sessionsScreen:
 		if m.sessionsState.pageNumber == 0 || m.sessionsState.loading {
 			return m, nil
@@ -1028,6 +1122,22 @@ func (m *Model) previousPage() (tea.Model, tea.Cmd) {
 // its payload-bearing detail. Entering evidence stops indexing observation.
 func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 	switch m.screen {
+	case searchScreen:
+		if m.searchState.loading || len(m.searchState.page.Results) == 0 {
+			return m, nil
+		}
+		result := m.searchState.page.Results[m.searchState.cursor]
+		m.sessionsState.selected = result.SessionID
+		m.timelineState.page = app.TimelinePage{State: app.EvidenceComplete, Events: []model.EventSummary{{
+			ID: result.EventID, SessionID: result.SessionID, Sequence: result.Sequence,
+			Timestamp: result.Timestamp, Kind: result.Kind, Summary: result.Summary,
+		}}}
+		m.timelineState.cursor = 0
+		m.screen = detailScreen
+		m.detailState.detail = app.EventDetail{}
+		m.detailState.loading = true
+		ctx := m.replaceRequest()
+		return m, m.startSpinner(loadDetail(ctx, m.services, m.requestGeneration, result.SessionID, result.EventID))
 	case sessionsScreen:
 		if m.sessionsState.loading || len(m.sessionsState.page.Sessions) == 0 {
 			return m, nil
@@ -1093,6 +1203,8 @@ func (m Model) View() tea.View {
 			body = strings.Split(snapshot.detailState.viewport.View(), "\n")
 		case projectionsScreen:
 			body = snapshot.projectionLines()
+		case searchScreen:
+			body = snapshot.searchLines()
 		}
 	}
 	lines = append(lines, body...)
@@ -1117,6 +1229,8 @@ func (m Model) screenLabel() string {
 		return "Event"
 	case projectionsScreen:
 		return "Projections"
+	case searchScreen:
+		return "Search"
 	default:
 		return "Explorer"
 	}
@@ -1231,6 +1345,46 @@ func (m Model) sessionsLines() []string {
 		}
 	}
 	lines = append(lines, fmt.Sprintf("Page %d · %d shown%s", m.sessionsState.pageNumber+1, len(m.sessionsState.page.Sessions), nextLabel(m.sessionsState.page.NextCursor)))
+	return lines
+}
+
+func (m Model) searchLines() []string {
+	prompt := "Query: " + m.searchState.query
+	if m.searchState.editing {
+		prompt += "█"
+	}
+	lines := []string{"Search canonical evidence", prompt}
+	if m.searchState.loading {
+		return append(lines, "", m.spinner.View()+" Searching…")
+	}
+	if m.searchState.err != nil {
+		return append(lines, "", "Search could not be completed: "+m.searchState.err.Error())
+	}
+	availability := m.searchState.page.Availability
+	switch m.searchState.page.State {
+	case app.EvidenceUnavailable:
+		lines = append(lines, "Unavailable · no session has a current ready search index")
+	case app.EvidencePartial:
+		lines = append(lines, fmt.Sprintf("Partial · %d/%d sessions searchable", availability.Usable, availability.Sessions))
+	default:
+		lines = append(lines, fmt.Sprintf("Complete · %d sessions searchable", availability.Usable))
+	}
+	if len(m.searchState.page.Results) == 0 {
+		return append(lines, "", "No matching evidence.")
+	}
+	lines = append(lines, "")
+	for index, result := range m.searchState.page.Results {
+		prefix := "  "
+		if index == m.searchState.cursor {
+			prefix = "> "
+		}
+		snippet := strings.Join(strings.Fields(sanitization.Terminal(result.Snippet)), " ")
+		lines = append(lines,
+			fmt.Sprintf("%s%s · %s · sequence %d", prefix, result.Kind, result.SessionID, result.Sequence),
+			"    "+sanitization.Terminal(result.Summary),
+			"    "+snippet,
+		)
+	}
 	return lines
 }
 
@@ -1604,7 +1758,12 @@ func (m Model) helpLine(width int) string {
 	}
 	switch m.screen {
 	case sessionsScreen:
-		return "↑/↓ or j/k move · g/G first/last · Enter open · n/p page · i indexing · r rescan · ? help · q quit"
+		return "↑/↓ move · Enter open · / search · i indexing · r rescan · ? help · q quit"
+	case searchScreen:
+		if m.searchState.editing {
+			return "Type query · Enter search · Esc results · Ctrl-C quit"
+		}
+		return "/ edit · ↑/↓ select · Enter detail · n/p page · Esc sessions · r refresh · ? help"
 	case indexingScreen:
 		return "↑/↓ or j/k scroll · g/G top/bottom · PgUp/PgDn scroll · Esc sessions · r rescan · ? help · q quit"
 	case timelineScreen:

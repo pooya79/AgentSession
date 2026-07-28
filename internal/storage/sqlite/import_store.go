@@ -1614,6 +1614,42 @@ func (s *ImportStore) Events(ctx context.Context, sessionID model.SessionID) ([]
 	return events, nil
 }
 
+// EventPage streams a bounded source-ordered portion of canonical evidence.
+func (s *ImportStore) EventPage(ctx context.Context, sessionID model.SessionID, after *int64, limit int) ([]model.Event, error) {
+	if limit <= 0 {
+		return nil, errors.New("sqlite import store: event page limit must be positive")
+	}
+	query := storedEventSelect + ` WHERE e.session_id = ?`
+	args := []any{sessionID}
+	if after != nil {
+		query += ` AND e.sequence > ?`
+		args = append(args, *after)
+	}
+	query += ` ORDER BY e.sequence LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite import store: read event page for session %q: %w", sessionID, err)
+	}
+	defer rows.Close()
+	events := make([]model.Event, 0, limit)
+	for rows.Next() {
+		stored, err := scanStoredEvent(rows)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite import store: scan event page for session %q: %w", sessionID, err)
+		}
+		event, err := stored.toModel()
+		if err != nil {
+			return nil, fmt.Errorf("sqlite import store: decode event %q for session %q: %w", stored.ID, sessionID, err)
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite import store: iterate event page for session %q: %w", sessionID, err)
+	}
+	return events, nil
+}
+
 func (e storedEvent) toModel() (model.Event, error) {
 	timestamp, err := decodeTimeString(e.Timestamp)
 	if err != nil {

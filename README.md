@@ -5,8 +5,8 @@ AgentSession is a lightweight, local-first explorer for coding-agent sessions. I
 The project provides a first local web workflow for discovering, importing,
 and browsing normalized session evidence. Read-only source discovery,
 authoritative import storage, verified bounded import orchestration, and
-adapters for Codex CLI, Claude Code, and OpenCode are implemented; search and
-analysis are still under development.
+adapters for Codex CLI, Claude Code, and OpenCode and a rebuildable full-text
+search projection are implemented; further analysis remains under development.
 
 ## Supported session sources
 
@@ -87,6 +87,12 @@ projection has a builder, preventing invalidation of output the current runtime
 cannot reconstruct. Projection work is application-owned and continues after
 leaving the panel.
 
+Press `/` to open the search screen. Enter edits the query, `n`/`p` traverse
+bounded result pages, and Enter on a result opens its canonical event detail.
+Search results are available only for sessions whose search projection is
+ready for the current canonical revision; the screen reports complete,
+partial, or unavailable coverage rather than falling back to stale rows.
+
 Press `r` on the sessions or indexing screen to rescan all sources and reload
 sessions; on timeline and event screens it reloads the current evidence, and
 in the projection panel it refreshes status. Refresh failures retain the last
@@ -115,6 +121,31 @@ Evidence Issues totals, and a bounded previous/next session page. `GET
 failures, omissions, and bounded diagnostics. Its rescan form starts the same
 idempotent workflow after local histories change; there is no filesystem
 watcher or periodic background scan.
+
+`GET /search` provides the same shared search service as the TUI. Bare terms
+are implicitly combined with AND and double quotes select a phrase. The
+following filters are supported; repeated values in one category are ORed,
+while different categories are ANDed:
+
+- `session:` and `kind:` select exact canonical identifiers.
+- `after:` and `before:` are strict timestamp bounds. Values are RFC3339 or
+  UTC `YYYY-MM-DD`; events without timestamps do not match either bound.
+- `file:` performs case-folded, slash-normalized path-prefix matching.
+- `tool:` uses case-insensitive equality.
+- `command:` uses case-insensitive substring matching.
+
+Queries are limited to 4 KiB, 32 clauses, and 1 KiB per filter value. Raw FTS
+operators, unknown filters, malformed quotes, and malformed escapes are
+rejected. Results use opaque keyset cursors with 50 rows by default and 200 at
+most; a projection rebuild safely invalidates existing cursors.
+
+Search is derived exclusively from canonical SQLite evidence. It indexes a
+bounded summary and eligible normalized message, error, summary, tool,
+command, output, patch, and file-path fields. A textual field containing NUL,
+invalid UTF-8, or more than 64 KiB is excluded as a whole; command text is
+limited to 16 KiB, paths to 4 KiB, and tool names to 512 bytes. Retained raw
+records, unknown raw payloads, binary content, and direct normalized
+`data_json` are never searched.
 
 Session timelines use `GET /sessions/{session}`. Event links focus and expand a
 bounded timeline window through `?event={event}`; `GET /events/{event}` resolves
