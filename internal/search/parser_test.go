@@ -24,6 +24,11 @@ func TestParse(t *testing.T) {
 				t.Fatalf("value = %q", got)
 			}
 		}},
+		{name: "phrase containing colon", raw: `"http://example.com"`, check: func(t *testing.T, q Query) {
+			if len(q.Text) != 1 || q.Text[0] != (TextClause{Value: "http://example.com", Phrase: true}) {
+				t.Fatalf("unexpected query: %#v", q)
+			}
+		}},
 		{name: "filter only", raw: `session:abc before:2025-01-02T03:04:05+03:30`, check: func(t *testing.T, q Query) {
 			if q.HasText() || len(q.Sessions) != 1 || len(q.Before) != 1 {
 				t.Fatalf("unexpected query: %#v", q)

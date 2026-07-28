@@ -63,16 +63,20 @@ func Parse(raw string) (Query, error) {
 	}
 	var query Query
 	for _, token := range tokens {
+		if token.quoted {
+			query.Text = append(query.Text, TextClause{Value: token.value, Phrase: true})
+			continue
+		}
 		name, value, filtered := strings.Cut(token.value, ":")
 		if !filtered {
 			value = name
-			if !token.quoted && isOperator(value) {
+			if isOperator(value) {
 				return Query{}, invalid("raw_operator", "Raw full-text operators are not supported.")
 			}
 			if strings.ContainsAny(value, "*^(){}[]") {
 				return Query{}, invalid("raw_operator", "Raw full-text operators are not supported.")
 			}
-			query.Text = append(query.Text, TextClause{Value: value, Phrase: token.quoted})
+			query.Text = append(query.Text, TextClause{Value: value})
 			continue
 		}
 		name = strings.ToLower(name)
