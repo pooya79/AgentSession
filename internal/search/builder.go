@@ -13,6 +13,8 @@ import (
 
 const buildBatchSize = 256
 
+// Document is a bounded, source-neutral search projection of one canonical
+// event. It contains only fields approved for indexing and display.
 type Document struct {
 	EventID           model.EventID
 	SessionID         model.SessionID
@@ -35,8 +37,11 @@ type ProjectionWriter interface {
 	CleanupSearchStage(context.Context, string) error
 }
 
+// Builder streams canonical events into an atomically published search
+// projection.
 type Builder struct{ writer ProjectionWriter }
 
+// NewBuilder constructs a search projection builder.
 func NewBuilder(writer ProjectionWriter) (*Builder, error) {
 	if writer == nil {
 		return nil, errors.New("search builder: projection writer is required")
@@ -44,6 +49,8 @@ func NewBuilder(writer ProjectionWriter) (*Builder, error) {
 	return &Builder{writer: writer}, nil
 }
 
+// Build stages bounded document batches and atomically publishes the completed
+// projection for one session revision.
 func (b *Builder) Build(ctx context.Context, request projection.BuildRequest) (err error) {
 	if request.Reader == nil || request.BuildToken == "" || request.Version == "" {
 		return errors.New("search builder: incomplete build request")

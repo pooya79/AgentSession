@@ -14,7 +14,9 @@ import (
 type Kind string
 
 const (
-	KindSearch         Kind = "search"
+	// KindSearch identifies the canonical-event full-text search projection.
+	KindSearch Kind = "search"
+
 	KindGitCorrelation Kind = "git_correlation"
 	KindFindings       Kind = "findings"
 	KindOutcomes       Kind = "outcomes"
@@ -118,9 +120,11 @@ type Reader interface {
 type BuildRequest struct {
 	SessionID         model.SessionID
 	CanonicalRevision int64
-	Version           string
-	BuildToken        string
-	Reader            Reader
+	// Version identifies the target projection schema or algorithm version.
+	Version string
+	// BuildToken isolates staged output for this claimed build attempt.
+	BuildToken string
+	Reader     Reader
 }
 
 type Builder interface {

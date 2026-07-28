@@ -24,12 +24,16 @@ type SearchValidationError struct {
 func (e *SearchValidationError) Error() string { return e.Message }
 func (e *SearchValidationError) Unwrap() error { return ErrInvalidRequest }
 
+// SearchRequest describes a bounded search page and its opaque continuation
+// cursor. An empty cursor requests the first page.
 type SearchRequest struct {
 	Query  string
 	Cursor string
 	Limit  int
 }
 
+// SearchAvailability summarizes how much imported canonical evidence has a
+// current, queryable search projection.
 type SearchAvailability struct {
 	State         EvidenceState
 	Sessions      int64
@@ -41,6 +45,8 @@ type SearchAvailability struct {
 	Unimplemented int64
 }
 
+// SearchResult is a presentation-safe reference to one matching canonical
+// event. Timestamp is nil when the event has no timestamp.
 type SearchResult struct {
 	SessionID model.SessionID
 	EventID   model.EventID
@@ -51,6 +57,8 @@ type SearchResult struct {
 	Snippet   string
 }
 
+// SearchPage contains one bounded result page, navigation cursors, and the
+// projection availability that qualifies the returned evidence.
 type SearchPage struct {
 	State          EvidenceState
 	Results        []SearchResult
@@ -59,12 +67,15 @@ type SearchPage struct {
 	Availability   SearchAvailability
 }
 
+// Searcher exposes lifecycle-aware search over canonical session evidence.
 type Searcher interface {
+	// Search validates the query and returns a bounded result page.
 	Search(context.Context, SearchRequest) (SearchPage, error)
 }
 
 type searchService struct{ repository search.Repository }
 
+// NewSearcher constructs the shared application search service.
 func NewSearcher(repository search.Repository) (Searcher, error) {
 	if repository == nil {
 		return nil, errors.New("application searcher: repository is required")

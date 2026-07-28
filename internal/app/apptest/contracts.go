@@ -34,6 +34,7 @@ type Consumer interface {
 	RetryProjections(context.Context, model.SessionID) (app.ProjectionAction, error)
 	// RebuildProjections schedules a validated projection rebuild.
 	RebuildProjections(context.Context, model.SessionID, string) (app.ProjectionAction, error)
+	// Search exposes bounded lifecycle-aware canonical evidence search.
 	Search(context.Context, app.SearchRequest) (app.SearchPage, error)
 }
 

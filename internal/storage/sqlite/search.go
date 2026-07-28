@@ -15,6 +15,7 @@ import (
 
 var _ search.Repository = (*ImportStore)(nil)
 
+// Search queries current ready search projections and returns a bounded page.
 func (s *ImportStore) Search(ctx context.Context, query search.Query, cursor *search.Cursor, limit int) (search.Rows, error) {
 	availability, err := s.searchAvailability(ctx)
 	if err != nil {

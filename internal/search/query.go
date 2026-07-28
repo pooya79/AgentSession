@@ -6,6 +6,8 @@ import (
 	"github.com/pooya79/AgentSession/internal/model"
 )
 
+// Availability describes the readiness of search projections and carries the
+// generation used to invalidate stale cursors.
 type Availability struct {
 	Sessions      int64
 	Usable        int64
@@ -17,6 +19,8 @@ type Availability struct {
 	Generation    string
 }
 
+// Cursor identifies a stable position and direction within a search result
+// generation.
 type Cursor struct {
 	Rank       float64
 	Timestamp  string
@@ -28,6 +32,7 @@ type Cursor struct {
 	Ranked     bool
 }
 
+// Row is one repository-level search match before application mapping.
 type Row struct {
 	SessionID model.SessionID
 	EventID   model.EventID
@@ -39,6 +44,7 @@ type Row struct {
 	Rank      float64
 }
 
+// Rows contains a bounded repository result set and its availability snapshot.
 type Rows struct {
 	Items        []Row
 	More         bool
@@ -47,5 +53,6 @@ type Rows struct {
 
 // Repository executes only generated, parameterized search expressions.
 type Repository interface {
+	// Search returns matches from current ready projections.
 	Search(context.Context, Query, *Cursor, int) (Rows, error)
 }

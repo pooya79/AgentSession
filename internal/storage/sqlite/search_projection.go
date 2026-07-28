@@ -12,6 +12,8 @@ import (
 
 var _ search.ProjectionWriter = (*ImportStore)(nil)
 
+// StageSearchDocuments persists a bounded document batch under an isolated
+// projection build token.
 func (s *ImportStore) StageSearchDocuments(ctx context.Context, token string, documents []search.Document) (err error) {
 	if token == "" {
 		return errors.New("sqlite search projection: build token is required")
@@ -55,6 +57,8 @@ func (s *ImportStore) StageSearchDocuments(ctx context.Context, token string, do
 	return nil
 }
 
+// PublishSearchDocuments atomically replaces a session's active search
+// projection with the completed staged build.
 func (s *ImportStore) PublishSearchDocuments(ctx context.Context, token string, sessionID model.SessionID, version string, revision int64) (err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -108,6 +112,8 @@ func (s *ImportStore) PublishSearchDocuments(ctx context.Context, token string, 
 	return nil
 }
 
+// CleanupSearchStage removes unpublished documents for a projection build
+// token.
 func (s *ImportStore) CleanupSearchStage(ctx context.Context, token string) error {
 	if token == "" {
 		return nil

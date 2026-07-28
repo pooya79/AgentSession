@@ -13,8 +13,11 @@ import (
 )
 
 const (
-	MaxQueryBytes  = 4 * 1024
-	MaxClauses     = 32
+	// MaxQueryBytes bounds the UTF-8 encoded query text.
+	MaxQueryBytes = 4 * 1024
+	// MaxClauses bounds the total number of text and filter clauses.
+	MaxClauses = 32
+	// MaxFilterBytes bounds each UTF-8 encoded filter value.
 	MaxFilterBytes = 1024
 )
 
@@ -27,6 +30,7 @@ type ValidationError struct {
 
 func (e *ValidationError) Error() string { return e.Message }
 
+// TextClause is a literal full-text term or quoted phrase.
 type TextClause struct {
 	Value  string
 	Phrase bool
@@ -45,8 +49,10 @@ type Query struct {
 	Commands []string
 }
 
+// HasText reports whether the query includes a full-text term or phrase.
 func (q Query) HasText() bool { return len(q.Text) != 0 }
 
+// Parse validates and converts the source-neutral search language into a Query.
 func Parse(raw string) (Query, error) {
 	if len(raw) > MaxQueryBytes {
 		return Query{}, invalid("query_too_long", "Search query must be at most 4 KiB.")
