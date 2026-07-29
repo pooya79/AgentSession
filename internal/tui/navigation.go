@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/pooya79/AgentSession/internal/app"
+	"github.com/pooya79/AgentSession/internal/model"
 )
 
 func (m *Model) runSearch(cursor string) tea.Cmd {
@@ -267,25 +268,12 @@ func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 		if m.searchState.loading || len(m.searchState.page.Results) == 0 {
 			return m, nil
 		}
-		result := m.searchState.page.Results[m.searchState.cursor]
-		m.sessionsState.selected = result.SessionID
-		m.screen = timelineScreen
-		m.resetTimelineState()
-		m.timelineState.loading = true
-		m.stopObservation()
-		ctx := m.replaceRequest()
-		return m, m.startSpinner(loadTimeline(ctx, m.services, m.requestGeneration, result.SessionID, ""))
+		return m.openSessionTimeline(m.searchState.page.Results[m.searchState.cursor].SessionID)
 	case sessionsScreen:
 		if m.sessionsState.loading || len(m.sessionsState.page.Sessions) == 0 {
 			return m, nil
 		}
-		m.sessionsState.selected = m.sessionsState.page.Sessions[m.sessionsState.cursor].ID
-		m.screen = timelineScreen
-		m.resetTimelineState()
-		m.timelineState.loading = true
-		m.stopObservation()
-		ctx := m.replaceRequest()
-		return m, m.startSpinner(loadTimeline(ctx, m.services, m.requestGeneration, m.sessionsState.selected, ""))
+		return m.openSessionTimeline(m.sessionsState.page.Sessions[m.sessionsState.cursor].ID)
 	case timelineScreen:
 		if len(m.timelineState.page.Events) == 0 {
 			return m, nil
@@ -300,4 +288,14 @@ func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 		return m, m.prefetchTimelineIfNeeded()
 	}
 	return m, nil
+}
+
+func (m *Model) openSessionTimeline(sessionID model.SessionID) (tea.Model, tea.Cmd) {
+	m.sessionsState.selected = sessionID
+	m.screen = timelineScreen
+	m.resetTimelineState()
+	m.timelineState.loading = true
+	m.stopObservation()
+	ctx := m.replaceRequest()
+	return m, m.startSpinner(loadTimeline(ctx, m.services, m.requestGeneration, sessionID, ""))
 }

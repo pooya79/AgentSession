@@ -8,6 +8,8 @@ package web
 import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
+import "github.com/pooya79/AgentSession/internal/app"
+
 func searchPage(view searchView) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -48,7 +50,7 @@ func searchPage(view searchView) templ.Component {
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.ResolveAttributeValue(view.Query)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 16, Col: 57}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 18, Col: 57}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var3)
 			if templ_7745c5c3_Err != nil {
@@ -66,7 +68,7 @@ func searchPage(view searchView) templ.Component {
 				var templ_7745c5c3_Var4 string
 				templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(view.Err.Error())
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 22, Col: 59}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 24, Col: 59}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 				if templ_7745c5c3_Err != nil {
@@ -84,7 +86,7 @@ func searchPage(view searchView) templ.Component {
 				var templ_7745c5c3_Var5 string
 				templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(availabilityMessage(view.Page.Availability))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 24, Col: 81}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 26, Col: 81}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 				if templ_7745c5c3_Err != nil {
@@ -105,6 +107,8 @@ func searchPage(view searchView) templ.Component {
 						return templ_7745c5c3_Err
 					}
 					for _, result := range view.Page.Results {
+						title := app.SearchResultDisplayTitle(result)
+						preview := app.SearchResultDisplayPreview(result)
 						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "<article class=\"session-card\"><div class=\"session-card-heading\"><h2><a href=\"")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
@@ -112,7 +116,7 @@ func searchPage(view searchView) templ.Component {
 						var templ_7745c5c3_Var6 templ.SafeURL
 						templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(sessionURL(result.SessionID)))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 32, Col: 62}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 36, Col: 62}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 						if templ_7745c5c3_Err != nil {
@@ -123,9 +127,9 @@ func searchPage(view searchView) templ.Component {
 							return templ_7745c5c3_Err
 						}
 						var templ_7745c5c3_Var7 string
-						templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(searchSessionTitle(result))
+						templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 32, Col: 93}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 36, Col: 72}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 						if templ_7745c5c3_Err != nil {
@@ -136,9 +140,9 @@ func searchPage(view searchView) templ.Component {
 							return templ_7745c5c3_Err
 						}
 						var templ_7745c5c3_Var8 string
-						templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(result.AgentName)
+						templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(app.SearchResultAgentLabel(result))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 33, Col: 47}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 37, Col: 65}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 						if templ_7745c5c3_Err != nil {
@@ -148,15 +152,15 @@ func searchPage(view searchView) templ.Component {
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
-						if result.Preview != "" && result.Preview != searchSessionTitle(result) {
+						if preview != "" && preview != title {
 							templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "<p>")
 							if templ_7745c5c3_Err != nil {
 								return templ_7745c5c3_Err
 							}
 							var templ_7745c5c3_Var9 string
-							templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(result.Preview)
+							templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(preview)
 							if templ_7745c5c3_Err != nil {
-								return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 36, Col: 28}
+								return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 40, Col: 21}
 							}
 							_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 							if templ_7745c5c3_Err != nil {
@@ -174,7 +178,7 @@ func searchPage(view searchView) templ.Component {
 						var templ_7745c5c3_Var10 string
 						templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(formatTime(result.LastActivityAt))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 38, Col: 60}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 42, Col: 60}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 						if templ_7745c5c3_Err != nil {
@@ -187,7 +191,7 @@ func searchPage(view searchView) templ.Component {
 						var templ_7745c5c3_Var11 string
 						templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(formatCount(result.EventCount, "event"))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 38, Col: 107}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 42, Col: 107}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 						if templ_7745c5c3_Err != nil {
@@ -200,7 +204,7 @@ func searchPage(view searchView) templ.Component {
 						var templ_7745c5c3_Var12 string
 						templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(formatCount(result.MatchCount, "matching event"))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 38, Col: 163}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 42, Col: 163}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 						if templ_7745c5c3_Err != nil {
@@ -211,9 +215,9 @@ func searchPage(view searchView) templ.Component {
 							return templ_7745c5c3_Err
 						}
 						var templ_7745c5c3_Var13 string
-						templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(result.BestMatchSummary)
+						templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(app.SearchResultMatchSummary(result))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 39, Col: 44}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 43, Col: 57}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 						if templ_7745c5c3_Err != nil {
@@ -226,7 +230,7 @@ func searchPage(view searchView) templ.Component {
 						var templ_7745c5c3_Var14 string
 						templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(compactSnippet(result.Snippet))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 40, Col: 43}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 44, Col: 43}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 						if templ_7745c5c3_Err != nil {
@@ -254,7 +258,7 @@ func searchPage(view searchView) templ.Component {
 					var templ_7745c5c3_Var15 templ.SafeURL
 					templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(searchPageURL(view.Query, view.Page.PreviousCursor)))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 47, Col: 82}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 51, Col: 82}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 					if templ_7745c5c3_Err != nil {
@@ -273,7 +277,7 @@ func searchPage(view searchView) templ.Component {
 					var templ_7745c5c3_Var16 templ.SafeURL
 					templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(searchPageURL(view.Query, view.Page.NextCursor)))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 50, Col: 78}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/search.templ`, Line: 54, Col: 78}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 					if templ_7745c5c3_Err != nil {

@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -69,7 +71,8 @@ func TestSearchMapsSessionResultsAndBindsCursorToQuery(t *testing.T) {
 		t.Fatal(err)
 	}
 	if repository.lastCursor == nil || repository.lastCursor.SessionID != "session-a" ||
-		!repository.lastCursor.Ranked || repository.lastCursor.Rank != -1.25 {
+		!repository.lastCursor.Ranked || repository.lastCursor.Rank != -1.25 ||
+		repository.lastCursor.LastActivity != activity {
 		t.Fatalf("decoded cursor = %#v", repository.lastCursor)
 	}
 	if _, err := service.Search(context.Background(), SearchRequest{
@@ -77,6 +80,93 @@ func TestSearchMapsSessionResultsAndBindsCursorToQuery(t *testing.T) {
 	}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("query-mismatched cursor error = %v", err)
 	}
+
+	repository.rows = search.Rows{
+		Items: []search.Row{{SessionID: "session-a", LastActivity: activity}},
+		More:  true,
+		Availability: search.Availability{
+			Sessions: 1, Usable: 1, Generation: "generation",
+		},
+	}
+	unrankedPage, err := service.Search(context.Background(), SearchRequest{Query: "kind:message", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository.rows = search.Rows{Availability: repository.rows.Availability}
+	if _, err := service.Search(context.Background(), SearchRequest{
+		Query: "kind:message", Cursor: unrankedPage.NextCursor, Limit: 10,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if repository.lastCursor == nil || repository.lastCursor.SessionID != "session-a" ||
+		repository.lastCursor.Ranked || repository.lastCursor.LastActivity != activity {
+		t.Fatalf("decoded unranked cursor = %#v", repository.lastCursor)
+	}
+
+	for _, test := range []struct {
+		name         string
+		scope        string
+		lastActivity string
+	}{
+		{name: "event scoped", scope: "events", lastActivity: activity},
+		{name: "malformed last activity", scope: "sessions", lastActivity: "not-a-time"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cursor := testSearchCursor(t, searchCursorEnvelope{
+				Version: 1, Scope: test.scope, QueryHash: hashSearchQuery("kind:message"),
+				Generation: "generation", LastActivity: test.lastActivity, SessionID: "session-a",
+			})
+			if _, err := service.Search(context.Background(), SearchRequest{
+				Query: "kind:message", Cursor: cursor, Limit: 10,
+			}); !errors.Is(err, ErrInvalidRequest) {
+				t.Fatalf("tampered cursor error = %v", err)
+			}
+		})
+	}
+}
+
+func TestSearchResultDisplayFieldsNormalizeAndFallback(t *testing.T) {
+	t.Parallel()
+
+	result := SearchResult{
+		SessionID:        "session-a",
+		Title:            "  A\n session ",
+		Preview:          " ignored\tpreview ",
+		AgentName:        "  codex\ncli ",
+		BestMatchSummary: " matching\tcommand ",
+	}
+	if got := SearchResultDisplayTitle(result); got != "A session" {
+		t.Fatalf("display title = %q", got)
+	}
+	if got := SearchResultDisplayPreview(result); got != "ignored preview" {
+		t.Fatalf("display preview = %q", got)
+	}
+	if got := SearchResultAgentLabel(result); got != "codex cli" {
+		t.Fatalf("agent label = %q", got)
+	}
+	if got := SearchResultMatchSummary(result); got != "matching command" {
+		t.Fatalf("match summary = %q", got)
+	}
+
+	result.Title, result.Preview, result.AgentName, result.BestMatchSummary = " \n", "\t", "", ""
+	if got := SearchResultDisplayTitle(result); got != "session-a" {
+		t.Fatalf("fallback display title = %q", got)
+	}
+	if got := SearchResultAgentLabel(result); got != "AGENT UNREPORTED" {
+		t.Fatalf("fallback agent label = %q", got)
+	}
+	if got := SearchResultMatchSummary(result); got != "Matching evidence" {
+		t.Fatalf("fallback match summary = %q", got)
+	}
+}
+
+func testSearchCursor(t *testing.T, envelope searchCursorEnvelope) string {
+	t.Helper()
+	value, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(value)
 }
 
 func TestSearchRejectsInvalidRepositoryActivity(t *testing.T) {

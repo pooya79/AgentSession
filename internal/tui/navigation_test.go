@@ -90,7 +90,26 @@ func TestSearchSelectionOpensSessionTimeline(t *testing.T) {
 		t.Fatalf("search selection = screen %d, session %q, loading %v, cmd %v",
 			got.screen, got.sessionsState.selected, got.timelineState.loading, cmd != nil)
 	}
-	message := cmd().(timelineLoadedMsg)
+	commandResult := cmd()
+	var message timelineLoadedMsg
+	var loaded bool
+	switch result := commandResult.(type) {
+	case timelineLoadedMsg:
+		message, loaded = result, true
+	case tea.BatchMsg:
+		for _, batchedCmd := range result {
+			if candidate, ok := batchedCmd().(timelineLoadedMsg); ok {
+				message = candidate
+				loaded = true
+				break
+			}
+		}
+	default:
+		t.Fatalf("timeline navigation command result = %T", commandResult)
+	}
+	if !loaded {
+		t.Fatal("timeline navigation batch did not contain a timeline load")
+	}
 	if message.err != nil || len(services.timelineCalls) != 1 ||
 		services.timelineCalls[0].SessionID != "matched-session" ||
 		!services.timelineCalls[0].IncludePayloads || len(services.detailCalls) != 0 {

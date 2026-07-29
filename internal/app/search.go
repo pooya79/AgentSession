@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pooya79/AgentSession/internal/model"
@@ -57,6 +58,44 @@ type SearchResult struct {
 	MatchCount       int64
 	BestMatchSummary string
 	Snippet          string
+}
+
+// SearchResultDisplayTitle derives one normalized session label for every
+// presentation layer.
+func SearchResultDisplayTitle(result SearchResult) string {
+	for _, candidate := range []string{result.Title, result.Preview, string(result.SessionID)} {
+		if value := normalizeDisplayText(candidate); value != "" {
+			return value
+		}
+	}
+	return "Untitled session"
+}
+
+// SearchResultDisplayPreview normalizes a result preview for display and title
+// comparison.
+func SearchResultDisplayPreview(result SearchResult) string {
+	return normalizeDisplayText(result.Preview)
+}
+
+// SearchResultAgentLabel supplies the shared fallback for absent agent metadata.
+func SearchResultAgentLabel(result SearchResult) string {
+	if value := normalizeDisplayText(result.AgentName); value != "" {
+		return value
+	}
+	return "AGENT UNREPORTED"
+}
+
+// SearchResultMatchSummary supplies the shared fallback for absent match
+// summaries.
+func SearchResultMatchSummary(result SearchResult) string {
+	if value := normalizeDisplayText(result.BestMatchSummary); value != "" {
+		return value
+	}
+	return "Matching evidence"
+}
+
+func normalizeDisplayText(value string) string {
+	return strings.Join(strings.Fields(value), " ")
 }
 
 // SearchPage contains one bounded result page, navigation cursors, and the

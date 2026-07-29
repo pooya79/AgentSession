@@ -134,18 +134,6 @@ func sessionTitle(session app.SessionSummary) string {
 	return string(session.ID)
 }
 
-// searchSessionTitle prefers retained title metadata, then the preview, then
-// the stable session ID.
-func searchSessionTitle(result app.SearchResult) string {
-	if strings.TrimSpace(result.Title) != "" {
-		return result.Title
-	}
-	if result.Preview != "" {
-		return result.Preview
-	}
-	return string(result.SessionID)
-}
-
 // formatTime renders unavailable timestamps honestly and known values in local
 // time.
 func formatTime(value *time.Time) string {

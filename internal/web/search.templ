@@ -1,5 +1,7 @@
 package web
 
+import "github.com/pooya79/AgentSession/internal/app"
+
 templ searchPage(view searchView) {
 	@document("Search · AgentSession") {
 		<main id="main" class="page">
@@ -27,16 +29,18 @@ templ searchPage(view searchView) {
 				} else {
 					<section class="session-list" aria-label="Search results">
 						for _, result := range view.Page.Results {
+							{{ title := app.SearchResultDisplayTitle(result) }}
+							{{ preview := app.SearchResultDisplayPreview(result) }}
 							<article class="session-card">
 								<div class="session-card-heading">
-									<h2><a href={ templ.URL(sessionURL(result.SessionID)) }>{ searchSessionTitle(result) }</a></h2>
-									<span class="badge">{ result.AgentName }</span>
+									<h2><a href={ templ.URL(sessionURL(result.SessionID)) }>{ title }</a></h2>
+									<span class="badge">{ app.SearchResultAgentLabel(result) }</span>
 								</div>
-								if result.Preview != "" && result.Preview != searchSessionTitle(result) {
-									<p>{ result.Preview }</p>
+								if preview != "" && preview != title {
+									<p>{ preview }</p>
 								}
 								<p class="muted">{ formatTime(result.LastActivityAt) } · { formatCount(result.EventCount, "event") } · { formatCount(result.MatchCount, "matching event") }</p>
-								<p><strong>{ result.BestMatchSummary }</strong></p>
+								<p><strong>{ app.SearchResultMatchSummary(result) }</strong></p>
 								<p>{ compactSnippet(result.Snippet) }</p>
 							</article>
 						}

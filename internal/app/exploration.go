@@ -605,9 +605,9 @@ func encodeSessionCursor(row storage.SessionSummary, before bool) (string, error
 // first user message. Whitespace normalization keeps previews compact and
 // deterministic across terminal and web presentation layers.
 func sessionPreview(summary, firstUserMessage string) string {
-	preview := strings.Join(strings.Fields(summary), " ")
+	preview := normalizeDisplayText(summary)
 	if preview == "" {
-		preview = strings.Join(strings.Fields(firstUserMessage), " ")
+		preview = normalizeDisplayText(firstUserMessage)
 	}
 	runes := []rune(preview)
 	if len(runes) <= SessionPreviewMaxRunes {

@@ -47,6 +47,27 @@ func TestSearchPageEscapesResultsAndShowsSafeValidation(t *testing.T) {
 	}
 }
 
+func TestSearchPageUsesSharedFallbacksAndAvoidsDuplicatePreview(t *testing.T) {
+	t.Parallel()
+
+	handler := NewHandler(servicesStub{search: func(context.Context, app.SearchRequest) (app.SearchPage, error) {
+		return app.SearchPage{
+			State:        app.EvidenceComplete,
+			Availability: app.SearchAvailability{State: app.EvidenceComplete, Sessions: 1, Usable: 1},
+			Results: []app.SearchResult{{
+				SessionID: "session", Title: "  Same\n title ", Preview: "Same title",
+			}},
+		}, nil
+	}})
+	response := request(t, handler, http.MethodGet, "/search?q=alpha", nil, nil)
+	body := response.Body.String()
+	if response.Code != http.StatusOK || strings.Count(body, "Same title") != 1 ||
+		!strings.Contains(body, "AGENT UNREPORTED") ||
+		!strings.Contains(body, "Matching evidence") {
+		t.Fatalf("search fallback response %d:\n%s", response.Code, body)
+	}
+}
+
 func TestSearchBoundaryValidatesQueryShape(t *testing.T) {
 	t.Parallel()
 	var requests []app.SearchRequest

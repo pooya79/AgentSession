@@ -115,43 +115,72 @@ func buildSearchSQL(query search.Query, cursor *search.Cursor, limit int) (strin
 	ranked := query.HasText()
 	var statement strings.Builder
 	var args []any
-	if ranked {
-		statement.WriteString(`
-			WITH raw_matches AS (
-				SELECT d.session_id, d.event_id, d.sequence, d.timestamp,
-				       d.summary AS match_summary,
-				       substr(snippet(search_documents_fts, -1, '', '', ' … ', 24), 1, 512) AS snippet,
-				       bm25(search_documents_fts) AS rank
-				FROM search_documents_fts
-				JOIN search_documents d ON d.rowid = search_documents_fts.rowid
-				JOIN session_projection_states p
-				  ON p.session_id = d.session_id AND p.kind = 'search'
-				 AND p.status = 'ready'
-				 AND p.ready_version = p.target_version
-				 AND p.ready_revision = p.target_revision
-				 AND d.projection_version = p.ready_version
-				 AND d.canonical_revision = p.ready_revision
-				WHERE search_documents_fts MATCH ?
-		`)
-		args = append(args, ftsExpression(query.Text))
-	} else {
-		statement.WriteString(`
-			WITH raw_matches AS (
-				SELECT d.session_id, d.event_id, d.sequence, d.timestamp,
-				       d.summary AS match_summary, substr(d.content, 1, 512) AS snippet,
-				       0.0 AS rank
-				FROM search_documents d
-				JOIN session_projection_states p
-				  ON p.session_id = d.session_id AND p.kind = 'search'
-				 AND p.status = 'ready'
-				 AND p.ready_version = p.target_version
-				 AND p.ready_revision = p.target_revision
-				 AND d.projection_version = p.ready_version
-				 AND d.canonical_revision = p.ready_revision
-				WHERE 1 = 1
-		`)
-	}
+	appendRawMatchesCTE(&statement, &args, query, ranked)
 	appendSearchFilters(&statement, &args, query)
+	appendBestMatchesCTEs(&statement, ranked)
+	statement.WriteString(`
+			SELECT b.session_id, s.title, s.summary, s.first_user_message,
+			       s.adapter_name, s.last_activity_at, s.event_count, b.match_count,
+			       b.match_summary, b.snippet, b.rank
+			FROM best_matches b
+			JOIN sessions s ON s.id = b.session_id
+			WHERE 1 = 1
+	`)
+	appendSearchCursorPredicate(&statement, &args, cursor, ranked)
+	appendSearchOrder(&statement, cursor, ranked)
+	statement.WriteString(` LIMIT ?`)
+	args = append(args, limit)
+	return statement.String(), args
+}
+
+func appendRawMatchesCTE(statement *strings.Builder, args *[]any, query search.Query, ranked bool) {
+	if ranked {
+		appendRankedRawMatchesCTE(statement, args, query)
+		return
+	}
+	appendUnrankedRawMatchesCTE(statement)
+}
+
+func appendRankedRawMatchesCTE(statement *strings.Builder, args *[]any, query search.Query) {
+	statement.WriteString(`
+		WITH raw_matches AS (
+			SELECT d.session_id, d.event_id, d.sequence, d.timestamp,
+			       d.summary AS match_summary,
+			       substr(snippet(search_documents_fts, -1, '', '', ' … ', 24), 1, 512) AS snippet,
+			       bm25(search_documents_fts) AS rank
+			FROM search_documents_fts
+			JOIN search_documents d ON d.rowid = search_documents_fts.rowid
+			JOIN session_projection_states p
+			  ON p.session_id = d.session_id AND p.kind = 'search'
+			 AND p.status = 'ready'
+			 AND p.ready_version = p.target_version
+			 AND p.ready_revision = p.target_revision
+			 AND d.projection_version = p.ready_version
+			 AND d.canonical_revision = p.ready_revision
+			WHERE search_documents_fts MATCH ?
+	`)
+	*args = append(*args, ftsExpression(query.Text))
+}
+
+func appendUnrankedRawMatchesCTE(statement *strings.Builder) {
+	statement.WriteString(`
+		WITH raw_matches AS (
+			SELECT d.session_id, d.event_id, d.sequence, d.timestamp,
+			       d.summary AS match_summary, substr(d.content, 1, 512) AS snippet,
+			       0.0 AS rank
+			FROM search_documents d
+			JOIN session_projection_states p
+			  ON p.session_id = d.session_id AND p.kind = 'search'
+			 AND p.status = 'ready'
+			 AND p.ready_version = p.target_version
+			 AND p.ready_revision = p.target_revision
+			 AND d.projection_version = p.ready_version
+			 AND d.canonical_revision = p.ready_revision
+			WHERE 1 = 1
+	`)
+}
+
+func appendBestMatchesCTEs(statement *strings.Builder, ranked bool) {
 	statement.WriteString(`
 			),
 			ranked_matches AS (
@@ -178,25 +207,26 @@ func buildSearchSQL(query search.Query, cursor *search.Cursor, limit int) (strin
 			best_matches AS (
 				SELECT * FROM ranked_matches WHERE match_position = 1
 			)
-			SELECT b.session_id, s.title, s.summary, s.first_user_message,
-			       s.adapter_name, s.last_activity_at, s.event_count, b.match_count,
-			       b.match_summary, b.snippet, b.rank
-			FROM best_matches b
-			JOIN sessions s ON s.id = b.session_id
-			WHERE 1 = 1
 	`)
-	if cursor != nil {
-		if ranked {
-			operator := ">"
-			if cursor.Before {
-				operator = "<"
-			}
-			statement.WriteString(" AND (b.rank " + operator + " ? OR (b.rank = ? AND b.session_id " + operator + " ?))")
-			args = append(args, cursor.Rank, cursor.Rank, cursor.SessionID)
-		} else {
-			appendSessionCursor(&statement, &args, *cursor)
-		}
+}
+
+func appendSearchCursorPredicate(statement *strings.Builder, args *[]any, cursor *search.Cursor, ranked bool) {
+	if cursor == nil {
+		return
 	}
+	if !ranked {
+		appendSessionCursor(statement, args, *cursor)
+		return
+	}
+	operator := ">"
+	if cursor.Before {
+		operator = "<"
+	}
+	statement.WriteString(" AND (b.rank " + operator + " ? OR (b.rank = ? AND b.session_id " + operator + " ?))")
+	*args = append(*args, cursor.Rank, cursor.Rank, cursor.SessionID)
+}
+
+func appendSearchOrder(statement *strings.Builder, cursor *search.Cursor, ranked bool) {
 	if ranked {
 		if cursor != nil && cursor.Before {
 			statement.WriteString(` ORDER BY b.rank DESC, b.session_id DESC`)
@@ -208,9 +238,6 @@ func buildSearchSQL(query search.Query, cursor *search.Cursor, limit int) (strin
 	} else {
 		statement.WriteString(` ORDER BY s.last_activity_at DESC NULLS LAST, b.session_id ASC`)
 	}
-	statement.WriteString(` LIMIT ?`)
-	args = append(args, limit)
-	return statement.String(), args
 }
 
 func appendSearchFilters(statement *strings.Builder, args *[]any, query search.Query) {

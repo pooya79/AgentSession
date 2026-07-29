@@ -79,20 +79,14 @@ func searchResultCard(result app.SearchResult, selected, compact bool, width int
 		marker = "> "
 	}
 	title := searchResultTitle(result)
-	agent := strings.ToUpper(searchInline(result.AgentName))
-	if agent == "" {
-		agent = "AGENT UNREPORTED"
-	}
+	agent := strings.ToUpper(searchInline(app.SearchResultAgentLabel(result)))
 	metadata := fmt.Sprintf("%s · %s · %s / %s",
 		formatActivity(result.LastActivityAt), agent,
 		searchCount(result.MatchCount, "matching event"),
 		searchCount(result.EventCount, "event"))
 
-	summary := searchInline(result.BestMatchSummary)
+	summary := searchInline(app.SearchResultMatchSummary(result))
 	snippet := searchInline(result.Snippet)
-	if summary == "" {
-		summary = "Matching evidence"
-	}
 	if compact {
 		match := summary
 		if snippet != "" && snippet != summary {
@@ -109,7 +103,7 @@ func searchResultCard(result app.SearchResult, selected, compact bool, width int
 		marker + truncateCell(title, max(1, width-2)),
 		"  " + truncateCell(metadata, max(1, width-2)),
 	}
-	preview := searchInline(result.Preview)
+	preview := searchInline(app.SearchResultDisplayPreview(result))
 	if preview != "" && preview != title {
 		lines = append(lines, "  Session · "+truncateCell(preview, max(1, width-12)))
 	}
@@ -121,12 +115,7 @@ func searchResultCard(result app.SearchResult, selected, compact bool, width int
 }
 
 func searchResultTitle(result app.SearchResult) string {
-	for _, candidate := range []string{result.Title, result.Preview, string(result.SessionID)} {
-		if value := searchInline(candidate); value != "" {
-			return value
-		}
-	}
-	return "Untitled session"
+	return searchInline(app.SearchResultDisplayTitle(result))
 }
 
 func searchInline(value string) string {
