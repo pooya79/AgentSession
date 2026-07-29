@@ -298,11 +298,9 @@ func timelinePayloadTruncatable(payload model.NormalizedData) bool {
 
 func timelineMessageLines(message model.MessageData, width int, selected bool) []string {
 	label := "Message"
-	indent := ""
 	switch message.Role {
 	case model.MessageRoleUser:
 		label = "You"
-		indent = "      "
 	case model.MessageRoleAssistant:
 		label = "Assistant"
 	case model.MessageRoleSystem:
@@ -316,19 +314,15 @@ func timelineMessageLines(message model.MessageData, width int, selected bool) [
 	if selected {
 		marker = ">"
 	}
-	header := marker + " " + indent + "╭─ " + label
-	bodyPrefix := "  " + indent + "│ "
-	footer := "  " + indent + "╰─"
+	header := marker + " ╭─ " + label
 	safe := sanitization.Terminal(strings.ToValidUTF8(message.Text, "\uFFFD"))
 	if safe == "" {
 		safe = "—"
 	}
-	wrapped := strings.Split(ansi.Wrap(safe, max(1, width-ansi.StringWidth(bodyPrefix)), ""), "\n")
+	wrapped := strings.Split(ansi.Wrap(safe, max(1, width), ""), "\n")
 	lines := []string{header}
-	for _, line := range wrapped {
-		lines = append(lines, bodyPrefix+line)
-	}
-	return append(lines, footer)
+	lines = append(lines, wrapped...)
+	return append(lines, "╰─")
 }
 
 func timelineActivityTitle(payload model.NormalizedData, fallback string) string {

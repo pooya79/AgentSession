@@ -94,7 +94,7 @@ func TestTimelineMessagesUseConversationLayoutWithoutEventMetadata(t *testing.T)
 	user := model.EventSummary{ID: "user", Sequence: 41, Kind: model.EventKindMessage}
 	assistant := model.EventSummary{ID: "assistant", Sequence: 42, Kind: model.EventKindMessage}
 	userLines := strings.Join(timelineCardLines(
-		user, model.MessageData{Role: model.MessageRoleUser, Text: "question"}, 60, true, false,
+		user, model.MessageData{Role: model.MessageRoleUser, Text: "question\nsecond line"}, 60, true, false,
 		app.UnknownEvidenceInspection{}, false, nil,
 	), "\n")
 	assistantLines := strings.Join(timelineCardLines(
@@ -104,8 +104,14 @@ func TestTimelineMessagesUseConversationLayoutWithoutEventMetadata(t *testing.T)
 	if !strings.Contains(userLines, "╭─ You") || !strings.Contains(assistantLines, "╭─ Assistant") {
 		t.Fatalf("user=%q\nassistant=%q", userLines, assistantLines)
 	}
+	for _, line := range []string{"question", "second line", "answer"} {
+		if !strings.Contains("\n"+userLines+"\n"+assistantLines+"\n", "\n"+line+"\n") {
+			t.Fatalf("message line %q has a copy-hostile prefix:\nuser=%q\nassistant=%q", line, userLines, assistantLines)
+		}
+	}
 	for _, rendered := range []string{userLines, assistantLines} {
-		if strings.Contains(rendered, "#41") || strings.Contains(rendered, "#42") || strings.Contains(rendered, "message ·") {
+		if strings.Contains(rendered, "│") || strings.Contains(rendered, "#41") ||
+			strings.Contains(rendered, "#42") || strings.Contains(rendered, "message ·") {
 			t.Fatalf("conversation exposed event-log metadata: %q", rendered)
 		}
 	}
