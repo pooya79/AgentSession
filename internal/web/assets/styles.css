@@ -1,3 +1,4 @@
+/* Theme and document foundations. */
 :root {
   color-scheme: light dark;
   --bg: #f4f5f7;
@@ -41,6 +42,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 .skip-link { background: var(--panel); left: .75rem; padding: .6rem; position: fixed; top: -5rem; z-index: 10; }
 .skip-link:focus { top: .75rem; }
+
+/* Shared page shell and typography. */
 .site-header {
   align-items: center; background: var(--panel); border-bottom: 1px solid var(--line); display: flex;
   gap: 1.5rem; min-height: 3.5rem; padding: .65rem max(1rem, calc((100% - 78rem) / 2));
@@ -61,6 +64,8 @@ h2 { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 1.15rem; marg
 .eyebrow { color: var(--accent); font-size: .72rem; font-weight: 800; letter-spacing: .09em; margin-bottom: .15rem; text-transform: uppercase; }
 .muted, .metadata, small { color: var(--muted); }
 .visually-hidden { height: 1px; margin: -1px; overflow: hidden; padding: 0; position: absolute; width: 1px; clip-path: inset(50%); }
+
+/* Dashboard and indexing status. */
 .index-strip {
   align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: .4rem;
   display: flex; gap: .65rem; margin-bottom: 1.5rem; padding: .65rem .8rem;
@@ -104,6 +109,8 @@ summary { cursor: pointer; }
 .notice, .empty-state { background: var(--panel-2); border-left: 3px solid var(--accent); padding: .65rem .8rem; }
 .notice.warning { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
 .notice.success { background: var(--good-soft); border-color: var(--good); color: var(--good); }
+
+/* Tables and diagnostic evidence. */
 .source-row { align-items: start; border-bottom: 1px solid var(--line); display: grid; gap: 1rem; grid-template-columns: minmax(15rem, 2fr) 1fr 1fr 1.25fr; padding: .7rem .8rem; }
 .source-row [role=cell] { display: grid; min-width: 0; }
 code, pre { background: var(--panel-2); border: 1px solid var(--line); border-radius: .25rem; overflow-wrap: anywhere; }
@@ -114,6 +121,8 @@ pre { max-height: 32rem; overflow: auto; padding: .8rem; white-space: pre-wrap; 
 .diagnostics li > span, .diagnostics li > code { display: block; }
 .evidence-chips { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .35rem; }
 .chip.missing, .chip.raw { color: var(--muted); }
+
+/* Timeline structure and continuation controls. */
 .session-id { overflow-wrap: anywhere; }
 .timeline { margin-top: 1rem; }
 .event { display: grid; gap: .8rem; grid-template-columns: 1rem minmax(0, 1fr); }
@@ -164,10 +173,14 @@ pre { max-height: 32rem; overflow: auto; padding: .8rem; white-space: pre-wrap; 
 .htmx-indicator { display: none; }
 .timeline-sentinel.htmx-request .load-label { display: none; }
 .timeline-sentinel.htmx-request .htmx-indicator { display: inline; }
+
+/* Projection operations and polling. */
 .projection-list { margin: .8rem 0; }
 .projection-row { align-items: center; border-top: 1px solid var(--line); display: flex; gap: 1rem; justify-content: space-between; padding: .65rem 0; }
 .projection-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: .8rem; }
 .poller { display: none; }
+
+/* Motion and responsive adaptations. */
 @keyframes pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }

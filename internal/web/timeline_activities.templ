@@ -1,0 +1,106 @@
+package web
+
+import "github.com/pooya79/AgentSession/internal/model"
+
+// Activity cards present normalized tool and repository evidence without
+// adding source-specific interpretation.
+templ toolCallCard(call model.ToolCallData) {
+	<div class="activity-card tool-card">
+		<h3>Tool call <span class="chip">requested</span></h3>
+		<p><strong>{ call.ToolName }</strong> <span class="metadata">Call { call.CallID }</span></p>
+		if formatted, valid := formattedJSON(call.Input); valid {
+			<pre class="json-input">{ formatted }</pre>
+		}
+		<details>
+			<summary>Raw tool input</summary>
+			<pre>{ call.Input }</pre>
+		</details>
+	</div>
+}
+
+templ toolResultCard(result model.ToolResultData) {
+	<div class={ "activity-card tool-card tool-" + toolResultState(result.IsError) }>
+		<h3>Tool result <span class="chip">{ toolResultState(result.IsError) }</span></h3>
+		<p><strong>{ result.ToolName }</strong> <span class="metadata">Call { result.CallID }</span></p>
+		<details>
+			<summary>Tool output</summary>
+			<pre>{ result.Output }</pre>
+		</details>
+	</div>
+}
+
+templ commandCard(command model.CommandData) {
+	<div class={ "activity-card command-card " + commandExitState(command.ExitCode) }>
+		<h3>Command <span class="chip">{ commandExitState(command.ExitCode) }</span></h3>
+		<code class="command-line">{ command.Command }</code>
+		<p class="metadata">
+			Working directory:
+			if command.WorkingDirectory == "" {
+				<span>unreported</span>
+			} else {
+				<span>{ command.WorkingDirectory }</span>
+			}
+		</p>
+		<details>
+			<summary>Command output</summary>
+			<pre>{ command.Output }</pre>
+		</details>
+	</div>
+}
+
+templ patchCard(patch model.PatchData) {
+	<div class="activity-card patch-card">
+		<h3>Changed files</h3>
+		<p class="metadata">{ pathSummary(patch.Paths) }</p>
+		<details>
+			<summary>Patch</summary>
+			<pre class="patch">
+				for _, line := range patchLines(patch.Text) {
+					<span class={ line.Class }>{ line.Text }</span>
+				}
+			</pre>
+		</details>
+	</div>
+}
+
+templ fileReadCard(read model.FileReadData) {
+	<div class="activity-card file-card">
+		<h3>Read file</h3>
+		<code>{ read.Path }</code>
+		<span class="metadata">{ lineRangeLabel(read.StartLine, read.EndLine) }</span>
+	</div>
+}
+
+templ fileMutationCard(mutation model.FileMutationData) {
+	<div class="activity-card file-card">
+		<h3>{ string(mutation.Operation) } file</h3>
+		<code>{ mutation.Path }</code>
+		if mutation.PreviousPath != "" {
+			<p class="metadata">Renamed from <code>{ mutation.PreviousPath }</code></p>
+		}
+	</div>
+}
+
+templ usageCard(usage model.UsageData) {
+	<div class="activity-card usage-card">
+		<h3>Token usage</h3>
+		<dl>
+			<div><dt>Input</dt><dd>{ tokenCount(usage.InputTokens) }</dd></div>
+			<div><dt>Output</dt><dd>{ tokenCount(usage.OutputTokens) }</dd></div>
+			<div><dt>Cache read</dt><dd>{ tokenCount(usage.CacheReadTokens) }</dd></div>
+			<div><dt>Cache write</dt><dd>{ tokenCount(usage.CacheWriteTokens) }</dd></div>
+		</dl>
+	</div>
+}
+
+templ errorCard(value model.ErrorData) {
+	<div class="activity-card error-card" role="alert">
+		<h3>
+			Error
+			if value.Code != "" {
+				<span>· { value.Code }</span>
+			}
+		</h3>
+		<pre>{ value.Message }</pre>
+	</div>
+}

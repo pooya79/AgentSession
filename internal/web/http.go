@@ -126,6 +126,20 @@ func optionalSingle(w http.ResponseWriter, values url.Values, key string) (strin
 	return items[0], true
 }
 
+// optionalSingleAllowEmpty accepts an absent key or exactly one value,
+// including an empty value. Search uses this because an empty query is valid.
+func optionalSingleAllowEmpty(w http.ResponseWriter, values url.Values, key string) (string, bool) {
+	items, exists := values[key]
+	if !exists {
+		return "", true
+	}
+	if len(items) != 1 {
+		writeError(w, http.StatusBadRequest)
+		return "", false
+	}
+	return items[0], true
+}
+
 // parseLimit applies the web default while preserving the application maximum.
 func parseLimit(w http.ResponseWriter, values url.Values) (int, bool) {
 	raw, ok := optionalSingle(w, values, "limit")

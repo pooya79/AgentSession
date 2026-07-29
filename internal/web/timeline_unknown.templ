@@ -1,0 +1,38 @@
+package web
+
+import (
+	"github.com/pooya79/AgentSession/internal/app"
+	"github.com/pooya79/AgentSession/internal/model"
+)
+
+// Unknown evidence remains behind an explicit, CSRF-protected inspection
+// action so retained raw content is never placed in page URLs.
+templ unknownCard(event model.EventSummary, value model.UnknownData, csrf string) {
+	<div class="activity-card unknown-card">
+		<h3>Unknown event</h3>
+		<p><strong>Reason:</strong> { string(value.Reason) }</p>
+		<p><strong>Original kind:</strong> { value.OriginalKind }</p>
+		<form method="post" action={ templ.SafeURL(unknownEvidenceFragmentURL(event.SessionID, event.ID)) } hx-post={ unknownEvidenceFragmentURL(event.SessionID, event.ID) } hx-target="next .unknown-evidence" hx-swap="innerHTML">
+			<input type="hidden" name="csrf" value={ csrf }/>
+			<button type="submit" class="button quiet">Inspect retained Unknown evidence</button>
+		</form>
+		<div class="unknown-evidence" aria-live="polite"></div>
+	</div>
+}
+
+templ unknownEvidence(inspection app.UnknownEvidenceInspection) {
+	if inspection.State == app.EvidenceUnavailable {
+		<p class="notice warning">Retained evidence is unavailable. This is not evidence of success.</p>
+	} else {
+		<div class="retained-evidence">
+			<h3>Redacted retained evidence</h3>
+			<p class="metadata">
+				{ strconvFormatInt(inspection.ReturnedSize) } of { strconvFormatInt(inspection.OriginalSize) } bytes · { strconvFormatInt(int64(inspection.RedactionCount)) } redactions
+				if inspection.Truncated {
+					<span>· truncated</span>
+				}
+			</p>
+			<pre>{ inspection.Text }</pre>
+		</div>
+	}
+}

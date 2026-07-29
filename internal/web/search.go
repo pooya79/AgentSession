@@ -8,26 +8,39 @@ import (
 	"github.com/pooya79/AgentSession/internal/app"
 )
 
-func (h *handler) search(response http.ResponseWriter, request *http.Request) {
-	query := request.URL.Query().Get("q")
-	cursor := request.URL.Query().Get("cursor")
+// search renders one bounded result page while keeping validation errors safe
+// for presentation.
+func (h *handler) search(w http.ResponseWriter, r *http.Request) {
+	if !h.available(w) {
+		return
+	}
+	values, ok := strictQuery(w, r, "q", "cursor")
+	if !ok {
+		return
+	}
+	query, ok := optionalSingleAllowEmpty(w, values, "q")
+	if !ok {
+		return
+	}
+	cursor, ok := optionalSingle(w, values, "cursor")
+	if !ok {
+		return
+	}
 	view := searchView{Query: query}
-	page, err := h.services.Search(request.Context(), app.SearchRequest{
+	page, err := h.services.Search(r.Context(), app.SearchRequest{
 		Query: query, Cursor: cursor, Limit: defaultPageLimit,
 	})
 	if err != nil {
 		var validation *app.SearchValidationError
 		if !errors.As(err, &validation) {
-			http.Error(response, "Search is temporarily unavailable.", http.StatusInternalServerError)
+			writeServiceError(w, err)
 			return
 		}
 		view.Err = validation
 	} else {
 		view.Page = page
 	}
-	if err := searchPage(view).Render(request.Context(), response); err != nil {
-		http.Error(response, "Search is temporarily unavailable.", http.StatusInternalServerError)
-	}
+	render(w, r, http.StatusOK, searchPage(view))
 }
 
 func availabilityMessage(value app.SearchAvailability) string {
