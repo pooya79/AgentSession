@@ -14,7 +14,9 @@ import (
 type Kind string
 
 const (
-	KindSearch         Kind = "search"
+	// KindSearch identifies the canonical-event full-text search projection.
+	KindSearch Kind = "search"
+
 	KindGitCorrelation Kind = "git_correlation"
 	KindFindings       Kind = "findings"
 	KindOutcomes       Kind = "outcomes"
@@ -109,12 +111,20 @@ type Claim struct {
 type Reader interface {
 	Session(context.Context, model.SessionID) (model.Session, bool, error)
 	Events(context.Context, model.SessionID) ([]model.Event, error)
+	// EventPage returns at most limit canonical events after sequence in source
+	// order. A nil sequence starts at the beginning. Builders use this instead
+	// of retaining a complete session in memory.
+	EventPage(context.Context, model.SessionID, *int64, int) ([]model.Event, error)
 }
 
 type BuildRequest struct {
 	SessionID         model.SessionID
 	CanonicalRevision int64
-	Reader            Reader
+	// Version identifies the target projection schema or algorithm version.
+	Version string
+	// BuildToken isolates staged output for this claimed build attempt.
+	BuildToken string
+	Reader     Reader
 }
 
 type Builder interface {

@@ -178,7 +178,8 @@ func (m *Manager) executePass(ctx context.Context, sessionID model.SessionID) (b
 			continue
 		}
 		buildErr := m.buildWithLease(ctx, claim, builder, BuildRequest{
-			SessionID: sessionID, CanonicalRevision: claim.Revision, Reader: m.reader,
+			SessionID: sessionID, CanonicalRevision: claim.Revision,
+			Version: claim.Version, BuildToken: claim.RunToken, Reader: m.reader,
 		})
 		if buildErr == nil {
 			if completed, err := m.store.Complete(ctx, claim); err != nil {

@@ -17,6 +17,7 @@ import (
 	"github.com/pooya79/AgentSession/internal/importer"
 	"github.com/pooya79/AgentSession/internal/model"
 	"github.com/pooya79/AgentSession/internal/projection"
+	searchprojection "github.com/pooya79/AgentSession/internal/search"
 	"github.com/pooya79/AgentSession/internal/storage"
 	sqlitestore "github.com/pooya79/AgentSession/internal/storage/sqlite"
 )
@@ -72,6 +73,7 @@ type Runtime struct {
 	imports      *ImportManager
 	importAll    *importAllCoordinator
 	explorer     Explorer
+	searcher     Searcher
 	projections  *ProjectionService
 	databaseLock *databaseLock
 
@@ -132,7 +134,20 @@ func OpenRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("open runtime: %w", err)
 	}
-	projectionManager, err := projection.NewManager(ctx, store, store, nil)
+	searchBuilder, err := searchprojection.NewBuilder(store)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("open runtime: %w", err)
+	}
+	registrations := make([]projection.Registration, 0, len(projection.Kinds()))
+	for _, definition := range projection.DefaultDefinitions() {
+		registration := projection.Registration{Definition: definition}
+		if definition.Kind == projection.KindSearch {
+			registration.Builder = searchBuilder
+		}
+		registrations = append(registrations, registration)
+	}
+	projectionManager, err := projection.NewManager(ctx, store, store, registrations)
 	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("open runtime: %w", err)
@@ -153,6 +168,12 @@ func OpenRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("open runtime: %w", err)
 	}
+	searcher, err := NewSearcher(store)
+	if err != nil {
+		_ = manager.Shutdown(context.Background())
+		_ = db.Close()
+		return nil, fmt.Errorf("open runtime: %w", err)
+	}
 
 	var discoverer *discovery.Discoverer
 	if config.DiscoveryInputs != nil {
@@ -168,7 +189,7 @@ func OpenRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		return nil, fmt.Errorf("open runtime: %w", err)
 	}
 	runtime := &Runtime{
-		paths: paths, db: db, discoverer: discoverer, store: store, imports: manager, explorer: explorer,
+		paths: paths, db: db, discoverer: discoverer, store: store, imports: manager, explorer: explorer, searcher: searcher,
 		projections: NewProjectionService(projectionManager), catalog: make(map[model.SourceID]discovery.Source),
 		databaseLock: databaseLock,
 	}
@@ -197,6 +218,11 @@ func (r *Runtime) Projections() *ProjectionService { return r.projections }
 
 // Explorer returns the shared bounded canonical exploration service.
 func (r *Runtime) Explorer() Explorer { return r.explorer }
+
+// Search delegates to the shared lifecycle-aware search service.
+func (r *Runtime) Search(ctx context.Context, request SearchRequest) (SearchPage, error) {
+	return r.searcher.Search(ctx, request)
+}
 
 // LibraryOverview reports aggregate counts over committed canonical evidence.
 func (r *Runtime) LibraryOverview(ctx context.Context) (LibraryOverview, error) {

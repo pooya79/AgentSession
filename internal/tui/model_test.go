@@ -46,6 +46,14 @@ type servicesStub struct {
 	projectionStatusCalls int
 	retryCalls            int
 	rebuildCalls          []string
+	searchCalls           []app.SearchRequest
+}
+
+func (s *servicesStub) Search(_ context.Context, request app.SearchRequest) (app.SearchPage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.searchCalls = append(s.searchCalls, request)
+	return app.SearchPage{State: app.EvidenceComplete, Availability: app.SearchAvailability{State: app.EvidenceComplete}}, nil
 }
 
 func (s *servicesStub) DiscoverSources(context.Context) (app.SourceDiscovery, error) {
@@ -795,5 +803,23 @@ func TestSessionsDashboardSanitizesHostileFieldsAndRestoresSelection(t *testing.
 	}
 	if !strings.Contains(ansi.Strip(content), "> 202") && !strings.Contains(ansi.Strip(content), "> —") {
 		t.Fatalf("focused row marker missing: %q", ansi.Strip(content))
+	}
+}
+
+func TestSearchScreenSanitizesResults(t *testing.T) {
+	m := New(context.Background(), &servicesStub{})
+	m.screen = searchScreen
+	m.searchState.page = app.SearchPage{
+		State:        app.EvidenceComplete,
+		Availability: app.SearchAvailability{State: app.EvidenceComplete, Sessions: 1, Usable: 1},
+		Results: []app.SearchResult{{
+			SessionID: "session", EventID: "event", Kind: model.EventKindMessage,
+			Summary: "\x1b]8;;https://attacker.invalid\aopen\x1b]8;;\a",
+			Snippet: "\x1b[31mhostile\x1b[0m",
+		}},
+	}
+	content := m.View().Content
+	if strings.Contains(content, "attacker.invalid") || strings.Contains(content, "\x1b]8;") || strings.Contains(content, "\x1b[31mhostile") {
+		t.Fatalf("hostile search result survived terminal sanitization: %q", content)
 	}
 }

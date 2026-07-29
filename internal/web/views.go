@@ -29,6 +29,12 @@ type indexingView struct {
 	DiagnosticRefs map[model.EventID]eventReference
 }
 
+type searchView struct {
+	Query string
+	Page  app.SearchPage
+	Err   error
+}
+
 // timelineView combines canonical timeline evidence with separately fallible projections.
 type timelineView struct {
 	CSRF           string
@@ -60,6 +66,14 @@ func sessionPageURL(cursor string) string {
 		return "/"
 	}
 	return "/?" + url.Values{"cursor": {cursor}}.Encode()
+}
+
+func searchPageURL(query, cursor string) string {
+	values := url.Values{"q": {query}}
+	if cursor != "" {
+		values.Set("cursor", cursor)
+	}
+	return "/search?" + values.Encode()
 }
 
 // timelinePageURL builds the no-JavaScript continuation URL.

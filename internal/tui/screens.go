@@ -67,3 +67,12 @@ type projectionsState struct {
 	confirmAll   bool
 	actionNotice string
 }
+
+type searchState struct {
+	query   string
+	editing bool
+	page    app.SearchPage
+	loading bool
+	err     error
+	cursor  int
+}

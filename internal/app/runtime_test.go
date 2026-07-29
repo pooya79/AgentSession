@@ -145,7 +145,11 @@ func TestRuntimeImportsAllAdaptersIdempotently(t *testing.T) {
 				t.Fatalf("projection states for %q = %d, err=%v", summary.SessionID, len(states), err)
 			}
 			for _, state := range states {
-				if state.Status != projection.StatusPending {
+				want := projection.StatusPending
+				if state.Kind == projection.KindSearch {
+					want = projection.StatusReady
+				}
+				if state.Status != want {
 					t.Fatalf("projection %q status = %q", state.Kind, state.Status)
 				}
 			}
