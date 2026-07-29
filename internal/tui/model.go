@@ -59,6 +59,7 @@ type overviewLoadedMsg struct {
 // timelineLoadedMsg carries one bounded page of lightweight event summaries.
 type timelineLoadedMsg struct {
 	generation uint64
+	cursor     string
 	page       app.TimelinePage
 	err        error
 }
@@ -73,6 +74,7 @@ type detailLoadedMsg struct {
 
 type unknownEvidenceLoadedMsg struct {
 	generation uint64
+	eventID    model.EventID
 	inspection app.UnknownEvidenceInspection
 	err        error
 }
@@ -169,6 +171,7 @@ func New(ctx context.Context, services app.Services) Model {
 	indexViewport.SoftWrap = true
 	helpViewport := viewport.New()
 	helpViewport.SoftWrap = true
+	timelineViewport := viewport.New()
 	return Model{
 		ctx:               ctx,
 		services:          services,
@@ -183,8 +186,15 @@ func New(ctx context.Context, services app.Services) Model {
 			overviewLoading: services != nil,
 			cursors:         []string{""},
 		},
-		timelineState: timelineState{cursors: []string{""}},
-		detailState:   detailState{viewport: detailViewport},
+		timelineState: timelineState{
+			requestedCursors:  make(map[string]bool),
+			expanded:          make(map[model.EventID]bool),
+			inspections:       make(map[model.EventID]app.UnknownEvidenceInspection),
+			inspectionErrors:  make(map[model.EventID]error),
+			inspectionLoading: make(map[model.EventID]bool),
+			viewport:          timelineViewport,
+		},
+		detailState: detailState{viewport: detailViewport},
 		indexingState: indexingState{
 			status:   app.ImportAllStatus{Phase: app.ImportAllUnavailable},
 			viewport: indexViewport,
@@ -236,12 +246,14 @@ func loadSearch(ctx context.Context, services app.Services, generation uint64, q
 	}
 }
 
-// loadTimeline requests summaries only; payload retrieval belongs exclusively
-// to loadDetail.
+// loadTimeline opts into normalized payloads for this bounded TUI chunk.
+// Retained raw records remain excluded.
 func loadTimeline(ctx context.Context, services app.Services, generation uint64, sessionID model.SessionID, cursor string) tea.Cmd {
 	return func() tea.Msg {
-		page, err := services.Timeline(ctx, app.TimelineRequest{SessionID: sessionID, Cursor: cursor, Limit: pageSize})
-		return timelineLoadedMsg{generation: generation, page: page, err: err}
+		page, err := services.Timeline(ctx, app.TimelineRequest{
+			SessionID: sessionID, Cursor: cursor, Limit: pageSize, IncludePayloads: true,
+		})
+		return timelineLoadedMsg{generation: generation, cursor: cursor, page: page, err: err}
 	}
 }
 
@@ -261,7 +273,7 @@ func loadDetail(ctx context.Context, services app.Services, generation uint64, s
 func loadUnknownEvidence(ctx context.Context, services app.Services, generation uint64, sessionID model.SessionID, eventID model.EventID) tea.Cmd {
 	return func() tea.Msg {
 		inspection, err := services.InspectUnknownEvidence(ctx, sessionID, eventID)
-		return unknownEvidenceLoadedMsg{generation: generation, inspection: inspection, err: err}
+		return unknownEvidenceLoadedMsg{generation: generation, eventID: eventID, inspection: inspection, err: err}
 	}
 }
 
@@ -433,14 +445,14 @@ func (m *Model) reloadSessions() tea.Cmd {
 	))
 }
 
-// reloadTimeline replaces the current timeline request while retaining its
-// session and page cursor.
+// reloadTimeline refreshes the first chunk. Existing cards remain visible if
+// the replacement read fails.
 func (m *Model) reloadTimeline() tea.Cmd {
 	ctx := m.replaceRequest()
 	m.timelineState.loading = true
 	m.timelineState.err = nil
-	cursor := m.timelineState.cursors[m.timelineState.pageNumber]
-	return m.startSpinner(loadTimeline(ctx, m.services, m.requestGeneration, m.sessionsState.selected, cursor))
+	m.timelineState.pendingCursor = ""
+	return m.startSpinner(loadTimeline(ctx, m.services, m.requestGeneration, m.sessionsState.selected, ""))
 }
 
 // observeNow starts a fresh observer and immediately reads indexing status.
@@ -457,6 +469,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.syncViewports()
+		m.anchorTimelineSelection()
 		return m, nil
 	case tea.BackgroundColorMsg:
 		m.theme = newTheme(msg.IsDark())
@@ -499,13 +512,34 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.timelineState.loading = false
+		m.timelineState.pendingCursor = ""
 		m.timelineState.err = visibleError(msg.err)
+		if msg.err != nil && msg.cursor != "" {
+			delete(m.timelineState.requestedCursors, msg.cursor)
+		}
 		if msg.err == nil {
-			m.timelineState.page = msg.page
+			selected := m.timelineState.selected
+			if msg.cursor == "" {
+				m.timelineState.page = msg.page
+				m.timelineState.requestedCursors = map[string]bool{"": true}
+			} else {
+				m.appendTimelinePage(msg.page)
+			}
+			for index, event := range m.timelineState.page.Events {
+				if event.ID == selected {
+					m.timelineState.cursor = index
+					break
+				}
+			}
 			if m.timelineState.cursor >= len(m.timelineState.page.Events) {
 				m.timelineState.cursor = max(0, len(m.timelineState.page.Events)-1)
 			}
+			if len(m.timelineState.page.Events) > 0 {
+				m.timelineState.selected = m.timelineState.page.Events[m.timelineState.cursor].ID
+			}
 		}
+		m.syncViewports()
+		m.anchorTimelineSelection()
 		return m, nil
 	case detailLoadedMsg:
 		if msg.generation != m.requestGeneration {
@@ -520,6 +554,17 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case unknownEvidenceLoadedMsg:
 		if msg.generation != m.requestGeneration {
+			return m, nil
+		}
+		if m.screen == timelineScreen {
+			m.timelineState.inspectionLoading[msg.eventID] = false
+			m.timelineState.inspectionErrors[msg.eventID] = visibleError(msg.err)
+			if msg.err == nil {
+				m.timelineState.inspections[msg.eventID] = msg.inspection
+				m.timelineState.expanded[msg.eventID] = true
+			}
+			m.syncViewports()
+			m.anchorTimelineSelection()
 			return m, nil
 		}
 		m.detailState.inspectionLoading = false
@@ -786,6 +831,17 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	case "r":
 		return m.refresh()
 	case "u":
+		if m.screen == timelineScreen && len(m.timelineState.page.Events) > 0 {
+			event := m.timelineState.page.Events[m.timelineState.cursor]
+			if event.Kind == model.EventKindUnknown && !m.timelineState.inspectionLoading[event.ID] {
+				ctx := m.replaceRequest()
+				m.timelineState.inspectionErrors[event.ID] = nil
+				m.timelineState.inspectionLoading[event.ID] = true
+				return m, m.startSpinner(loadUnknownEvidence(
+					ctx, m.services, m.requestGeneration, m.sessionsState.selected, event.ID,
+				))
+			}
+		}
 		if m.screen == detailScreen && m.detailState.detail.Event.Kind == model.EventKindUnknown && !m.detailState.inspectionLoading {
 			ctx := m.replaceRequest()
 			m.detailState.inspection = app.UnknownEvidenceInspection{}
@@ -820,28 +876,45 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 			m.projectionsState.confirmAll = true
 		}
 	case "n":
+		if m.screen == timelineScreen {
+			return m, nil
+		}
 		return m.nextPage()
 	case "up", "k":
 		m.move(-1)
+		return m, m.prefetchTimelineIfNeeded()
 	case "down", "j":
 		m.move(1)
+		return m, m.prefetchTimelineIfNeeded()
 	case "home", "g":
 		m.moveToBoundary(false)
+		return m, m.prefetchTimelineIfNeeded()
 	case "end", "G":
 		m.moveToBoundary(true)
+		return m, m.prefetchTimelineIfNeeded()
 	case "pgup":
-		if m.screen == detailScreen || m.screen == indexingScreen {
+		if m.screen == timelineScreen {
+			m.syncViewports()
+			m.timelineState.viewport.ScrollUp(m.pageStep())
+		} else if m.screen == detailScreen || m.screen == indexingScreen {
 			m.moveScroll(-m.pageStep())
 		} else {
 			return m.previousPage()
 		}
 	case "pgdown":
-		if m.screen == detailScreen || m.screen == indexingScreen {
+		if m.screen == timelineScreen {
+			m.syncViewports()
+			m.timelineState.viewport.ScrollDown(m.pageStep())
+			return m, m.prefetchTimelineIfNeeded()
+		} else if m.screen == detailScreen || m.screen == indexingScreen {
 			m.moveScroll(m.pageStep())
 		} else {
 			return m.nextPage()
 		}
 	case "p":
+		if m.screen == timelineScreen {
+			return m, nil
+		}
 		return m.previousPage()
 	case "enter":
 		return m.openSelection()
@@ -896,9 +969,7 @@ func (m *Model) back() (tea.Model, tea.Cmd) {
 		return m, m.reloadSessions()
 	case timelineScreen:
 		m.screen = sessionsScreen
-		m.timelineState.page = app.TimelinePage{}
-		m.timelineState.err = nil
-		m.timelineState.loading = false
+		m.resetTimelineState()
 		return m, tea.Batch(m.reloadSessions(), m.observeNow())
 	case detailScreen:
 		m.cancelRequest()
@@ -967,6 +1038,9 @@ func (m *Model) move(delta int) {
 	case timelineScreen:
 		if len(m.timelineState.page.Events) > 0 {
 			m.timelineState.cursor = clamp(m.timelineState.cursor+delta, 0, len(m.timelineState.page.Events)-1)
+			m.timelineState.selected = m.timelineState.page.Events[m.timelineState.cursor].ID
+			m.syncViewports()
+			m.anchorTimelineSelection()
 		}
 	case projectionsScreen:
 		if len(m.projectionsState.status.Projections) > 0 {
@@ -1006,6 +1080,9 @@ func (m *Model) moveToBoundary(last bool) {
 		if last {
 			m.timelineState.cursor = len(m.timelineState.page.Events) - 1
 		}
+		m.timelineState.selected = m.timelineState.page.Events[m.timelineState.cursor].ID
+		m.syncViewports()
+		m.anchorTimelineSelection()
 	case projectionsScreen:
 		if len(m.projectionsState.status.Projections) == 0 {
 			return
@@ -1074,19 +1151,6 @@ func (m *Model) nextPage() (tea.Model, tea.Cmd) {
 		m.sessionsState.cursor = 0
 		m.sessionsState.selected = ""
 		return m, m.reloadSessions()
-	case timelineScreen:
-		if m.timelineState.page.NextCursor == "" || m.timelineState.loading {
-			return m, nil
-		}
-		if m.timelineState.pageNumber+1 == len(m.timelineState.cursors) {
-			m.timelineState.cursors = append(m.timelineState.cursors, m.timelineState.page.NextCursor)
-		} else {
-			m.timelineState.cursors[m.timelineState.pageNumber+1] = m.timelineState.page.NextCursor
-			m.timelineState.cursors = m.timelineState.cursors[:m.timelineState.pageNumber+2]
-		}
-		m.timelineState.pageNumber++
-		m.timelineState.cursor = 0
-		return m, m.reloadTimeline()
 	}
 	return m, nil
 }
@@ -1107,13 +1171,6 @@ func (m *Model) previousPage() (tea.Model, tea.Cmd) {
 		m.sessionsState.cursor = 0
 		m.sessionsState.selected = ""
 		return m, m.reloadSessions()
-	case timelineScreen:
-		if m.timelineState.pageNumber == 0 || m.timelineState.loading {
-			return m, nil
-		}
-		m.timelineState.pageNumber--
-		m.timelineState.cursor = 0
-		return m, m.reloadTimeline()
 	}
 	return m, nil
 }
@@ -1144,27 +1201,23 @@ func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 		}
 		m.sessionsState.selected = m.sessionsState.page.Sessions[m.sessionsState.cursor].ID
 		m.screen = timelineScreen
-		m.timelineState.page = app.TimelinePage{}
-		m.timelineState.err = nil
+		m.resetTimelineState()
 		m.timelineState.loading = true
-		m.timelineState.pageNumber = 0
-		m.timelineState.cursors = []string{""}
-		m.timelineState.cursor = 0
 		m.stopObservation()
 		ctx := m.replaceRequest()
 		return m, m.startSpinner(loadTimeline(ctx, m.services, m.requestGeneration, m.sessionsState.selected, ""))
 	case timelineScreen:
-		if m.timelineState.loading || len(m.timelineState.page.Events) == 0 {
+		if len(m.timelineState.page.Events) == 0 {
 			return m, nil
 		}
-		m.screen = detailScreen
-		m.detailState.detail = app.EventDetail{}
-		m.detailState.err = nil
-		m.detailState.loading = true
-		m.detailState.viewport.GotoTop()
-		ctx := m.replaceRequest()
 		event := m.timelineState.page.Events[m.timelineState.cursor]
-		return m, m.startSpinner(loadDetail(ctx, m.services, m.requestGeneration, m.sessionsState.selected, event.ID))
+		if timelinePayloadTruncatable(m.timelineState.page.Payloads[event.ID]) ||
+			m.timelineState.inspections[event.ID].EventID != "" {
+			m.timelineState.expanded[event.ID] = !m.timelineState.expanded[event.ID]
+			m.syncViewports()
+			m.anchorTimelineSelection()
+		}
+		return m, m.prefetchTimelineIfNeeded()
 	}
 	return m, nil
 }
@@ -1487,7 +1540,7 @@ func padCell(value string, width int) string {
 	return value + strings.Repeat(" ", max(0, width-ansi.StringWidth(value)))
 }
 
-// timelineLines renders source-ordered lightweight event summaries.
+// timelineLines renders the accumulated card timeline through one viewport.
 func (m Model) timelineLines() []string {
 	lines := []string{"Timeline · session " + string(m.sessionsState.selected)}
 	for _, session := range m.sessionsState.page.Sessions {
@@ -1500,7 +1553,7 @@ func (m Model) timelineLines() []string {
 	}
 	switch {
 	case m.timelineState.loading && len(m.timelineState.page.Events) == 0:
-		return append(lines, "", m.spinner.View()+" Loading event summaries…")
+		return append(lines, "", m.spinner.View()+" Loading timeline events…")
 	case m.timelineState.err != nil && len(m.timelineState.page.Events) == 0:
 		return append(lines, "", "Could not load timeline: "+m.timelineState.err.Error(), "Press r to retry.")
 	case m.timelineState.page.State == app.EvidenceNotFound:
@@ -1512,26 +1565,13 @@ func (m Model) timelineLines() []string {
 		return append(lines, "", "This session has no normalized events.")
 	}
 	if m.timelineState.err != nil {
-		lines = append(lines, "Refresh failed; showing the last loaded timeline. Press r to retry.")
-	} else if m.timelineState.loading {
-		lines = append(lines, m.spinner.View()+" Refreshing timeline summaries.")
+		lines = append(lines, "Timeline continuation failed; loaded cards remain available. Move near the end or press r to retry.")
 	}
 	if m.timelineState.page.State == app.EvidencePartial {
 		lines = append(lines, diagnosticSummary(m.timelineState.page.Diagnostics))
 	}
 	lines = append(lines, "")
-	visible := max(1, m.contentHeight()-len(lines)-1)
-	start := windowStart(m.timelineState.cursor, len(m.timelineState.page.Events), visible)
-	end := min(len(m.timelineState.page.Events), start+visible)
-	for i := start; i < end; i++ {
-		event := m.timelineState.page.Events[i]
-		marker := " "
-		if i == m.timelineState.cursor {
-			marker = ">"
-		}
-		lines = append(lines, fmt.Sprintf("%s #%d  %-13s  %s", marker, event.Sequence, event.Kind, event.Summary))
-	}
-	lines = append(lines, fmt.Sprintf("Page %d · %d shown%s", m.timelineState.pageNumber+1, len(m.timelineState.page.Events), nextLabel(m.timelineState.page.NextCursor)))
+	lines = append(lines, strings.Split(m.timelineState.viewport.View(), "\n")...)
 	return lines
 }
 
@@ -1749,7 +1789,7 @@ func (m Model) helpLine(width int) string {
 		case sessionsScreen:
 			return "↑↓ move · Enter open · i index · r rescan · ? help · q quit"
 		case timelineScreen:
-			return "↑↓ move · Enter detail · x projections · Esc back · ? help"
+			return "↑↓ cards · Enter expand · x projections · Esc back · ? help"
 		case projectionsScreen:
 			return "↑↓ select · t retry · b rebuild · Esc back · ? help"
 		default:
@@ -1767,7 +1807,7 @@ func (m Model) helpLine(width int) string {
 	case indexingScreen:
 		return "↑/↓ or j/k scroll · g/G top/bottom · PgUp/PgDn scroll · Esc sessions · r rescan · ? help · q quit"
 	case timelineScreen:
-		return "↑/↓ or j/k move · g/G first/last · Enter detail · x projections · n/p page · Esc sessions · r reload · ? help"
+		return "↑/↓ or j/k cards · PgUp/PgDn scroll · Enter expand · u inspect Unknown · x projections · Esc sessions · ? help"
 	case projectionsScreen:
 		return "↑/↓ select · r refresh · t retry implemented · b rebuild selected · a rebuild all when available · Esc timeline · ? help"
 	default:

@@ -19,6 +19,8 @@ type explorationReaderStub struct {
 	envelope     storage.EventEnvelope
 	payload      model.NormalizedData
 	payloadReads int
+	payloads     map[model.EventID]model.NormalizedData
+	batchReads   int
 	sessions     []storage.SessionSummary
 	sessionMore  bool
 	lastCursor   *storage.SessionCursor
@@ -215,6 +217,10 @@ func (s *explorationReaderStub) EventPayload(context.Context, model.SessionID, m
 	s.payloadReads++
 	return s.payload, s.payload != nil, nil
 }
+func (s *explorationReaderStub) EventPayloads(context.Context, model.SessionID, []model.EventID) (map[model.EventID]model.NormalizedData, error) {
+	s.batchReads++
+	return s.payloads, nil
+}
 func (s *explorationReaderStub) Diagnostics(context.Context, model.SessionID, *model.EventID, int) (storage.DiagnosticPage, error) {
 	return s.diagnostics, nil
 }
@@ -244,6 +250,30 @@ func TestExplorerEvidenceStatesAndExplicitPayload(t *testing.T) {
 	detail, err = explorer.EventDetail(context.Background(), EventDetailRequest{SessionID: "session", EventID: eventID, IncludePayload: true})
 	if err != nil || detail.Payload == nil || stub.payloadReads != 1 {
 		t.Fatalf("EventDetail(payload) = (%#v, %v), reads=%d", detail, err, stub.payloadReads)
+	}
+}
+
+func TestTimelinePayloadsAreBoundedAndOptIn(t *testing.T) {
+	eventID := model.EventID("evt_" + strings.Repeat("d", 64))
+	stub := &explorationReaderStub{
+		exists: true,
+		events: []model.EventSummary{{
+			ID: eventID, SessionID: "session", Sequence: 1, Kind: model.EventKindMessage, Summary: "hello",
+		}},
+		payloads: map[model.EventID]model.NormalizedData{
+			eventID: model.MessageData{Role: model.MessageRoleUser, Text: "complete text"},
+		},
+	}
+	explorer, _ := NewExplorer(stub)
+	summaryOnly, err := explorer.Timeline(context.Background(), TimelineRequest{SessionID: "session"})
+	if err != nil || summaryOnly.Payloads != nil || stub.batchReads != 0 {
+		t.Fatalf("summary timeline = (%#v, %v), batch reads %d", summaryOnly, err, stub.batchReads)
+	}
+	withPayloads, err := explorer.Timeline(context.Background(), TimelineRequest{
+		SessionID: "session", IncludePayloads: true,
+	})
+	if err != nil || withPayloads.Payloads[eventID] == nil || stub.batchReads != 1 {
+		t.Fatalf("payload timeline = (%#v, %v), batch reads %d", withPayloads, err, stub.batchReads)
 	}
 }
 

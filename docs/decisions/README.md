@@ -40,6 +40,7 @@ Use [TEMPLATE.md](TEMPLATE.md) when proposing a decision.
 | [016](016-opencode-storage-generations.md) | 2026-07-27 | Accepted | Adapters | Select one OpenCode storage generation per session | Applies [ADR-015](015-canonical-unknown-event-contract.md) |
 | [017](017-claude-agent-session-identities.md) | 2026-07-28 | Accepted | Adapters | Give Claude agent logs distinct canonical session identities | — |
 | [018](018-safe-search-projection.md) | 2026-07-28 | Accepted | Search | Build full-text search as a safe canonical projection | Implements the lifecycle from [ADR-008](008-versioned-projection-lifecycle.md) |
+| [019](019-opt-in-inline-timeline-payloads.md) | 2026-07-29 | Accepted | Exploration | Allow bounded opt-in payloads for inline timelines | Extends [ADR-010](010-bounded-evidence-exploration-services.md) |
 
 Dates are the dates each ADR first entered repository history.
 
@@ -87,6 +88,8 @@ source-specific behavior in shared layers.
   preview fields.
 - [ADR-014](014-server-rendered-web-operations-console.md): web interaction
   model.
+- [ADR-019](019-opt-in-inline-timeline-payloads.md): bounded normalized
+  payload batches for continuous inline timelines.
 
 ### Derived data and search
 

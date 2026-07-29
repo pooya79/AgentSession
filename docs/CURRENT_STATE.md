@@ -49,6 +49,9 @@ representative collection of real sessions.
   records.
 - Retained content for an Unknown event can be inspected through an explicit,
   bounded, redacted action.
+- Timeline payloads are summary-only by default. The terminal interface opts
+  into bounded normalized payload batches and appends 50-event chunks into one
+  continuously scrollable card timeline; raw records remain excluded.
 
 ### Search
 
@@ -71,7 +74,10 @@ representative collection of real sessions.
 - Both interactive interfaces start application-owned discovery and import
   work and can observe indexing progress without owning the worker lifecycle.
 - Both interfaces provide session browsing, timelines, event inspection,
-  indexing diagnostics, projection status and actions, and search.
+  indexing diagnostics, projection status and actions, and search. The TUI
+  presents ordinary sessions as a conversation with distinct user and
+  assistant messages, while technical activity stays compact until expanded;
+  search results retain standalone event-detail navigation.
 - The web interface is server-rendered and remains functional for its main
   operations without JavaScript. Embedded htmx provides bounded partial
   updates when available.
