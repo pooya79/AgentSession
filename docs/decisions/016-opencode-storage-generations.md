@@ -1,8 +1,8 @@
-# ADR 016: Select one OpenCode storage generation per session
+# ADR-016: Select one OpenCode storage generation per session
 
 ## Status
 
-Accepted.
+Accepted
 
 ## Context
 

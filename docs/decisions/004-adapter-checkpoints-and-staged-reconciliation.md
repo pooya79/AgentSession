@@ -2,8 +2,10 @@
 
 ## Status
 
-Accepted; supersedes ADR-003 where it required verification failure to stop
-without automatic reconciliation.
+Accepted
+
+This decision supersedes [ADR-003](003-verified-batched-imports.md) where it
+required verification failure to stop without automatic reconciliation.
 
 ## Context
 

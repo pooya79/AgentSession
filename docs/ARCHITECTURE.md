@@ -1,8 +1,18 @@
 # AgentSession architecture
 
-This document describes the target architecture for AgentSession v0.1. It explains the system boundaries, data flow, component ownership, and dependency rules contributors should preserve as the application grows.
+This document describes AgentSession's current architecture and its explicitly
+identified direction. It explains system boundaries, data flow, component
+ownership, and dependency rules contributors should preserve as the application
+grows.
 
-For the decision behind this design, see [ADR-001](decisions/001-modular-go-application.md). Canonical unsupported evidence, malformed-record boundaries, derived interpretation coverage, and bounded inspection are defined in [ADR-015](decisions/015-canonical-unknown-event-contract.md). For day-to-day engineering rules, see [AGENTS.md](../AGENTS.md).
+Product intent belongs in the [product contract](PRODUCT.md), and implemented
+capability is tracked in [the current-state snapshot](CURRENT_STATE.md). The
+[decision register](decisions/README.md) records why consequential choices were
+made. For day-to-day engineering rules, see [AGENTS.md](../AGENTS.md).
+
+Unless a section is marked **planned**, it describes an implemented boundary or
+an accepted constraint on implementation. Planned sections describe intended
+capability, not current executable behavior.
 
 ## Goals and constraints
 
@@ -10,8 +20,10 @@ AgentSession is a local forensic explorer for coding-agent activity. Its archite
 
 - **Local operation:** indexing, search, and analysis work without an account, network service, API key, or model connection.
 - **Read-only inputs:** original session records and inspected repositories are never modified.
-- **Evidence-backed results:** outcomes and findings link to the events that support them.
-- **Deterministic behavior:** v0.1 analysis uses explicit, testable rules rather than generated judgments.
+- **Evidence-backed results:** derived outcomes and findings link to the events
+  that support them when those capabilities are implemented.
+- **Deterministic behavior:** analysis uses explicit, testable rules rather
+  than generated judgments.
 - **Streaming imports:** large logs are processed incrementally instead of loaded fully into memory.
 - **Shared behavior:** the TUI and web interface use the same application services.
 - **Portable distribution:** each release is one native executable containing its runtime assets and migrations.
@@ -52,7 +64,7 @@ Read-only inputs
                                   v
                       +------------------------+
                       | Rebuildable projections |
-                      | FTS, Git, analysis     |
+                      | search; more planned    |
                       +-----------+------------+
                                   |
                                   v
@@ -94,21 +106,21 @@ normalize to canonical events
 atomically persist event batch, session updates, and checkpoint
       |
       v
-update search projection
+update implemented projections
       |
       v
-correlate repository and Git evidence
+serve canonical evidence and search
       |
-      v
-run deterministic analysis and update aggregates
+      +---- planned ----> Git correlation, analysis, aggregates
 ```
 
 An import is incremental and idempotent. Canonical event batches, retained raw
 records, their record diagnostics, session updates, and the corresponding
-checkpoint share the import transaction. FTS indexing, repository and Git
-correlation, findings, outcomes, and aggregates run after commit. Failure in
-any of those projections is recorded and retried without invalidating otherwise
-durable imported evidence.
+checkpoint share the import transaction. Rebuildable projections run after
+commit. Search is the currently implemented projection; repository and Git
+correlation, findings, outcomes, and aggregates are registered but planned.
+Failure in any projection is recorded and retried without invalidating
+otherwise durable imported evidence.
 
 The importer records enough source identity and progress to distinguish an append from truncation, replacement, or mutation before the checkpoint. A conceptual checkpoint is:
 
@@ -353,6 +365,8 @@ A central application-level import coordinator owns active work. It permits one 
 
 ### Repository and Git correlation
 
+**Status: planned.**
+
 Repository correlation connects a session's working directory and file evidence to a repository root, branch, nearby HEAD, and relevant commits when those facts are available.
 
 Git integration invokes only a small allowlist of non-interactive, read-only commands with explicit arguments and working directories. User-controlled text is never interpolated into a shell command, and the web interface cannot request arbitrary Git execution. Correlation consumes durably stored canonical data and may use session-level context. Missing Git metadata or a correlation failure reduces available evidence and produces a projection diagnostic; it does not roll back or invalidate the imported session.
@@ -369,11 +383,11 @@ Authoritative data
 - import checkpoints
 
 Rebuildable projections
-- FTS indexes
-- repository and Git correlations
-- findings
-- outcomes
-- statistics and aggregates
+- FTS indexes (implemented)
+- repository and Git correlations (planned)
+- findings (planned)
+- outcomes (planned)
+- statistics and aggregates (planned)
 ```
 
 Projection data can be deleted and reconstructed from authoritative database data without re-reading the original session source. Git projections may additionally consult the still read-only repository. Projection lifecycle details are defined by [ADR-008](decisions/008-versioned-projection-lifecycle.md).
@@ -382,7 +396,8 @@ Each authoritative batch advances a session's monotonic canonical revision and,
 inside that same transaction, marks all registered projections pending for the
 new revision. Idempotent retries that do not change canonical evidence preserve
 the revision and any ready projection state. The five fixed projection kinds are search, Git correlation,
-findings, outcomes, and aggregates. Each has an opaque target algorithm version
+findings, outcomes, and aggregates. Only search currently has a builder. Each
+kind has an opaque target algorithm version
 and per-session status of pending, running, failed, or ready. A ready projection
 is usable only when its ready version and revision equal the current target.
 The previous ready identity is retained when an upgrade fails.
@@ -396,7 +411,14 @@ Canceled or interrupted runs return to pending; unimplemented builders remain
 pending. Persisted failures use bounded stable codes and generic or explicitly
 safe summaries, never raw error strings or canonical payloads.
 
-Storage details remain behind small, consumer-owned use-case interfaces rather than one interface per table. Examples include an `ImportStore` that atomically commits a batch, a `SessionReader` that lists sessions and timelines and fetches event details, and an `AnalysisStore` that replaces versioned findings and outcomes. Application code depends on these interfaces, not concrete SQLite types. Schema changes use ordered embedded migrations. Import batches use transactions, foreign keys are enabled, and tests use isolated temporary databases.
+Storage details remain behind small, consumer-owned use-case interfaces rather
+than one interface per table. Current examples include an `ImportStore` that
+atomically commits a batch and exploration readers that list sessions and
+timelines and fetch event details. Future analysis storage should follow the
+same boundary. Application code depends on these interfaces, not concrete
+SQLite types. Schema changes use ordered embedded migrations. Import batches
+use transactions, foreign keys are enabled, and tests use isolated temporary
+databases.
 
 The `search` capability parses user input, validates filters, and produces a storage-neutral `SearchQuery`. The SQLite storage implementation translates that query into SQL and FTS5 expressions and owns ranking, snippets, and pagination.
 
@@ -422,6 +444,8 @@ The pure-Go SQLite driver preserves CGO-free cross-compilation at the cost of a 
 
 ### Analysis
 
+**Status: planned.**
+
 Analysis runs deterministic rules over canonical events. A finding is an evidence-level result, such as a repeated failing command. It contains a rule identifier and version, applicability state, severity where applicable, explanation, related event IDs, and supporting metadata. Rule evaluation supports `triggered`, `not triggered`, `not applicable`, and `insufficient evidence`; absence of a detected action is not automatically a defect. For example, a rule should report “No verification command was detected after source-code changes” only when the evidence makes source-code verification applicable.
 
 An outcome is a separate session-level classification produced by a versioned outcome classifier. Findings and outcomes are stored independently so either rule set can be rebuilt after an upgrade without re-importing the source.
@@ -440,14 +464,18 @@ Classification is conservative. `Successful` means the recorded session contains
 
 ### Application services
 
-Application services form the shared use-case boundary for both interfaces. They coordinate storage, search, analysis results, repository evidence, redaction, and exports. Expected capabilities include:
+Application services form the shared use-case boundary for both interfaces.
+Current services:
 
-- list repositories and sessions;
+- list sessions and library totals;
 - read a session timeline and event details;
-- inspect file impact, commands, failures, and findings;
+- inspect retained Unknown evidence explicitly;
 - search across imported sessions;
-- initiate imports and observe progress;
-- export a redacted report.
+- initiate imports and observe progress; and
+- inspect and operate projection lifecycle state.
+
+Planned services may add repository evidence, deterministic findings and
+outcomes, aggregates, and local redacted exports.
 
 Services return canonical view data rather than UI-specific components. Presentation concerns stay in `tui` and `web`.
 
@@ -455,7 +483,10 @@ Services return canonical view data rather than UI-specific components. Presenta
 
 The Bubble Tea TUI is the default interface. The web interface uses `net/http`, templ, htmx partial updates where useful, and minimal JavaScript. Both expose the same underlying evidence even when their navigation and rendering differ.
 
-The HTTP server listens on localhost by default. Session IDs, file paths, queries, and all rendered source content are untrusted inputs. Handlers validate identifiers and paths, templ escapes dynamic HTML content, and exported reports pass through redaction before output-specific rendering.
+The HTTP server listens on localhost by default. Session IDs, file paths,
+queries, and all rendered source content are untrusted inputs. Handlers validate
+identifiers and paths, and templ escapes dynamic HTML content. Future export
+renderers must apply redaction and output-specific sanitization.
 
 ## Dependency direction
 
@@ -478,7 +509,7 @@ cmd/agentsession
        +--------+-------------------+              |
        |        |          |        |              |
        v        v          v        v              |
-   importer   search    analysis   export          |
+   importer   search   analysis*  export*          |
        |                   |                       |
        +-------------------+                       |
                 |                                  |
@@ -486,10 +517,16 @@ cmd/agentsession
               domain                               |
                                                    |
  implementations of consumer-owned interfaces -----+
-   adapters      SQLite storage      Git CLI
+   adapters      SQLite storage      Git CLI*
 ```
 
-Presentation calls application services; importer and analysis operate on domain types. Adapters implement source-format interfaces, SQLite implements storage and query interfaces, and the controlled Git CLI wrapper implements Git evidence interfaces. Application and domain code do not depend directly on SQLite, FTS5, or process execution.
+`*` Planned capability.
+
+Presentation calls application services; importer and future analysis operate
+on domain types. Adapters implement source-format interfaces, and SQLite
+implements storage and query interfaces. A future controlled Git CLI wrapper
+will implement consumer-owned Git evidence interfaces. Application and domain
+code do not depend directly on SQLite, FTS5, or process execution.
 
 The diagram expresses architectural ownership, not a requirement for every package to import `model` directly. In particular:
 
@@ -504,34 +541,38 @@ The diagram expresses architectural ownership, not a requirement for every packa
 
 Cycles between capability packages are architectural defects and should be resolved by moving shared types inward or defining a consumer-owned interface.
 
-## Target repository layout
+## Repository layout
 
 ```text
 cmd/agentsession/        process entry point
 internal/
   app/                   shared application services and wiring
+  cli/                   command definitions and process entry behavior
   model/                 canonical domain and event types
   adapter/
     claude/              Claude Code format
     codex/               Codex CLI format
     opencode/            OpenCode format
-  discovery/             source location and change detection
+  adaptertest/            shared sanitized adapter fixtures
+  discovery/             source location and candidate discovery
   importer/              import orchestration and checkpoints
-  analysis/              deterministic findings and outcomes
-  git/                   allowlisted read-only Git operations
-  storage/sqlite/         SQLite repositories and migrations
+  projection/            derived-data lifecycle management
+  storage/
+    sqlite/              SQLite repositories and embedded migrations
   search/                query parsing and filter validation
   redaction/             secret detection and removal
   sanitization/          output-context safety transformations
-  export/                redacted report generation
   tui/                   Bubble Tea presentation
   web/                   HTTP, templ components, and static assets
-migrations/              embedded ordered database migrations
-fixtures/                 sanitized adapter and analysis fixtures
 docs/decisions/           architecture decision records
 ```
 
-Directories should be introduced with working code rather than created as empty placeholders. A capability remains within its owning package until a demonstrated boundary justifies splitting it further.
+Planned capabilities may introduce cohesive `analysis`, `git`, and `export`
+packages when working code requires those boundaries. Fixtures remain beside
+the capability they test, and migrations remain owned by SQLite storage.
+Directories should not be introduced as empty placeholders. A capability
+remains within its owning package until a demonstrated boundary justifies
+splitting it further.
 
 ## Cross-cutting concerns
 
@@ -539,14 +580,20 @@ Directories should be introduced with working code rather than created as empty 
 
 Agent session files and repositories belong to the user and are immutable inputs. AgentSession owns only its configuration, indexes, database, caches, and exports. These are stored outside source session directories and inspected repositories.
 
-Session content can contain secrets in prompts, environment output, commands, patches, and paths. Logs avoid raw records by default. User-facing exports are redacted, explicitly initiated, and written only to the requested local destination.
+Session content can contain secrets in prompts, environment output, commands,
+patches, and paths. Logs avoid raw records by default. Any future user-facing
+export must be explicitly initiated, redacted, and written only to the
+requested local destination.
 
 Redaction and sanitization are separate operations:
 
 - Redaction detects and removes secrets such as API keys, passwords, tokens, authorization headers, and private keys.
 - Sanitization prevents an output channel from interpreting untrusted content. It addresses HTML injection and terminal controls including ANSI escapes, OSC clipboard commands, terminal-title changes, deceptive hyperlinks, and bidirectional control characters.
 
-Exports operate on structured data, redact it before rendering, and then use an output-specific renderer for HTML, JSON, or Markdown. Renderers must escape or sanitize for their destination even after redaction; redaction is not an interface-security boundary.
+Future exports should operate on structured data, redact it before rendering,
+and then use an output-specific renderer. Renderers must escape or sanitize for
+their destination even after redaction; redaction is not an interface-security
+boundary.
 
 No raw or normalized session content is ever written directly to a terminal. All TUI text, diagnostics containing source content, previews, and terminal-bound exports pass through the terminal sanitizer immediately before rendering. This is a system invariant enforced at terminal output boundaries, not an optional presentation detail.
 
@@ -562,7 +609,10 @@ Background discovery and imports are bounded and cancellable. A single source is
 
 ### Distribution
 
-Templates, CSS, migrations, and required static assets are embedded with `go:embed`. The released executable does not require a Node runtime, external database, or frontend service. GoReleaser produces native binaries for supported Linux, macOS, and Windows targets with build metadata injected at link time.
+Templates, CSS, migrations, and required static assets are embedded or compiled
+into the executable. The executable does not require a Node runtime, external
+database, or frontend service. Automated cross-platform release packaging,
+intended to use GoReleaser, remains planned.
 
 ## Extending the system
 
@@ -575,6 +625,9 @@ To add a source adapter:
 5. Verify shared storage, analysis, TUI, and web behavior without source-specific branches.
 
 To add an analysis rule:
+
+> Analysis is planned; this sequence defines the boundary future work should
+> preserve.
 
 1. Define the precise canonical evidence the rule consumes.
 2. Produce a stable rule identifier and version, applicability state, severity where applicable, explanation, and related event IDs.

@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted; the explicit recovery decision is superseded by ADR-004.
+Accepted
+
+The explicit recovery behavior is superseded by
+[ADR-004](004-adapter-checkpoints-and-staged-reconciliation.md). The batching,
+verification, and canonical-versus-projection boundaries remain accepted.
 
 ## Context
 

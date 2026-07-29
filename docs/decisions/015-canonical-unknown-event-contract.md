@@ -1,8 +1,8 @@
-# ADR 015: Canonical Unknown-event contract
+# ADR-015: Canonical Unknown-event contract
 
 ## Status
 
-Accepted.
+Accepted
 
 ## Context
 

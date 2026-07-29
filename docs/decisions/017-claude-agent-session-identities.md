@@ -1,5 +1,9 @@
 # ADR-017: Give Claude agent logs distinct canonical session identities
 
+## Status
+
+Accepted
+
 ## Context
 
 Claude agent and sidechain JSONL files retain the parent `sessionId` while

@@ -222,11 +222,18 @@ make remove-db # remove the index after all AgentSession processes stop
 application and refuses to remove an index that a running AgentSession process
 has open. Set `DATA_DIR` to remove an index created with `--data-dir`.
 
-## Planned architecture
+## Documentation
 
-AgentSession is designed as a modular Go monolith. Source-specific adapters stream records into a canonical event model, followed by deterministic analysis and SQLite-backed search. The TUI, web interface, and import command share the same application runtime and services.
+AgentSession is designed as a modular Go monolith. Source-specific adapters
+stream records into a canonical event model, and the TUI, web interface, and
+import command share the same application runtime and services.
 
-See [the architecture guide](docs/ARCHITECTURE.md) for the target system design, [ADR-001](docs/decisions/001-modular-go-application.md) for the decision behind it, and [AGENTS.md](AGENTS.md) for contribution guidance.
+- [Documentation guide](docs/README.md)
+- [Product contract](docs/PRODUCT.md)
+- [Current state](docs/CURRENT_STATE.md)
+- [Architecture guide](docs/ARCHITECTURE.md)
+- [Architecture decision register](docs/decisions/README.md)
+- [Contribution rules](AGENTS.md)
 
 ## Privacy
 
