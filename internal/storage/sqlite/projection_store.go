@@ -19,6 +19,8 @@ var _ projection.Reader = (*ImportStore)(nil)
 
 const projectionLeaseDuration = time.Minute
 
+// Register persists projection definitions and creates or refreshes the
+// corresponding per-session lifecycle states.
 func (s *ImportStore) Register(ctx context.Context, definitions []projection.Definition) (err error) {
 	seen := make(map[projection.Kind]struct{}, len(definitions))
 	for _, definition := range definitions {
@@ -93,6 +95,7 @@ func (s *ImportStore) Register(ctx context.Context, definitions []projection.Def
 	return nil
 }
 
+// CanonicalRevision returns the current canonical revision for a session.
 func (s *ImportStore) CanonicalRevision(ctx context.Context, sessionID model.SessionID) (int64, bool, error) {
 	if strings.TrimSpace(string(sessionID)) == "" {
 		return 0, false, errors.New("sqlite projection store: canonical revision: session ID is required")
@@ -108,6 +111,8 @@ func (s *ImportStore) CanonicalRevision(ctx context.Context, sessionID model.Ses
 	return revision, true, nil
 }
 
+// States returns the projection lifecycle states for a session in stable
+// presentation order.
 func (s *ImportStore) States(ctx context.Context, sessionID model.SessionID) ([]projection.State, error) {
 	if strings.TrimSpace(string(sessionID)) == "" {
 		return nil, errors.New("sqlite projection store: states: session ID is required")
@@ -167,6 +172,7 @@ func (s *ImportStore) States(ctx context.Context, sessionID model.SessionID) ([]
 	return states, nil
 }
 
+// Claim acquires pending, failed, or expired projection work for one session.
 func (s *ImportStore) Claim(ctx context.Context, sessionID model.SessionID, kind projection.Kind) (projection.Claim, bool, error) {
 	if !kind.Valid() || strings.TrimSpace(string(sessionID)) == "" {
 		return projection.Claim{}, false, errors.New("sqlite projection store: claim: valid session ID and kind are required")
@@ -196,6 +202,7 @@ func (s *ImportStore) Claim(ctx context.Context, sessionID model.SessionID, kind
 	return claim, true, nil
 }
 
+// Renew extends the lease for a projection claim that is still current.
 func (s *ImportStore) Renew(ctx context.Context, claim projection.Claim) (bool, error) {
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(ctx, `
@@ -211,6 +218,8 @@ func (s *ImportStore) Renew(ctx context.Context, claim projection.Claim) (bool, 
 	return affected == 1, err
 }
 
+// Complete publishes a successful claim only while its canonical revision and
+// projection target remain current.
 func (s *ImportStore) Complete(ctx context.Context, claim projection.Claim) (bool, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.ExecContext(ctx, `
@@ -229,6 +238,7 @@ func (s *ImportStore) Complete(ctx context.Context, claim projection.Claim) (boo
 	return affected == 1, err
 }
 
+// Fail records a bounded diagnostic for a claim that is still current.
 func (s *ImportStore) Fail(ctx context.Context, claim projection.Claim, diagnostic projection.Diagnostic) (bool, error) {
 	code, summary := boundedDiagnostic(diagnostic.Code, diagnostic.Summary)
 	at := diagnostic.At.UTC()
@@ -251,6 +261,7 @@ func (s *ImportStore) Fail(ctx context.Context, claim projection.Claim, diagnost
 	return affected == 1, err
 }
 
+// Release returns an active claim to pending state without recording failure.
 func (s *ImportStore) Release(ctx context.Context, claim projection.Claim) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE session_projection_states SET status = 'pending', run_token = NULL, started_at = NULL, lease_expires_at = NULL, updated_at = ?
@@ -262,6 +273,8 @@ func (s *ImportStore) Release(ctx context.Context, claim projection.Claim) error
 	return nil
 }
 
+// Invalidate marks one or all projection kinds pending at the session's
+// current canonical revision.
 func (s *ImportStore) Invalidate(ctx context.Context, sessionID model.SessionID, kind *projection.Kind) error {
 	query := `
 		UPDATE session_projection_states SET status = 'pending', target_revision = (
@@ -308,5 +321,6 @@ func parseProjectionTime(value string) (time.Time, error) {
 	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
 		return parsed, nil
 	}
+	// Early migrations used SQLite's default timestamp representation.
 	return time.Parse("2006-01-02 15:04:05", value)
 }

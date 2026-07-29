@@ -1,4 +1,5 @@
-// Package sqlite provides the SQLite database lifecycle and migration foundation.
+// Package sqlite provides AgentSession's SQLite-backed canonical storage,
+// exploration, projection lifecycle, and search repositories.
 package sqlite
 
 import (

@@ -105,6 +105,8 @@ func (s *ImportStore) searchAvailability(ctx context.Context) (search.Availabili
 	return availability, nil
 }
 
+// buildSearchSQL translates an already validated, source-neutral query into
+// parameterized SQL. User values are always returned separately in args.
 func buildSearchSQL(query search.Query, cursor *search.Cursor, limit int) (string, []any) {
 	ranked := query.HasText()
 	var statement strings.Builder
