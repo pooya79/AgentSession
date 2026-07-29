@@ -139,21 +139,6 @@ func messageRoleLabel(role model.MessageRole) string {
 	}
 }
 
-func summaryCategoryTitle(category model.SummaryCategory) string {
-	switch category {
-	case model.SummaryCategoryReasoning:
-		return "Reasoning"
-	case model.SummaryCategoryContext:
-		return "Conversation context"
-	case model.SummaryCategoryPlan:
-		return "Plan update"
-	case model.SummaryCategorySummary:
-		return "Session summary"
-	default:
-		return "Recorded summary"
-	}
-}
-
 func formattedJSON(value string) (string, bool) {
 	var decoded any
 	if json.Unmarshal([]byte(value), &decoded) != nil {

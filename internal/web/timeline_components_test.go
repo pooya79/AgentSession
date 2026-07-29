@@ -31,6 +31,7 @@ func TestTimelineComponentsCoverCanonicalPayloads(t *testing.T) {
 		{"context", model.SummaryData{Category: model.SummaryCategoryContext, Text: "compact"}, []string{"Conversation context", "summary-preview"}},
 		{"plan", model.SummaryData{Category: model.SummaryCategoryPlan, Text: "next"}, []string{"Plan update"}},
 		{"summary", model.SummaryData{Category: model.SummaryCategorySummary, Text: "done"}, []string{"Session summary"}},
+		{"unknown summary category", model.SummaryData{Category: model.SummaryCategory("future"), Text: "recorded"}, []string{"Recorded summary"}},
 		{"valid tool JSON", model.ToolCallData{ToolName: "read", CallID: "c1", Input: `{"path":"x"}`}, []string{"requested", "json-input", "&#34;path&#34;: &#34;x&#34;", "Raw tool input"}},
 		{"invalid tool JSON", model.ToolCallData{ToolName: "read", Input: "{bad"}, []string{"Raw tool input", "{bad"}},
 		{"failed tool", model.ToolResultData{ToolName: "read", IsError: &failed, Output: "no"}, []string{"Tool result", "failed", "Tool output"}},

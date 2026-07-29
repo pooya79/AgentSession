@@ -99,6 +99,7 @@ func TestTimelineSummaryTitlesUseCanonicalCategory(t *testing.T) {
 		{model.SummaryCategoryContext, "Conversation context"},
 		{model.SummaryCategoryPlan, "Plan update"},
 		{model.SummaryCategorySummary, "Session summary"},
+		{model.SummaryCategory("future"), "Recorded summary"},
 	}
 	for _, test := range tests {
 		payload := model.SummaryData{Category: test.category, Text: "text"}

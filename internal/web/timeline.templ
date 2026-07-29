@@ -130,11 +130,11 @@ templ messageCard(message model.MessageData) {
 templ summaryCard(summary model.SummaryData) {
 	<details class={ "activity-card summary-card summary-" + string(summary.Category) }>
 		<summary>
-			<span class="activity-title">{ summaryCategoryTitle(summary.Category) }</span>
+			<span class="activity-title">{ app.SummaryCategoryTitle(summary.Category) }</span>
 			<span class="summary-preview">{ summary.Text }</span>
 		</summary>
 		<div class="expanded-content">
-			<h3>{ summaryCategoryTitle(summary.Category) }</h3>
+			<h3>{ app.SummaryCategoryTitle(summary.Category) }</h3>
 			<pre>{ summary.Text }</pre>
 		</div>
 	</details>

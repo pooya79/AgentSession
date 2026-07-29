@@ -329,16 +329,7 @@ func timelineActivityTitle(payload model.NormalizedData, fallback string) string
 	var title string
 	switch value := payload.(type) {
 	case model.SummaryData:
-		switch value.Category {
-		case model.SummaryCategoryReasoning:
-			title = "Reasoning"
-		case model.SummaryCategoryPlan:
-			title = "Plan update"
-		case model.SummaryCategorySummary:
-			title = "Session summary"
-		default:
-			title = "Conversation context"
-		}
+		title = app.SummaryCategoryTitle(value.Category)
 	case model.ToolCallData:
 		title = "Used tool"
 		if value.ToolName != "" {
