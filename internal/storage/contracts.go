@@ -97,6 +97,9 @@ type ExplorationReader interface {
 	EventEnvelope(context.Context, model.SessionID, model.EventID) (EventEnvelope, bool, error)
 	// EventPayload returns normalized data only for an explicitly selected event.
 	EventPayload(context.Context, model.SessionID, model.EventID) (model.NormalizedData, bool, error)
+	// EventPayloads returns normalized data for a bounded, explicitly selected
+	// set of session-owned events. Missing IDs are omitted from the result.
+	EventPayloads(context.Context, model.SessionID, []model.EventID) (map[model.EventID]model.NormalizedData, error)
 	// Diagnostics returns an exact total with at most the requested number of entries.
 	Diagnostics(context.Context, model.SessionID, *model.EventID, int) (DiagnosticPage, error)
 	// InterpretationCoverage returns exact canonical counts of Unknown events and malformed records for a session.

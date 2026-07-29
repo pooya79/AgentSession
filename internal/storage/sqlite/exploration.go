@@ -315,6 +315,82 @@ func (s *ImportStore) EventPayload(ctx context.Context, sessionID model.SessionI
 	return data, true, nil
 }
 
+// EventPayloads loads normalized payloads for one bounded set of events. The
+// query selects only normalized inline/detached payload columns and never
+// joins retained raw records.
+func (s *ImportStore) EventPayloads(ctx context.Context, sessionID model.SessionID, eventIDs []model.EventID) (map[model.EventID]model.NormalizedData, error) {
+	const maximumBatchSize = 200
+	payloads := make(map[model.EventID]model.NormalizedData, len(eventIDs))
+	if len(eventIDs) == 0 {
+		return payloads, nil
+	}
+	if len(eventIDs) > maximumBatchSize {
+		return nil, fmt.Errorf("sqlite exploration: event payload batch exceeds %d events", maximumBatchSize)
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(eventIDs)), ",")
+	args := make([]any, 0, len(eventIDs)+1)
+	args = append(args, sessionID)
+	for _, eventID := range eventIDs {
+		args = append(args, eventID)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT e.id, e.kind, e.data_json, e.payload_storage, e.retention_policy_version,
+		       p.retention_policy_version, p.storage_encoding, p.original_size, p.content
+		FROM events e
+		LEFT JOIN event_payloads p ON p.event_id = e.id
+		WHERE e.session_id = ? AND e.id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite exploration: event payload batch: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var eventID model.EventID
+		var kind model.EventKind
+		var encoded, payloadStorage string
+		var policyVersion int
+		var detachedPolicy, originalSize sql.NullInt64
+		var storageEncoding sql.NullString
+		var content []byte
+		if err := rows.Scan(
+			&eventID, &kind, &encoded, &payloadStorage, &policyVersion,
+			&detachedPolicy, &storageEncoding, &originalSize, &content,
+		); err != nil {
+			return nil, fmt.Errorf("sqlite exploration: scan event payload batch: %w", err)
+		}
+		if policyVersion != storagecontract.FullRetentionPolicyVersion {
+			return nil, fmt.Errorf("sqlite exploration: event payload %q: unsupported retention policy %d", eventID, policyVersion)
+		}
+		switch payloadStorage {
+		case payloadInline:
+		case payloadDetached:
+			if !detachedPolicy.Valid || !storageEncoding.Valid || !originalSize.Valid {
+				return nil, fmt.Errorf("sqlite exploration: detached event payload %q: missing payload", eventID)
+			}
+			decoded, decodeErr := storagecontract.DecodePayload(storagecontract.EncodedPayload{
+				PolicyVersion: int(detachedPolicy.Int64),
+				Encoding:      storageEncoding.String,
+				OriginalSize:  originalSize.Int64,
+				Content:       content,
+			})
+			if decodeErr != nil {
+				return nil, fmt.Errorf("sqlite exploration: decode event payload %q: %w", eventID, decodeErr)
+			}
+			encoded = string(decoded)
+		default:
+			return nil, fmt.Errorf("sqlite exploration: event payload %q: unsupported storage %q", eventID, payloadStorage)
+		}
+		data, decodeErr := decodeNormalizedData(kind, encoded)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("sqlite exploration: event payload %q: %w", eventID, decodeErr)
+		}
+		payloads[eventID] = data
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite exploration: iterate event payload batch: %w", err)
+	}
+	return payloads, nil
+}
+
 // Diagnostics returns an exact total and a bounded, deterministically ordered sample.
 func (s *ImportStore) Diagnostics(ctx context.Context, sessionID model.SessionID, eventID *model.EventID, limit int) (storagecontract.DiagnosticPage, error) {
 	if limit < 0 {

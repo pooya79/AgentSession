@@ -25,14 +25,27 @@ type sessionsState struct {
 	overviewErr     error
 }
 
-// timelineState owns one bounded event page and its page-local selection.
+// timelineState accumulates bounded chunks into one continuously scrollable
+// timeline. Expansion and retained-evidence inspection are keyed by stable
+// event identity so appends and resizes do not disturb them.
 type timelineState struct {
-	page       app.TimelinePage
-	loading    bool
-	err        error
-	cursor     int
-	cursors    []string
-	pageNumber int
+	page              app.TimelinePage
+	loading           bool
+	err               error
+	cursor            int
+	selected          model.EventID
+	pendingCursor     string
+	requestedCursors  map[string]bool
+	expanded          map[model.EventID]bool
+	inspections       map[model.EventID]app.UnknownEvidenceInspection
+	inspectionErrors  map[model.EventID]error
+	inspectionLoading map[model.EventID]bool
+	viewport          viewport.Model
+	renderRevision    uint64
+	cachedRevision    uint64
+	cachedWidth       int
+	cachedLines       []string
+	cachedRanges      map[model.EventID]timelineCardRange
 }
 
 // detailState retains the last usable detail while a refresh is in flight or

@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -209,6 +210,69 @@ func TestEventWindowAndBatchLocationsStayBoundedAndLightweight(t *testing.T) {
 	}
 	if _, exists := locations["missing"]; exists {
 		t.Fatal("missing event received a location")
+	}
+}
+
+func TestEventPayloadsLoadsInlineAndDetachedWithoutRawEvidence(t *testing.T) {
+	t.Parallel()
+
+	store := openImportStore(t)
+	insertExplorationSession(t, store, "payloads", "codex", nil, nil)
+	insertExplorationSession(t, store, "other", "codex", nil, nil)
+	insertExplorationEvent(t, store, "payloads", 0, nil, "message", "inline", `{"Role":"user","Text":"inline text"}`)
+	insertExplorationEvent(t, store, "payloads", 1, nil, "summary", "detached", `{"Text":"placeholder"}`)
+	insertExplorationEvent(t, store, "other", 0, nil, "summary", "wrong session", `{"Text":"wrong session"}`)
+
+	detachedText := strings.Repeat("detached text ", 24000)
+	detached := []byte(`{"Text":` + fmt.Sprintf("%q", detachedText) + `}`)
+	encoded, err := storagecontract.EncodePayload(detached)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`
+		UPDATE events SET data_json = '', payload_storage = 'detached'
+		WHERE id = 'event-payloads-1'
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`
+		INSERT INTO event_payloads (
+			event_id, retention_policy_version, storage_encoding, original_size, content
+		) VALUES ('event-payloads-1', ?, ?, ?, ?)
+	`, encoded.PolicyVersion, encoded.Encoding, encoded.OriginalSize, encoded.Content); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`
+		UPDATE raw_records SET content = ?, original_size = ?
+		WHERE id = 'raw-payloads-0'
+	`, []byte("raw-secret-must-not-cross"), len("raw-secret-must-not-cross")); err != nil {
+		t.Fatal(err)
+	}
+
+	payloads, err := store.EventPayloads(context.Background(), "payloads", []model.EventID{
+		"event-payloads-1", "missing", "event-other-0", "event-payloads-0",
+	})
+	if err != nil || len(payloads) != 2 {
+		t.Fatalf("EventPayloads() = (%#v, %v)", payloads, err)
+	}
+	if got := payloads["event-payloads-0"].(model.MessageData).Text; got != "inline text" {
+		t.Fatalf("inline text = %q", got)
+	}
+	if got := payloads["event-payloads-1"].(model.SummaryData).Text; got != detachedText {
+		t.Fatalf("detached text length = %d, want %d", len(got), len(detachedText))
+	}
+	if strings.Contains(fmt.Sprint(payloads), "raw-secret-must-not-cross") || payloads["event-other-0"] != nil {
+		t.Fatalf("batch leaked excluded evidence: %#v", payloads)
+	}
+
+	tooMany := make([]model.EventID, 201)
+	if _, err := store.EventPayloads(context.Background(), "payloads", tooMany); err == nil {
+		t.Fatal("oversized payload batch error = nil")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := store.EventPayloads(ctx, "payloads", []model.EventID{"event-payloads-0"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled payload batch error = %v", err)
 	}
 }
 

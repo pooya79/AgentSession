@@ -127,12 +127,16 @@ type TimelineRequest struct {
 	Cursor       string
 	Limit        int
 	FocusedEvent model.EventID
+	// IncludePayloads opts this bounded page into normalized payload reads.
+	// Retained raw records are never included.
+	IncludePayloads bool
 }
 
 // TimelinePage contains bounded canonical event summaries and their evidence state.
 type TimelinePage struct {
 	State          EvidenceState
 	Events         []model.EventSummary
+	Payloads       map[model.EventID]model.NormalizedData
 	NextCursor     string
 	Diagnostics    DiagnosticSynopsis
 	FocusedEvent   model.EventID
@@ -284,6 +288,9 @@ func (s *explorationService) ListSessions(ctx context.Context, request ListSessi
 
 // Timeline returns bounded summaries and never treats missing or partial evidence as success.
 func (s *explorationService) Timeline(ctx context.Context, request TimelineRequest) (TimelinePage, error) {
+	if err := ctx.Err(); err != nil {
+		return TimelinePage{}, err
+	}
 	if err := validateIdentifier("session", string(request.SessionID)); err != nil {
 		return TimelinePage{}, err
 	}
@@ -347,6 +354,16 @@ func (s *explorationService) Timeline(ctx context.Context, request TimelineReque
 		}
 	}
 	page := TimelinePage{State: state, Events: rows, Diagnostics: synopsis, FocusedEvent: request.FocusedEvent, Interpretation: coverage}
+	if request.IncludePayloads && len(rows) > 0 {
+		eventIDs := make([]model.EventID, len(rows))
+		for index, event := range rows {
+			eventIDs[index] = event.ID
+		}
+		page.Payloads, err = s.reader.EventPayloads(ctx, request.SessionID, eventIDs)
+		if err != nil {
+			return TimelinePage{}, fmt.Errorf("read timeline payloads for %q: %w", request.SessionID, err)
+		}
+	}
 	if more && len(rows) > 0 {
 		page.NextCursor, err = encodeCursor(cursorEnvelope{Kind: "timeline", SessionID: request.SessionID, Sequence: rows[len(rows)-1].Sequence})
 		if err != nil {

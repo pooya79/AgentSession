@@ -12,6 +12,12 @@ func (m *Model) syncViewports() {
 	width := max(1, m.renderWidth())
 	height := max(1, m.contentHeight())
 
+	timelineLines, timelineRanges := m.timelineContent()
+	m.timelineState.viewport.SetWidth(width)
+	m.timelineState.viewport.SetHeight(max(1, height-len(m.timelineHeaderLines())))
+	m.timelineState.viewport.SetContentLines(timelineLines)
+	m.anchorTimelineSelection(timelineRanges)
+
 	m.detailState.viewport.SetWidth(width)
 	m.detailState.viewport.SetHeight(height)
 	m.detailState.viewport.SetContentLines(sanitizeLines(m.detailContentLines()))
@@ -49,10 +55,20 @@ func (m Model) styleLines(lines []string) []string {
 			safe[index] = styleStatusLine(m.theme, line)
 		case strings.HasPrefix(line, ">"):
 			safe[index] = m.theme.focused.Render(line)
+		case strings.Contains(line, "╭─ You"):
+			safe[index] = m.theme.accent.Render(line)
+		case strings.Contains(line, "╭─ Assistant"):
+			safe[index] = m.theme.info.Render(line)
+		case strings.Contains(line, "╭─ System"):
+			safe[index] = m.theme.muted.Render(line)
 		case strings.Contains(lower, "could not ") || strings.Contains(lower, "unavailable") || strings.Contains(lower, "failed"):
 			safe[index] = m.theme.danger.Render(line)
 		case strings.Contains(lower, "partial") || strings.Contains(lower, "issues") || strings.Contains(lower, "diagnostic"):
 			safe[index] = m.theme.warning.Render(line)
+		case strings.HasPrefix(trimmed, "+") && !strings.HasPrefix(trimmed, "+++"):
+			safe[index] = m.theme.success.Render(line)
+		case strings.HasPrefix(trimmed, "-") && !strings.HasPrefix(trimmed, "---"):
+			safe[index] = m.theme.danger.Render(line)
 		case strings.Contains(lower, "complete") || strings.Contains(lower, "usable"):
 			safe[index] = m.theme.success.Render(line)
 		case strings.HasPrefix(lower, "loading") || strings.Contains(lower, "active"):
@@ -112,9 +128,8 @@ func (m Model) helpLines() []string {
 		"  ↑/↓ or j/k   move one row or line",
 		"  Home/End     jump to the first or last row",
 		"  g/G          jump to the first or last row",
-		"  PgUp/PgDn    scroll long evidence or change bounded pages",
-		"  Enter        open the focused session or event",
-		"  n/p          next or previous bounded page",
+		"  PgUp/PgDn    scroll long evidence",
+		"  Enter        open a session or expand/collapse a timeline card",
 		"",
 		"Actions",
 		"  r            refresh current evidence; rescan from overview screens",
