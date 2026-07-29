@@ -373,6 +373,7 @@ func TestTimelineNearEndAppendsChunksSuppressesDuplicatesAndRetries(t *testing.T
 	}
 	m.timelineState.cursor = 44
 	m.timelineState.selected = m.timelineState.page.Events[44].ID
+	m.timelineState.inspectionLoading["superseded-inspection"] = true
 	services.timeline = app.TimelinePage{
 		State: app.EvidenceComplete,
 		Events: []model.EventSummary{
@@ -389,6 +390,9 @@ func TestTimelineNearEndAppendsChunksSuppressesDuplicatesAndRetries(t *testing.T
 	m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if cmd == nil || !m.timelineState.loading {
 		t.Fatal("near-end navigation did not request continuation")
+	}
+	if m.timelineState.inspectionLoading["superseded-inspection"] {
+		t.Fatal("prefetch left a canceled inspection pending")
 	}
 	msg := cmd().(timelineLoadedMsg)
 	if len(services.timelineCalls) != 1 || services.timelineCalls[0].Cursor != "next-50" ||
@@ -441,8 +445,38 @@ func TestTimelineUnknownInspectionStaysInline(t *testing.T) {
 		t.Fatal("Unknown inspection did not remain on timeline")
 	}
 	m, _ = updateModel(t, m, cmd().(unknownEvidenceLoadedMsg))
-	if got := strings.Join(m.timelineContentLines(), "\n"); !strings.Contains(got, "redacted evidence") {
+	lines, _ := m.timelineContent()
+	if got := strings.Join(lines, "\n"); !strings.Contains(got, "redacted evidence") {
 		t.Fatalf("inline inspection = %q", got)
+	}
+}
+
+func TestTimelineInspectionResponseRoutesByPendingEventAcrossScreens(t *testing.T) {
+	event := testEvent("event-unknown", 1)
+	event.Kind = model.EventKindUnknown
+	m := New(context.Background(), &servicesStub{})
+	m.screen = projectionsScreen
+	m.timelineState.inspectionLoading[event.ID] = true
+
+	inspection := app.UnknownEvidenceInspection{
+		State: app.EvidenceComplete, EventID: event.ID, Text: "bounded evidence",
+	}
+	m, _ = updateModel(t, m, unknownEvidenceLoadedMsg{
+		generation: m.requestGeneration,
+		eventID:    event.ID,
+		inspection: inspection,
+	})
+	if m.timelineState.inspectionLoading[event.ID] ||
+		m.timelineState.inspections[event.ID].Text != "bounded evidence" ||
+		!m.timelineState.expanded[event.ID] {
+		t.Fatalf("routed timeline inspection = loading %v, inspection %#v, expanded %v",
+			m.timelineState.inspectionLoading[event.ID],
+			m.timelineState.inspections[event.ID],
+			m.timelineState.expanded[event.ID],
+		)
+	}
+	if m.detailState.inspection.EventID != "" {
+		t.Fatalf("timeline response leaked into detail state: %#v", m.detailState.inspection)
 	}
 }
 

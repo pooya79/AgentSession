@@ -342,6 +342,7 @@ func (m *Model) replaceRequest() context.Context {
 	if m.requestCancel != nil {
 		m.requestCancel()
 	}
+	m.clearSupersededInspections()
 	m.requestGeneration++
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.requestCtx = ctx
@@ -354,6 +355,7 @@ func (m *Model) cancelRequest() {
 	if m.requestCancel != nil {
 		m.requestCancel()
 	}
+	m.clearSupersededInspections()
 	m.requestGeneration++
 	m.requestCtx = nil
 	m.requestCancel = nil
@@ -452,6 +454,7 @@ func (m *Model) reloadTimeline() tea.Cmd {
 	m.timelineState.loading = true
 	m.timelineState.err = nil
 	m.timelineState.pendingCursor = ""
+	m.invalidateTimelineRender()
 	return m.startSpinner(loadTimeline(ctx, m.services, m.requestGeneration, m.sessionsState.selected, ""))
 }
 
@@ -469,7 +472,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.syncViewports()
-		m.anchorTimelineSelection()
 		return m, nil
 	case tea.BackgroundColorMsg:
 		m.theme = newTheme(msg.IsDark())
@@ -538,8 +540,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.timelineState.selected = m.timelineState.page.Events[m.timelineState.cursor].ID
 			}
 		}
+		m.invalidateTimelineRender()
 		m.syncViewports()
-		m.anchorTimelineSelection()
 		return m, nil
 	case detailLoadedMsg:
 		if msg.generation != m.requestGeneration {
@@ -556,15 +558,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation != m.requestGeneration {
 			return m, nil
 		}
-		if m.screen == timelineScreen {
-			m.timelineState.inspectionLoading[msg.eventID] = false
+		if m.timelineState.inspectionLoading[msg.eventID] {
+			delete(m.timelineState.inspectionLoading, msg.eventID)
 			m.timelineState.inspectionErrors[msg.eventID] = visibleError(msg.err)
 			if msg.err == nil {
 				m.timelineState.inspections[msg.eventID] = msg.inspection
 				m.timelineState.expanded[msg.eventID] = true
 			}
+			m.invalidateTimelineRender()
 			m.syncViewports()
-			m.anchorTimelineSelection()
+			return m, nil
+		}
+		if m.screen != detailScreen || m.detailState.detail.Event.ID != msg.eventID {
 			return m, nil
 		}
 		m.detailState.inspectionLoading = false
@@ -837,6 +842,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 				ctx := m.replaceRequest()
 				m.timelineState.inspectionErrors[event.ID] = nil
 				m.timelineState.inspectionLoading[event.ID] = true
+				m.invalidateTimelineRender()
 				return m, m.startSpinner(loadUnknownEvidence(
 					ctx, m.services, m.requestGeneration, m.sessionsState.selected, event.ID,
 				))
@@ -1039,8 +1045,8 @@ func (m *Model) move(delta int) {
 		if len(m.timelineState.page.Events) > 0 {
 			m.timelineState.cursor = clamp(m.timelineState.cursor+delta, 0, len(m.timelineState.page.Events)-1)
 			m.timelineState.selected = m.timelineState.page.Events[m.timelineState.cursor].ID
+			m.invalidateTimelineRender()
 			m.syncViewports()
-			m.anchorTimelineSelection()
 		}
 	case projectionsScreen:
 		if len(m.projectionsState.status.Projections) > 0 {
@@ -1081,8 +1087,8 @@ func (m *Model) moveToBoundary(last bool) {
 			m.timelineState.cursor = len(m.timelineState.page.Events) - 1
 		}
 		m.timelineState.selected = m.timelineState.page.Events[m.timelineState.cursor].ID
+		m.invalidateTimelineRender()
 		m.syncViewports()
-		m.anchorTimelineSelection()
 	case projectionsScreen:
 		if len(m.projectionsState.status.Projections) == 0 {
 			return
@@ -1190,6 +1196,7 @@ func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 			Timestamp: result.Timestamp, Kind: result.Kind, Summary: result.Summary,
 		}}}
 		m.timelineState.cursor = 0
+		m.invalidateTimelineRender()
 		m.screen = detailScreen
 		m.detailState.detail = app.EventDetail{}
 		m.detailState.loading = true
@@ -1214,8 +1221,8 @@ func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 		if timelinePayloadTruncatable(m.timelineState.page.Payloads[event.ID]) ||
 			m.timelineState.inspections[event.ID].EventID != "" {
 			m.timelineState.expanded[event.ID] = !m.timelineState.expanded[event.ID]
+			m.invalidateTimelineRender()
 			m.syncViewports()
-			m.anchorTimelineSelection()
 		}
 		return m, m.prefetchTimelineIfNeeded()
 	}
@@ -1540,8 +1547,9 @@ func padCell(value string, width int) string {
 	return value + strings.Repeat(" ", max(0, width-ansi.StringWidth(value)))
 }
 
-// timelineLines renders the accumulated card timeline through one viewport.
-func (m Model) timelineLines() []string {
+// timelineHeaderLines is shared by viewport sizing and timeline rendering so
+// optional diagnostics and continuation failures reserve exactly their rows.
+func (m Model) timelineHeaderLines() []string {
 	lines := []string{"Timeline · session " + string(m.sessionsState.selected)}
 	for _, session := range m.sessionsState.page.Sessions {
 		if session.ID == m.sessionsState.selected {
@@ -1551,6 +1559,21 @@ func (m Model) timelineLines() []string {
 			break
 		}
 	}
+	if len(m.timelineState.page.Events) > 0 {
+		if m.timelineState.err != nil {
+			lines = append(lines, "Timeline continuation failed; loaded cards remain available. Move near the end or press r to retry.")
+		}
+		if m.timelineState.page.State == app.EvidencePartial {
+			lines = append(lines, diagnosticSummary(m.timelineState.page.Diagnostics))
+		}
+		lines = append(lines, "")
+	}
+	return lines
+}
+
+// timelineLines renders the accumulated card timeline through one viewport.
+func (m Model) timelineLines() []string {
+	lines := m.timelineHeaderLines()
 	switch {
 	case m.timelineState.loading && len(m.timelineState.page.Events) == 0:
 		return append(lines, "", m.spinner.View()+" Loading timeline events…")
@@ -1564,13 +1587,6 @@ func (m Model) timelineLines() []string {
 		}
 		return append(lines, "", "This session has no normalized events.")
 	}
-	if m.timelineState.err != nil {
-		lines = append(lines, "Timeline continuation failed; loaded cards remain available. Move near the end or press r to retry.")
-	}
-	if m.timelineState.page.State == app.EvidencePartial {
-		lines = append(lines, diagnosticSummary(m.timelineState.page.Diagnostics))
-	}
-	lines = append(lines, "")
 	lines = append(lines, strings.Split(m.timelineState.viewport.View(), "\n")...)
 	return lines
 }

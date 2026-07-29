@@ -41,6 +41,11 @@ type timelineState struct {
 	inspectionErrors  map[model.EventID]error
 	inspectionLoading map[model.EventID]bool
 	viewport          viewport.Model
+	renderRevision    uint64
+	cachedRevision    uint64
+	cachedWidth       int
+	cachedLines       []string
+	cachedRanges      map[model.EventID]timelineCardRange
 }
 
 // detailState retains the last usable detail while a refresh is in flight or

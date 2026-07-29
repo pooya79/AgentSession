@@ -31,7 +31,14 @@ func (m *Model) resetTimelineState() {
 		inspectionErrors:  make(map[model.EventID]error),
 		inspectionLoading: make(map[model.EventID]bool),
 		viewport:          timelineViewport,
+		renderRevision:    1,
 	}
+}
+
+func (m *Model) invalidateTimelineRender() {
+	m.timelineState.renderRevision++
+	m.timelineState.cachedLines = nil
+	m.timelineState.cachedRanges = nil
 }
 
 func (m *Model) appendTimelinePage(next app.TimelinePage) {
@@ -63,6 +70,7 @@ func (m *Model) appendTimelinePage(next app.TimelinePage) {
 	m.timelineState.page.State = next.State
 	m.timelineState.page.Diagnostics = next.Diagnostics
 	m.timelineState.page.Interpretation = next.Interpretation
+	m.invalidateTimelineRender()
 }
 
 func (m *Model) prefetchTimelineIfNeeded() tea.Cmd {
@@ -82,16 +90,32 @@ func (m *Model) prefetchTimelineIfNeeded() tea.Cmd {
 	m.timelineState.err = nil
 	m.timelineState.pendingCursor = next
 	m.timelineState.requestedCursors[next] = true
+	m.invalidateTimelineRender()
 	return m.startSpinner(loadTimeline(
 		ctx, m.services, m.requestGeneration, m.sessionsState.selected, next,
 	))
 }
 
-func (m *Model) anchorTimelineSelection() {
+// clearSupersededInspections releases retry guards for inspection reads
+// canceled whenever the shared evidence request is replaced.
+func (m *Model) clearSupersededInspections() {
+	changed := false
+	for eventID, loading := range m.timelineState.inspectionLoading {
+		if loading {
+			delete(m.timelineState.inspectionLoading, eventID)
+			changed = true
+		}
+	}
+	if changed {
+		m.invalidateTimelineRender()
+	}
+	m.detailState.inspectionLoading = false
+}
+
+func (m *Model) anchorTimelineSelection(ranges map[model.EventID]timelineCardRange) {
 	if m.screen != timelineScreen || m.timelineState.selected == "" {
 		return
 	}
-	_, ranges := m.timelineContent()
 	card, ok := ranges[m.timelineState.selected]
 	if !ok {
 		return
@@ -112,15 +136,15 @@ func (m *Model) anchorTimelineSelection() {
 	}
 }
 
-func (m Model) timelineContentLines() []string {
-	lines, _ := m.timelineContent()
-	return lines
-}
-
-func (m Model) timelineContent() ([]string, map[model.EventID]timelineCardRange) {
+func (m *Model) timelineContent() ([]string, map[model.EventID]timelineCardRange) {
+	width := max(20, m.renderWidth()-2)
+	if m.timelineState.cachedLines != nil &&
+		m.timelineState.cachedRevision == m.timelineState.renderRevision &&
+		m.timelineState.cachedWidth == width {
+		return m.timelineState.cachedLines, m.timelineState.cachedRanges
+	}
 	lines := make([]string, 0, len(m.timelineState.page.Events)*4)
 	ranges := make(map[model.EventID]timelineCardRange, len(m.timelineState.page.Events))
-	width := max(20, m.renderWidth()-2)
 	for index, event := range m.timelineState.page.Events {
 		start := len(lines)
 		card := timelineCardLines(
@@ -138,12 +162,16 @@ func (m Model) timelineContent() ([]string, map[model.EventID]timelineCardRange)
 		lines = append(lines, "")
 	}
 	if m.timelineState.loading && len(m.timelineState.page.Events) > 0 {
-		lines = append(lines, m.spinner.View()+" Loading more events…")
+		lines = append(lines, "Loading more events…")
 	} else if m.timelineState.page.NextCursor == "" && len(m.timelineState.page.Events) > 0 {
 		lines = append(lines, fmt.Sprintf("End of timeline · %d events loaded", len(m.timelineState.page.Events)))
 	} else if len(m.timelineState.page.Events) > 0 {
 		lines = append(lines, fmt.Sprintf("%d events loaded · more available", len(m.timelineState.page.Events)))
 	}
+	m.timelineState.cachedRevision = m.timelineState.renderRevision
+	m.timelineState.cachedWidth = width
+	m.timelineState.cachedLines = lines
+	m.timelineState.cachedRanges = ranges
 	return lines, ranges
 }
 
