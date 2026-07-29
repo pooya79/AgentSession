@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -178,6 +179,7 @@ func TestSessionsDashboardSanitizesHostileFieldsAndRestoresSelection(t *testing.
 func TestSearchScreenSanitizesResults(t *testing.T) {
 	m := New(context.Background(), &servicesStub{})
 	m.screen = searchScreen
+	m.width, m.height = 100, 24
 	m.searchState.page = app.SearchPage{
 		State:        app.EvidenceComplete,
 		Availability: app.SearchAvailability{State: app.EvidenceComplete, Sessions: 1, Usable: 1},
@@ -191,5 +193,119 @@ func TestSearchScreenSanitizesResults(t *testing.T) {
 	content := m.View().Content
 	if strings.Contains(content, "attacker.invalid") || strings.Contains(content, "\x1b]8;") || strings.Contains(content, "\x1b[31mhostile") {
 		t.Fatalf("hostile search result survived terminal sanitization: %q", content)
+	}
+}
+
+func TestSearchScreenResponsiveCardsKeepSelectionVisible(t *testing.T) {
+	activity := time.Date(2026, 7, 25, 12, 30, 0, 0, time.FixedZone("test", 3*60*60))
+	results := make([]app.SearchResult, 12)
+	for index := range results {
+		results[index] = app.SearchResult{
+			SessionID:        model.SessionID(fmt.Sprintf("session-%02d", index+1)),
+			Title:            fmt.Sprintf("Session %02d", index+1),
+			AgentName:        "codex",
+			Preview:          fmt.Sprintf("Work requested in session %02d", index+1),
+			LastActivityAt:   &activity,
+			EventCount:       40 + int64(index),
+			MatchCount:       2,
+			BestMatchSummary: "Command matched the query",
+			Snippet:          "go test ./internal/tui completed successfully",
+		}
+	}
+	m := New(context.Background(), &servicesStub{})
+	m.screen = searchScreen
+	m.searchState.query = "go test"
+	m.searchState.cursor = 10
+	m.searchState.page = app.SearchPage{
+		State:          app.EvidenceComplete,
+		Availability:   app.SearchAvailability{State: app.EvidenceComplete, Sessions: 12, Usable: 12},
+		Results:        results,
+		PreviousCursor: "previous",
+		NextCursor:     "next",
+	}
+
+	for _, test := range []struct {
+		name   string
+		width  int
+		height int
+		want   []string
+	}{
+		{
+			name: "wide", width: 100, height: 22,
+			want: []string{
+				"Filters · session: kind:", "> Session 11", "2026-07-25 09:30 UTC",
+				"2 matching events / 50 events", "Work requested in session 11",
+				"Command matched the query", "Result 11/12",
+				"previous page", "next page", "Enter timeline",
+			},
+		},
+		{
+			name: "narrow", width: 60, height: 16,
+			want: []string{
+				"> Session 11", "CODEX", "Match · Command matched",
+				"Result 11/12", "previous page · next page", "Enter timeline",
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			copy := m
+			copy.width, copy.height = test.width, test.height
+			content := ansi.Strip(copy.View().Content)
+			for _, want := range test.want {
+				if !strings.Contains(content, want) {
+					t.Fatalf("view missing %q:\n%s", want, content)
+				}
+			}
+			if strings.Contains(content, "> Session 01") {
+				t.Fatalf("view rendered the first result as selected:\n%s", content)
+			}
+			for _, line := range strings.Split(content, "\n") {
+				if width := ansi.StringWidth(line); width > test.width {
+					t.Fatalf("line width %d exceeds %d: %q", width, test.width, line)
+				}
+			}
+		})
+	}
+}
+
+func TestSearchScreenFallbacksAvailabilityAndRequestStates(t *testing.T) {
+	m := New(context.Background(), &servicesStub{})
+	m.screen = searchScreen
+	m.width, m.height = 90, 24
+	m.searchState.page = app.SearchPage{
+		State: app.EvidencePartial,
+		Availability: app.SearchAvailability{
+			State: app.EvidencePartial, Sessions: 4, Usable: 2,
+		},
+		Results: []app.SearchResult{{
+			SessionID: "fallback-session", AgentName: "", MatchCount: 1, EventCount: 3,
+		}},
+	}
+	content := ansi.Strip(m.View().Content)
+	for _, want := range []string{
+		"Partial · 2/4 sessions searchable · 2 unavailable",
+		"> fallback-session", "AGENT UNREPORTED", "—", "Matching evidence",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("fallback view missing %q:\n%s", want, content)
+		}
+	}
+
+	m.searchState.page = app.SearchPage{
+		State:        app.EvidenceUnavailable,
+		Availability: app.SearchAvailability{State: app.EvidenceUnavailable, Sessions: 4},
+	}
+	if content := ansi.Strip(m.View().Content); !strings.Contains(content, "Unavailable · no imported session") {
+		t.Fatalf("unavailable view = %q", content)
+	}
+
+	m.searchState.loading = true
+	if content := ansi.Strip(m.View().Content); !strings.Contains(content, "Searching…") {
+		t.Fatalf("loading view = %q", content)
+	}
+	m.searchState.loading = false
+	m.searchState.err = errors.New("projection read failed")
+	if content := ansi.Strip(m.View().Content); !strings.Contains(content, "Search could not be completed: projection read failed") {
+		t.Fatalf("error view = %q", content)
 	}
 }
