@@ -50,7 +50,7 @@ func TestNoJavaScriptDashboardIndexingAndFocusedTimeline(t *testing.T) {
 	handler := NewHandler(services)
 	dashboard := request(t, handler, http.MethodGet, "/?cursor=opaque&limit=17", nil, nil)
 	body := dashboard.Body.String()
-	for _, want := range []string{"Sessions", ">1</strong><span>Sessions", ">7</strong><span>Events", "Previous", "Next", "Indexing details", "&lt;script&gt;unsafe"} {
+	for _, want := range []string{"Sessions", ">1</strong><span>Sessions", ">7</strong><span>Events", "Previous", "Next", "Indexing details", "Summary / first message", `data-label="Summary / first message"`, "&lt;script&gt;unsafe"} {
 		if dashboard.Code != http.StatusOK || !strings.Contains(body, want) {
 			t.Fatalf("dashboard status/body missing %q: %d %q", want, dashboard.Code, body)
 		}

@@ -87,6 +87,7 @@ templ sessionsTable(page app.SessionPage) {
 				<span role="columnheader">Activity</span>
 				<span role="columnheader">Agent</span>
 				<span role="columnheader">Session</span>
+				<span role="columnheader">Summary / first message</span>
 				<span role="columnheader">Events</span>
 				<span role="columnheader">Evidence</span>
 			</div>
@@ -96,13 +97,17 @@ templ sessionsTable(page app.SessionPage) {
 					<span role="cell" data-label="Agent" class="agent">{ session.AgentName }</span>
 					<span role="cell" data-label="Session" class="session-copy">
 						<a href={ templ.URL(sessionURL(session.ID)) }>{ sessionTitle(session) }</a>
-						if session.Preview != "" {
-							<small>{ session.Preview }</small>
-						}
 						<details class="projection-summary">
 							<summary>Derived data</summary>
 							<span>{ strconvFormatInt(session.Projections.Usable) } usable · { strconvFormatInt(session.Projections.Pending) } pending · { strconvFormatInt(session.Projections.Running) } running · { strconvFormatInt(session.Projections.Failed) } failed · { strconvFormatInt(session.Projections.Stale) } stale · { strconvFormatInt(session.Projections.Unimplemented) } unavailable</span>
 						</details>
+					</span>
+					<span role="cell" data-label="Summary / first message" class="session-preview">
+						if session.Preview != "" {
+							{ session.Preview }
+						} else {
+							<span aria-label="Unavailable">—</span>
+						}
 					</span>
 					<span role="cell" data-label="Events">{ strconvFormatInt(session.EventCount) }</span>
 					<span role="cell" data-label="Evidence">
