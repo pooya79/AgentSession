@@ -84,7 +84,7 @@ func TestEventKindsAndPayloadValidation(t *testing.T) {
 		PatchData{},
 		UsageData{},
 		ErrorData{},
-		SummaryData{},
+		SummaryData{Category: SummaryCategorySummary},
 		UnknownData{Reason: UnknownUnsupportedRecordKind, OriginalKind: "future"},
 	}
 	kinds := EventKinds()
@@ -140,6 +140,10 @@ func TestEventValidateRejectsInvalidStructure(t *testing.T) {
 		{name: "missing data", mutate: func(e *Event) { e.Data = nil }},
 		{name: "kind mismatch", mutate: func(e *Event) { e.Kind = EventKindCommand }},
 		{name: "bad role", mutate: func(e *Event) { e.Data = MessageData{Role: "developer"} }},
+		{name: "bad summary category", mutate: func(e *Event) {
+			e.Kind = EventKindSummary
+			e.Data = SummaryData{Category: "thinking"}
+		}},
 		{name: "negative usage", mutate: func(e *Event) {
 			e.Kind = EventKindUsage
 			e.Data = UsageData{InputTokens: &negative}
@@ -165,9 +169,9 @@ func TestValidateEventOrderUsesSequenceNotTimestamp(t *testing.T) {
 	later := time.Date(2026, 7, 15, 13, 0, 0, 0, time.UTC)
 	earlier := later.Add(-time.Hour)
 	events := []Event{
-		validEvent("event-1", 2, EventKindSummary, SummaryData{}),
-		validEvent("event-2", 7, EventKindSummary, SummaryData{}),
-		validEvent("event-3", 11, EventKindSummary, SummaryData{}),
+		validEvent("event-1", 2, EventKindSummary, SummaryData{Category: SummaryCategorySummary}),
+		validEvent("event-2", 7, EventKindSummary, SummaryData{Category: SummaryCategorySummary}),
+		validEvent("event-3", 11, EventKindSummary, SummaryData{Category: SummaryCategorySummary}),
 	}
 	events[0].Timestamp = &later
 	events[1].Timestamp = nil

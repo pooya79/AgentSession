@@ -52,7 +52,6 @@ func NewHandler(services app.Services) http.Handler {
 	mux.HandleFunc("GET /events/{event}", h.eventRedirect)
 	mux.HandleFunc("GET /sessions/{session}", h.timeline)
 	mux.HandleFunc("GET /sessions/{session}/fragments/events", h.timelineFragment)
-	mux.HandleFunc("GET /sessions/{session}/fragments/event/{event}", h.eventFragment)
 	mux.HandleFunc("POST /sessions/{session}/fragments/event/{event}/unknown-evidence", h.unknownEvidenceFragment)
 	mux.HandleFunc("GET /sessions/{session}/fragments/projections", h.projectionFragment)
 	mux.HandleFunc("POST /sessions/{session}/projections/retry", h.retryProjections)

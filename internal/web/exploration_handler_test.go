@@ -34,12 +34,14 @@ func TestNoJavaScriptDashboardIndexingAndFocusedTimeline(t *testing.T) {
 		},
 		timeline: func(_ context.Context, request app.TimelineRequest) (app.TimelinePage, error) {
 			timelineRequest = request
-			return app.TimelinePage{State: app.EvidencePartial, FocusedEvent: request.FocusedEvent, Events: []model.EventSummary{{
+			event := model.EventSummary{
 				ID: eventID, SessionID: request.SessionID, Sequence: 7, Kind: model.EventKindMessage, Summary: `<b>escaped</b>`,
-			}}, NextCursor: "more"}, nil
-		},
-		detail: func(_ context.Context, request app.EventDetailRequest) (app.EventDetail, error) {
-			return app.EventDetail{State: app.EvidenceComplete, Event: model.EventSummary{ID: request.EventID}, Payload: model.MessageData{Role: model.MessageRoleUser, Text: "payload"}}, nil
+			}
+			return app.TimelinePage{
+				State: app.EvidencePartial, FocusedEvent: request.FocusedEvent, Events: []model.EventSummary{event},
+				Payloads:   map[model.EventID]model.NormalizedData{eventID: model.MessageData{Role: model.MessageRoleUser, Text: `<b>escaped</b>`}},
+				NextCursor: "more",
+			}, nil
 		},
 		projectionStatus: func(context.Context, model.SessionID) (app.ProjectionStatus, error) {
 			return app.ProjectionStatus{State: app.EvidenceComplete, SessionID: sessionID}, nil
@@ -48,7 +50,7 @@ func TestNoJavaScriptDashboardIndexingAndFocusedTimeline(t *testing.T) {
 	handler := NewHandler(services)
 	dashboard := request(t, handler, http.MethodGet, "/?cursor=opaque&limit=17", nil, nil)
 	body := dashboard.Body.String()
-	for _, want := range []string{"Sessions", ">1</strong><span>Sessions", ">7</strong><span>Events", "Previous", "Next", "Indexing details", "&lt;script&gt;unsafe"} {
+	for _, want := range []string{"Sessions", ">1</strong><span>Sessions", ">7</strong><span>Events", "Previous", "Next", "Indexing details", "Summary / first message", `data-label="Summary / first message"`, "&lt;script&gt;unsafe"} {
 		if dashboard.Code != http.StatusOK || !strings.Contains(body, want) {
 			t.Fatalf("dashboard status/body missing %q: %d %q", want, dashboard.Code, body)
 		}
@@ -59,12 +61,13 @@ func TestNoJavaScriptDashboardIndexingAndFocusedTimeline(t *testing.T) {
 
 	target := sessionURL(sessionID) + "?event=" + url.QueryEscape(string(eventID))
 	timeline := request(t, handler, http.MethodGet, target, nil, nil)
-	if timeline.Code != http.StatusOK || !strings.Contains(timeline.Body.String(), "Normalized payload") ||
+	if timeline.Code != http.StatusOK || !strings.Contains(timeline.Body.String(), "message-user") ||
 		!strings.Contains(timeline.Body.String(), "&lt;b&gt;escaped&lt;/b&gt;") ||
 		!strings.Contains(timeline.Body.String(), "Load more events") {
 		t.Fatalf("timeline = %d %q", timeline.Code, timeline.Body.String())
 	}
-	if timelineRequest.SessionID != sessionID || timelineRequest.FocusedEvent != eventID {
+	if timelineRequest.SessionID != sessionID || timelineRequest.FocusedEvent != eventID ||
+		!timelineRequest.IncludePayloads || timelineRequest.Limit != app.DefaultPageSize {
 		t.Fatalf("Timeline request = %#v", timelineRequest)
 	}
 }
@@ -86,15 +89,14 @@ func TestUnknownEvidenceInspectionIsCSRFProtectedNoStoreAndEscaped(t *testing.T)
 	inspectionState := app.EvidenceComplete
 	services := servicesStub{
 		timeline: func(_ context.Context, request app.TimelineRequest) (app.TimelinePage, error) {
-			return app.TimelinePage{State: app.EvidenceComplete, Events: []model.EventSummary{{
+			event := model.EventSummary{
 				ID: eventID, SessionID: sessionID, Kind: model.EventKindUnknown, Summary: "future",
-			}}}, nil
-		},
-		detail: func(context.Context, app.EventDetailRequest) (app.EventDetail, error) {
-			return app.EventDetail{
-				State:   app.EvidenceComplete,
-				Event:   model.EventSummary{ID: eventID, SessionID: sessionID, Kind: model.EventKindUnknown},
-				Payload: model.UnknownData{Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "future"},
+			}
+			return app.TimelinePage{
+				State: app.EvidenceComplete, Events: []model.EventSummary{event},
+				Payloads: map[model.EventID]model.NormalizedData{eventID: model.UnknownData{
+					Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "future",
+				}},
 			}, nil
 		},
 		inspect: func(context.Context, model.SessionID, model.EventID) (app.UnknownEvidenceInspection, error) {

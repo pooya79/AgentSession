@@ -169,6 +169,10 @@ func TestCurrentFixtureInventoryNormalizesDurableShapes(t *testing.T) {
 	if got[0].SearchableText != "Inspect the relevant package." {
 		t.Fatalf("reasoning summary = %q", got[0].SearchableText)
 	}
+	if got[0].Data.(model.SummaryData).Category != model.SummaryCategoryReasoning ||
+		got[len(got)-1].Data.(model.SummaryData).Category != model.SummaryCategoryPlan {
+		t.Fatalf("summary categories = %#v / %#v", got[0].Data, got[len(got)-1].Data)
+	}
 	for _, event := range got {
 		if strings.Contains(event.SearchableText, "opaque-only-sanitized") {
 			t.Fatal("opaque encrypted reasoning was indexed")

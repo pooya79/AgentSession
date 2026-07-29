@@ -34,7 +34,7 @@ func normalizeRecord(record wireRecord) ([]eventDraft, []diagnosticDraft) {
 	case "user", "assistant":
 		return normalizeMessage(record)
 	case "summary":
-		return []eventDraft{summaryDraft("Claude session summary", record.Summary)}, nil
+		return []eventDraft{summaryDraft("Claude session summary", record.Summary, model.SummaryCategorySummary)}, nil
 	case "system":
 		return normalizeSystem(record)
 	case "progress":
@@ -74,7 +74,11 @@ func normalizeSystem(record wireRecord) ([]eventDraft, []diagnosticDraft) {
 		if !textOK {
 			text = ""
 		}
-		return []eventDraft{summaryDraft("Claude "+strings.ReplaceAll(subtype, "_", " "), text)}, nil
+		category := model.SummaryCategorySummary
+		if subtype == "compact_boundary" {
+			category = model.SummaryCategoryContext
+		}
+		return []eventDraft{summaryDraft("Claude "+strings.ReplaceAll(subtype, "_", " "), text, category)}, nil
 	case "api_error":
 		if !textOK {
 			return nil, []diagnosticDraft{invalidDiagnostic("claude.system.api_error.invalid", "The Claude API error message is malformed.")}
@@ -370,8 +374,8 @@ func messageDraft(role model.MessageRole, value string, sidechain bool) eventDra
 }
 
 // summaryDraft constructs a searchable canonical summary.
-func summaryDraft(label, text string) eventDraft {
-	return eventDraft{kind: model.EventKindSummary, summary: label, searchable: text, data: model.SummaryData{Text: text}}
+func summaryDraft(label, text string, category model.SummaryCategory) eventDraft {
+	return eventDraft{kind: model.EventKindSummary, summary: label, searchable: text, data: model.SummaryData{Category: category, Text: text}}
 }
 
 // provenanceSummary marks sidechain evidence without changing canonical data.

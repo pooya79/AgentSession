@@ -235,7 +235,7 @@ func TestExplorerEvidenceStatesAndExplicitPayload(t *testing.T) {
 		t.Fatalf("Timeline() = (%#v, %v), want unavailable with diagnostics", timeline, err)
 	}
 	stub.envelope = storage.EventEnvelope{EventSummary: model.EventSummary{ID: eventID, SessionID: "session", Kind: model.EventKindSummary, Summary: "summary"}}
-	stub.payload = model.SummaryData{Text: "payload"}
+	stub.payload = model.SummaryData{Category: model.SummaryCategorySummary, Text: "payload"}
 	detail, err := explorer.EventDetail(context.Background(), EventDetailRequest{SessionID: "session", EventID: eventID})
 	if err != nil || detail.Payload != nil || stub.payloadReads != 0 {
 		t.Fatalf("EventDetail(no payload) = (%#v, %v), reads=%d", detail, err, stub.payloadReads)

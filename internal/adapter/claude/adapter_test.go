@@ -240,7 +240,8 @@ func TestMainThreadNormalizationRetainsRecordsAndUsesIndependentSequences(t *tes
 	if result.CallID != "tool-1" || result.Output != "package example\nfunc Example() {}" || result.IsError == nil || *result.IsError {
 		t.Fatalf("tool result = %#v", result)
 	}
-	if got[6].Data.(model.SummaryData).Text != "The sanitized fixture was inspected." {
+	if summary := got[6].Data.(model.SummaryData); summary.Text != "The sanitized fixture was inspected." ||
+		summary.Category != model.SummaryCategorySummary {
 		t.Fatalf("summary = %#v", got[6].Data)
 	}
 }
@@ -282,6 +283,10 @@ func TestObservedRecordClassification(t *testing.T) {
 	}
 	if !strings.Contains(got[0].Summary, "sidechain") {
 		t.Fatalf("sidechain summary = %q", got[0].Summary)
+	}
+	if got[1].Data.(model.SummaryData).Category != model.SummaryCategorySummary ||
+		got[2].Data.(model.SummaryData).Category != model.SummaryCategoryContext {
+		t.Fatalf("observed summary categories = %#v / %#v", got[1].Data, got[2].Data)
 	}
 	for index := 6; index < len(sink.records); index++ {
 		if len(sink.records[index].Events) != 0 || len(sink.records[index].Diagnostics) != 0 {

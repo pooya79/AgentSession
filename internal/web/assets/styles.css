@@ -82,12 +82,15 @@ h2 { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 1.15rem; marg
   background: var(--panel); border: 1px solid var(--line); border-radius: .4rem; overflow: hidden;
   max-width: 100%; min-width: 0;
 }
-.session-row { align-items: start; border-bottom: 1px solid var(--line); display: grid; gap: .8rem; grid-template-columns: 11rem 7rem minmax(16rem, 1fr) 5rem 9rem; padding: .7rem .8rem; }
+.session-row { align-items: start; border-bottom: 1px solid var(--line); display: grid; gap: .8rem; grid-template-columns: 10rem 6rem minmax(12rem, 1fr) minmax(16rem, 1.5fr) 4rem 8rem; padding: .7rem .8rem; }
 .session-row:last-child, .source-row:last-child { border-bottom: 0; }
 .session-header, .source-header { background: var(--panel-2); color: var(--muted); font-size: .72rem; font-weight: 800; text-transform: uppercase; }
 .session-copy { display: grid; min-width: 0; }
 .session-copy > a { font-weight: 800; overflow-wrap: anywhere; }
-.session-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-preview {
+  color: var(--muted); display: -webkit-box; min-width: 0; overflow: hidden; overflow-wrap: anywhere;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+}
 .agent { text-transform: uppercase; }
 .projection-summary { color: var(--muted); font-size: .75rem; margin-top: .3rem; }
 summary { cursor: pointer; }
@@ -116,11 +119,51 @@ pre { max-height: 32rem; overflow: auto; padding: .8rem; white-space: pre-wrap; 
 .event { display: grid; gap: .8rem; grid-template-columns: 1rem minmax(0, 1fr); }
 .event-marker { border-left: 2px solid var(--line); position: relative; }
 .event-marker::before { background: var(--accent); border-radius: 50%; content: ""; height: .55rem; left: -.34rem; position: absolute; top: 1rem; width: .55rem; }
-.event-card { background: var(--panel); border: 1px solid var(--line); border-radius: .4rem; margin-bottom: .7rem; padding: .8rem; }
+.event-card { background: var(--panel); border: 1px solid var(--line); border-radius: .55rem; margin-bottom: .7rem; min-width: 0; padding: .8rem; }
+.event-focused .event-card { border-color: var(--focus); box-shadow: 0 0 0 2px var(--accent-soft); }
 .event-heading { align-items: center; display: flex; justify-content: space-between; }
 .event-kind { color: var(--accent); font-size: .72rem; font-weight: 800; text-transform: uppercase; }
-.event-detail { margin-top: .7rem; }
 .load-more { display: flex; margin: .8rem 0 1rem 1.8rem; width: calc(100% - 1.8rem); }
+.message-card, .activity-card, .unavailable-card { margin-top: .65rem; min-width: 0; }
+.message-card { border-left: 3px solid var(--line); padding: .35rem .75rem .15rem; }
+.message-user { border-color: var(--accent); background: var(--accent-soft); border-radius: 0 .4rem .4rem 0; }
+.message-assistant { border-color: var(--good); }
+.message-system { border-color: var(--warn); }
+.message-unknown { border-style: dashed; }
+.message-card h3, .activity-card h3, .unavailable-card h3 { font-size: .82rem; margin-bottom: .35rem; }
+.message-text { overflow-wrap: anywhere; white-space: pre-wrap; }
+.activity-card { background: var(--panel-2); border: 1px solid var(--line); border-radius: .4rem; padding: .7rem; }
+.activity-card > :last-child, .message-card > :last-child { margin-bottom: 0; }
+.activity-card details { margin-top: .55rem; }
+.activity-card details[open] > summary { margin-bottom: .55rem; }
+.summary-card > summary { display: grid; gap: .25rem; }
+.activity-title { font-weight: 800; }
+.summary-preview {
+  color: var(--muted); display: -webkit-box; overflow: hidden; overflow-wrap: anywhere;
+  white-space: pre-wrap; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+}
+.summary-card[open] .summary-preview { display: none; }
+.expanded-content { margin-top: .6rem; }
+.json-input { max-height: 16rem; }
+.command-line { display: block; font-size: .82rem; margin-bottom: .55rem; padding: .55rem; white-space: pre-wrap; }
+.tool-failed, .error-card, .unknown-card, .unavailable-card { border-color: var(--danger); }
+.error-card, .unknown-card, .unavailable-card { background: var(--warn-soft); padding: .7rem; }
+.file-card { align-items: baseline; display: flex; flex-wrap: wrap; gap: .45rem .8rem; }
+.file-card h3 { flex-basis: 100%; }
+.usage-card dl { display: grid; gap: .4rem; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
+.usage-card dl div { min-width: 0; }
+.usage-card dt { color: var(--muted); font-size: .7rem; text-transform: uppercase; }
+.usage-card dd { margin: 0; overflow-wrap: anywhere; }
+.patch { padding: 0; white-space: pre; }
+.patch span { display: block; min-height: 1.5em; padding: 0 .7rem; }
+.patch-add { background: var(--good-soft); color: var(--good); }
+.patch-delete { background: color-mix(in srgb, var(--danger) 13%, transparent); color: var(--danger); }
+.patch-hunk { background: var(--accent-soft); color: var(--accent); }
+.patch-file { font-weight: 800; }
+.timeline-sentinel { position: relative; }
+.htmx-indicator { display: none; }
+.timeline-sentinel.htmx-request .load-label { display: none; }
+.timeline-sentinel.htmx-request .htmx-indicator { display: inline; }
 .projection-list { margin: .8rem 0; }
 .projection-row { align-items: center; border-top: 1px solid var(--line); display: flex; gap: 1rem; justify-content: space-between; padding: .65rem 0; }
 .projection-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: .8rem; }
@@ -135,6 +178,7 @@ pre { max-height: 32rem; overflow: auto; padding: .8rem; white-space: pre-wrap; 
   .session-row, .source-row { grid-template-columns: 1fr 1fr; }
   [role=cell]::before { color: var(--muted); content: attr(data-label); display: block; font-size: .68rem; font-weight: 800; text-transform: uppercase; }
   .session-copy { grid-column: 1 / -1; grid-row: 1; }
+  .session-preview { display: block; grid-column: 1 / -1; }
 }
 @media (max-width: 600px) {
   .site-header { column-gap: 0; flex-wrap: wrap; row-gap: .5rem; }
@@ -149,4 +193,9 @@ pre { max-height: 32rem; overflow: auto; padding: .8rem; white-space: pre-wrap; 
   .session-copy { grid-column: auto; }
   .projection-row { align-items: stretch; flex-direction: column; }
   .projection-row form, .projection-row button { width: 100%; }
+  .event { gap: .35rem; grid-template-columns: .4rem minmax(0, 1fr); }
+  .event-heading { align-items: flex-start; flex-direction: column; gap: .2rem; }
+  .event-card { padding: .65rem; }
+  .load-more { margin-left: .75rem; width: calc(100% - .75rem); }
+  .usage-card dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

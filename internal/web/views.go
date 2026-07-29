@@ -1,8 +1,11 @@
 package web
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pooya79/AgentSession/internal/app"
@@ -43,8 +46,6 @@ type timelineView struct {
 	Page           app.TimelinePage
 	Projection     app.ProjectionStatus
 	ProjectionErr  error
-	Focused        app.EventDetail
-	FocusedPayload string
 	DiagnosticRefs map[model.EventID]eventReference
 }
 
@@ -91,11 +92,6 @@ func focusedTimelineURL(sessionID model.SessionID, eventID model.EventID) string
 	return sessionURL(sessionID) + "?" + url.Values{"event": {string(eventID)}}.Encode()
 }
 
-// eventFragmentURL builds the payload-on-demand fragment endpoint.
-func eventFragmentURL(sessionID model.SessionID, eventID model.EventID) string {
-	return sessionURL(sessionID) + "/fragments/event/" + url.PathEscape(string(eventID))
-}
-
 // unknownEvidenceFragmentURL builds the explicit retained-evidence inspection
 // endpoint for a session-owned Unknown event.
 func unknownEvidenceFragmentURL(sessionID model.SessionID, eventID model.EventID) string {
@@ -119,6 +115,131 @@ func timelineNoticeURL(sessionID model.SessionID, notice string) string {
 
 // eventAnchorID gives each canonical event a stable in-document target.
 func eventAnchorID(eventID model.EventID) string { return "event-" + string(eventID) }
+
+func eventCardClass(event model.EventSummary, focused model.EventID) string {
+	class := "event event-" + string(event.Kind)
+	if event.ID == focused {
+		class += " event-focused"
+	}
+	return class
+}
+
+func messageRoleLabel(role model.MessageRole) string {
+	switch role {
+	case model.MessageRoleUser:
+		return "You"
+	case model.MessageRoleAssistant:
+		return "Assistant"
+	case model.MessageRoleSystem:
+		return "System"
+	case model.MessageRoleOther:
+		return "Participant"
+	default:
+		return "Message · role unreported"
+	}
+}
+
+func summaryCategoryTitle(category model.SummaryCategory) string {
+	switch category {
+	case model.SummaryCategoryReasoning:
+		return "Reasoning"
+	case model.SummaryCategoryContext:
+		return "Conversation context"
+	case model.SummaryCategoryPlan:
+		return "Plan update"
+	case model.SummaryCategorySummary:
+		return "Session summary"
+	default:
+		return "Recorded summary"
+	}
+}
+
+func formattedJSON(value string) (string, bool) {
+	var decoded any
+	if json.Unmarshal([]byte(value), &decoded) != nil {
+		return value, false
+	}
+	encoded, err := json.MarshalIndent(decoded, "", "  ")
+	if err != nil {
+		return value, false
+	}
+	return string(encoded), true
+}
+
+func toolResultState(value *bool) string {
+	if value == nil {
+		return "status unreported"
+	}
+	if *value {
+		return "failed"
+	}
+	return "completed"
+}
+
+func commandExitState(value *int) string {
+	if value == nil {
+		return "exit status unreported"
+	}
+	if *value == 0 {
+		return "exited 0"
+	}
+	return fmt.Sprintf("exited %d", *value)
+}
+
+func lineRangeLabel(start, end *int64) string {
+	switch {
+	case start != nil && end != nil:
+		return fmt.Sprintf("lines %d–%d", *start, *end)
+	case start != nil:
+		return fmt.Sprintf("from line %d", *start)
+	case end != nil:
+		return fmt.Sprintf("through line %d", *end)
+	default:
+		return "range unreported"
+	}
+}
+
+func tokenCount(value *int64) string {
+	if value == nil {
+		return "unreported"
+	}
+	return strconv.FormatInt(*value, 10)
+}
+
+type patchLine struct {
+	Class string
+	Text  string
+}
+
+func patchLines(value string) []patchLine {
+	lines := strings.Split(value, "\n")
+	result := make([]patchLine, 0, len(lines))
+	for _, line := range lines {
+		class := "patch-neutral"
+		switch {
+		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+			class = "patch-file"
+		case strings.HasPrefix(line, "@@"):
+			class = "patch-hunk"
+		case strings.HasPrefix(line, "+"):
+			class = "patch-add"
+		case strings.HasPrefix(line, "-"):
+			class = "patch-delete"
+		}
+		result = append(result, patchLine{Class: class, Text: line})
+	}
+	return result
+}
+
+func pathSummary(paths []string) string {
+	if len(paths) == 0 {
+		return "affected paths unreported"
+	}
+	if len(paths) == 1 {
+		return paths[0]
+	}
+	return fmt.Sprintf("%s and %d more", paths[0], len(paths)-1)
+}
 
 // sessionTitle prefers retained title metadata and falls back to the stable ID.
 func sessionTitle(session app.SessionSummary) string {
