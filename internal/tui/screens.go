@@ -81,6 +81,7 @@ type projectionsState struct {
 	actionNotice string
 }
 
+// searchState keeps query editing separate from bounded result navigation.
 type searchState struct {
 	query   string
 	editing bool
