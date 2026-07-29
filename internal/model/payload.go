@@ -126,10 +126,22 @@ type ErrorData struct {
 
 func (ErrorData) eventKind() EventKind { return EventKindError }
 
-// SummaryData contains a source-recorded summary rather than a derived
+// SummaryCategory identifies the source-neutral purpose of recorded
+// explanatory text.
+type SummaryCategory string
+
+const (
+	SummaryCategoryReasoning SummaryCategory = "reasoning"
+	SummaryCategoryContext   SummaryCategory = "context"
+	SummaryCategoryPlan      SummaryCategory = "plan"
+	SummaryCategorySummary   SummaryCategory = "summary"
+)
+
+// SummaryData contains source-recorded explanatory text rather than a derived
 // analysis finding or outcome.
 type SummaryData struct {
-	Text string
+	Category SummaryCategory
+	Text     string
 }
 
 func (SummaryData) eventKind() EventKind { return EventKindSummary }
@@ -209,6 +221,10 @@ func validateNormalizedData(data NormalizedData) error {
 				return fmt.Errorf("usage token counts must not be negative")
 			}
 		}
+	case SummaryData:
+		if !validSummaryCategory(value.Category) {
+			return fmt.Errorf("unsupported summary category %q", value.Category)
+		}
 	case UnknownData:
 		if !value.Reason.valid() {
 			return fmt.Errorf("unsupported unknown reason %q", value.Reason)
@@ -222,12 +238,21 @@ func validateNormalizedData(data NormalizedData) error {
 		if strings.TrimSpace(value.OriginalKind) == "" {
 			return fmt.Errorf("unknown original kind is required")
 		}
-	case ToolCallData, ToolResultData, CommandData, PatchData, ErrorData, SummaryData:
+	case ToolCallData, ToolResultData, CommandData, PatchData, ErrorData:
 		// Empty fields represent incomplete evidence and remain valid.
 	default:
 		return fmt.Errorf("unsupported normalized data type %T", data)
 	}
 	return nil
+}
+
+func validSummaryCategory(category SummaryCategory) bool {
+	switch category {
+	case SummaryCategoryReasoning, SummaryCategoryContext, SummaryCategoryPlan, SummaryCategorySummary:
+		return true
+	default:
+		return false
+	}
 }
 
 func validMessageRole(role MessageRole) bool {

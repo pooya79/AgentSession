@@ -40,7 +40,8 @@ Use [TEMPLATE.md](TEMPLATE.md) when proposing a decision.
 | [016](016-opencode-storage-generations.md) | 2026-07-27 | Accepted | Adapters | Select one OpenCode storage generation per session | Applies [ADR-015](015-canonical-unknown-event-contract.md) |
 | [017](017-claude-agent-session-identities.md) | 2026-07-28 | Accepted | Adapters | Give Claude agent logs distinct canonical session identities | — |
 | [018](018-safe-search-projection.md) | 2026-07-28 | Accepted | Search | Build full-text search as a safe canonical projection | Implements the lifecycle from [ADR-008](008-versioned-projection-lifecycle.md) |
-| [019](019-opt-in-inline-timeline-payloads.md) | 2026-07-29 | Accepted | Exploration | Allow bounded opt-in payloads for inline timelines | Extends [ADR-010](010-bounded-evidence-exploration-services.md) |
+| [019](019-opt-in-inline-timeline-payloads.md) | 2026-07-29 | Accepted; web limitation superseded | Exploration | Allow bounded opt-in payloads for inline timelines | Web-specific limitation replaced by [ADR-020](020-canonical-summary-categories-and-continuous-web-timeline.md) |
+| [020](020-canonical-summary-categories-and-continuous-web-timeline.md) | 2026-07-29 | Accepted | Canonical evidence, web | Categorize recorded summaries and render bounded continuous web timelines | Extends [ADR-010](010-bounded-evidence-exploration-services.md) and [ADR-019](019-opt-in-inline-timeline-payloads.md) |
 
 Dates are the dates each ADR first entered repository history.
 
@@ -90,6 +91,8 @@ source-specific behavior in shared layers.
   model.
 - [ADR-019](019-opt-in-inline-timeline-payloads.md): bounded normalized
   payload batches for continuous inline timelines.
+- [ADR-020](020-canonical-summary-categories-and-continuous-web-timeline.md):
+  canonical summary categories and the continuous web timeline.
 
 ### Derived data and search
 

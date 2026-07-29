@@ -25,7 +25,7 @@ func TestTimelineCardRendererCoversCanonicalKindsAndSanitizes(t *testing.T) {
 		want              []string
 	}{
 		{name: "message", kind: model.EventKindMessage, payload: model.MessageData{Role: model.MessageRoleAssistant, Text: hostile}, want: []string{"╭─ Assistant", "<U+202E>"}},
-		{name: "summary", kind: model.EventKindSummary, payload: model.SummaryData{Text: "recorded summary"}, want: []string{"Summary: recorded summary"}},
+		{name: "summary", kind: model.EventKindSummary, payload: model.SummaryData{Category: model.SummaryCategorySummary, Text: "recorded summary"}, want: []string{"Summary: recorded summary"}},
 		{name: "tool call valid json", kind: model.EventKindToolCall, payload: model.ToolCallData{ToolName: "read", CallID: "call", Input: `{"path":"x"}`}, want: []string{"Tool: read", `"path": "x"`}},
 		{name: "tool call invalid json", kind: model.EventKindToolCall, payload: model.ToolCallData{Input: "{invalid"}, want: []string{"Input: {invalid"}},
 		{name: "tool result", kind: model.EventKindToolResult, payload: model.ToolResultData{ToolName: "read", IsError: &trueValue, Output: "result"}, want: []string{"Error: true", "Output: result"}},
@@ -81,12 +81,30 @@ func TestTimelineCardRendererCoversCanonicalKindsAndSanitizes(t *testing.T) {
 
 func TestTimelineActivitiesHideDetailsUntilExpanded(t *testing.T) {
 	event := model.EventSummary{ID: "event", Sequence: 1, Kind: model.EventKindSummary}
-	payload := model.SummaryData{Text: strings.Repeat("界", 120)}
+	payload := model.SummaryData{Category: model.SummaryCategorySummary, Text: strings.Repeat("界", 120)}
 	collapsed := timelineCardLines(event, payload, 20, true, false, app.UnknownEvidenceInspection{}, false, nil)
 	expanded := timelineCardLines(event, payload, 20, true, true, app.UnknownEvidenceInspection{}, false, nil)
 	if len(collapsed) >= len(expanded) || strings.Contains(strings.Join(collapsed, "\n"), "界") ||
-		!strings.Contains(strings.Join(collapsed, "\n"), "Conversation context") {
+		!strings.Contains(strings.Join(collapsed, "\n"), "Session summary") {
 		t.Fatalf("collapsed=%q\nexpanded=%q", collapsed, expanded)
+	}
+}
+
+func TestTimelineSummaryTitlesUseCanonicalCategory(t *testing.T) {
+	tests := []struct {
+		category model.SummaryCategory
+		want     string
+	}{
+		{model.SummaryCategoryReasoning, "Reasoning"},
+		{model.SummaryCategoryContext, "Conversation context"},
+		{model.SummaryCategoryPlan, "Plan update"},
+		{model.SummaryCategorySummary, "Session summary"},
+	}
+	for _, test := range tests {
+		payload := model.SummaryData{Category: test.category, Text: "text"}
+		if got := timelineActivityTitle(payload, "fallback"); got != "▸ "+test.want {
+			t.Errorf("timelineActivityTitle(%q) = %q, want %q", test.category, got, "▸ "+test.want)
+		}
 	}
 }
 

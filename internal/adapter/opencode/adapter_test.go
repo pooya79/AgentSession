@@ -137,6 +137,18 @@ func TestGenerationSpecificFormatsAndMappings(t *testing.T) {
 			if !equalKinds(kinds, test.kinds) {
 				t.Fatalf("kinds = %v, want %v", kinds, test.kinds)
 			}
+			for _, summary := range summaries {
+				if summary.Kind != model.EventKindSummary {
+					continue
+				}
+				event, found, err := store.Event(ctx, summary.ID)
+				if err != nil || !found {
+					t.Fatalf("summary event %q = %#v, %v, %v", summary.ID, event, found, err)
+				}
+				if event.Data.(model.SummaryData).Category != model.SummaryCategoryContext {
+					t.Fatalf("summary category = %#v", event.Data)
+				}
+			}
 		})
 	}
 }

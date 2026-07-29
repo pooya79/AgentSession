@@ -180,14 +180,14 @@ func payloadKind(payload model.NormalizedData) model.EventKind {
 
 func summaryPayloadWithEncodedSize(t *testing.T, size int) model.SummaryData {
 	t.Helper()
-	empty, err := json.Marshal(model.SummaryData{})
+	empty, err := json.Marshal(model.SummaryData{Category: model.SummaryCategorySummary})
 	if err != nil {
 		t.Fatalf("marshal empty summary payload: %v", err)
 	}
 	if size < len(empty) {
 		t.Fatalf("requested encoded payload size %d is smaller than JSON envelope %d", size, len(empty))
 	}
-	payload := model.SummaryData{Text: strings.Repeat("x", size-len(empty))}
+	payload := model.SummaryData{Category: model.SummaryCategorySummary, Text: strings.Repeat("x", size-len(empty))}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal sized summary payload: %v", err)

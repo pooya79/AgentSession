@@ -310,7 +310,7 @@ func normalizeSessionMessage(record logicalRecord, data map[string]json.RawMessa
 		if !present || !valid {
 			return nil, append(diagnostics, invalidDiagnostic("opencode.session_message.compaction.invalid", "The OpenCode compaction message has invalid required summary text.")), nil
 		}
-		event, err := newEvent(record, sessionID, sequence, 0, "summary", model.EventKindSummary, "OpenCode compaction summary", summary, model.SummaryData{Text: summary})
+		event, err := newEvent(record, sessionID, sequence, 0, "summary", model.EventKindSummary, "OpenCode compaction summary", summary, model.SummaryData{Category: model.SummaryCategoryContext, Text: summary})
 		return []model.Event{event}, diagnostics, err
 	default:
 		event, err := unknownEvent(record, sessionID, sequence, 0, "unknown", model.UnknownUnsupportedRecordKind, "session_message:"+typeName)
@@ -499,7 +499,7 @@ func normalizeDurableEvent(record logicalRecord, data map[string]json.RawMessage
 		if !present || !valid {
 			return nil, append(diagnostics, durableInvalid(typeName, "The OpenCode compaction event has invalid required summary text.")), nil
 		}
-		event, err := newEvent(record, sessionID, sequence, 0, "summary", model.EventKindSummary, "OpenCode compaction summary", summary, model.SummaryData{Text: summary})
+		event, err := newEvent(record, sessionID, sequence, 0, "summary", model.EventKindSummary, "OpenCode compaction summary", summary, model.SummaryData{Category: model.SummaryCategoryContext, Text: summary})
 		return []model.Event{event}, diagnostics, err
 	default:
 		event, err := unknownEvent(record, sessionID, sequence, 0, "unknown", model.UnknownUnsupportedRecordKind, "event:"+typeName)

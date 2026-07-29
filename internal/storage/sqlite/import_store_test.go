@@ -30,7 +30,7 @@ func TestImportStoreRoundTripAndStableSourceOrder(t *testing.T) {
 		model.PatchData{Text: "patch", Paths: []string{"main.go"}},
 		model.UsageData{InputTokens: int64Pointer(10), OutputTokens: int64Pointer(5)},
 		model.ErrorData{Code: "failed", Message: "failure"},
-		model.SummaryData{Text: "summary"},
+		model.SummaryData{Category: model.SummaryCategorySummary, Text: "summary"},
 		model.UnknownData{Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "future"},
 	}
 	batch.Events = make([]model.Event, 0, len(payloads))

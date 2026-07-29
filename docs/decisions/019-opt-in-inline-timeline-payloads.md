@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; web-specific limitation superseded by ADR-020
 
 ## Context
 
@@ -27,9 +27,11 @@ errors rather than being collapsed into successful evidence.
 
 The TUI uses this option in 50-event chunks and presents the accumulated source
 order as a conversation: user and assistant messages remain readable inline,
-while technical activity is compact until explicitly expanded. The web UI and
-focused standalone detail flow retain their existing summary-only and
-single-event behavior.
+while technical activity is compact until explicitly expanded.
+
+ADR-020 supersedes the original web-specific limitation: the web UI now uses
+the same bounded opt-in payload mechanism for a continuous component-based
+timeline.
 
 ## Consequences
 

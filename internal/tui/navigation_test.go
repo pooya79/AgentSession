@@ -44,7 +44,7 @@ func TestSessionNavigationLoadsInlinePayloadsAndEnterTogglesCards(t *testing.T) 
 			State:  app.EvidenceComplete,
 			Events: []model.EventSummary{testEvent("event-1", 1), testEvent("event-2", 2)},
 			Payloads: map[model.EventID]model.NormalizedData{
-				"event-1": model.SummaryData{Text: longSummary},
+				"event-1": model.SummaryData{Category: model.SummaryCategorySummary, Text: longSummary},
 				"event-2": model.MessageData{Role: model.MessageRoleAssistant, Text: "complete message"},
 			},
 		},
@@ -103,8 +103,8 @@ func TestTimelineNearEndAppendsChunksSuppressesDuplicatesAndRetries(t *testing.T
 			testEvent("event-51", 51),
 		},
 		Payloads: map[model.EventID]model.NormalizedData{
-			"event-50": model.SummaryData{Text: "next"},
-			"event-51": model.SummaryData{Text: "last"},
+			"event-50": model.SummaryData{Category: model.SummaryCategorySummary, Text: "next"},
+			"event-51": model.SummaryData{Category: model.SummaryCategorySummary, Text: "last"},
 		},
 	}
 

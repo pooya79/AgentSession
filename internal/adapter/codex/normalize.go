@@ -40,7 +40,7 @@ func normalizeRecord(record wireRecord, ordinalHistory bool, sessionID string) n
 		}
 		return handled(eventDraft{
 			kind: model.EventKindSummary, summary: "Codex context compaction",
-			searchable: message, data: model.SummaryData{Text: message},
+			searchable: message, data: model.SummaryData{Category: model.SummaryCategoryContext, Text: message},
 		})
 	case "turn_context", "world_state", "inter_agent_communication", "inter_agent_communication_metadata":
 		if _, ok := objectValue(record.Payload); !ok {
@@ -111,7 +111,7 @@ func normalizeResponseItem(raw json.RawMessage, ordinalHistory bool, sessionID s
 		}
 		return handledNested(typeName, eventDraft{
 			kind: model.EventKindSummary, summary: "Codex reasoning summary", searchable: text,
-			data: model.SummaryData{Text: text}, native: native,
+			data: model.SummaryData{Category: model.SummaryCategoryReasoning, Text: text}, native: native,
 		})
 	case "function_call", "custom_tool_call":
 		name, nameOK := stringField(item, "name")
@@ -259,7 +259,7 @@ func normalizeEventMessage(raw json.RawMessage, ordinalHistory bool, sessionID s
 		}
 		return handledNested(typeName, eventDraft{
 			kind: model.EventKindSummary, summary: "Codex reasoning summary", searchable: text,
-			data: model.SummaryData{Text: text}, native: native,
+			data: model.SummaryData{Category: model.SummaryCategoryReasoning, Text: text}, native: native,
 		})
 	case "exec_command_end":
 		command, commandOK := stringSliceTextStrict(payload["command"])
@@ -330,7 +330,7 @@ func normalizeEventMessage(raw json.RawMessage, ordinalHistory bool, sessionID s
 	case "context_compacted":
 		return handledNested(typeName, eventDraft{
 			kind: model.EventKindSummary, summary: "Codex context compaction",
-			data: model.SummaryData{}, native: native,
+			data: model.SummaryData{Category: model.SummaryCategoryContext}, native: native,
 		})
 	case "plan_update":
 		plan, ok := rawJSONText(payload["plan"])
@@ -339,7 +339,7 @@ func normalizeEventMessage(raw json.RawMessage, ordinalHistory bool, sessionID s
 		}
 		return handledNested(typeName, eventDraft{
 			kind: model.EventKindSummary, summary: "Codex plan update", searchable: plan,
-			data: model.SummaryData{Text: plan}, native: native,
+			data: model.SummaryData{Category: model.SummaryCategoryPlan, Text: plan}, native: native,
 		})
 	case "turn_diff":
 		diff, ok := stringField(payload, "unified_diff")

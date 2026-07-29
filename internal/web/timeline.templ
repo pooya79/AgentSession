@@ -5,7 +5,9 @@ import (
 	"github.com/pooya79/AgentSession/internal/model"
 )
 
-// timelinePage renders canonical event summaries and an optional focused payload.
+// timelinePage renders a bounded page of canonical events with normalized
+// payloads inline. Retained raw records remain behind the explicit Unknown
+// evidence action.
 templ timelinePage(view timelineView) {
 	@document("Timeline · AgentSession") {
 		<main id="main">
@@ -14,7 +16,7 @@ templ timelinePage(view timelineView) {
 				<div>
 					<p class="eyebrow">Canonical timeline</p>
 					<h1 class="session-id">{ string(view.SessionID) }</h1>
-					<p class="muted">Bounded summaries; normalized payloads load only for the selected event.</p>
+					<p class="muted">Normalized conversation and activity evidence, loaded in bounded batches.</p>
 				</div>
 			</header>
 			@notice(view.Notice)
@@ -31,17 +33,16 @@ templ timelinePage(view timelineView) {
 				}
 			</section>
 			<section aria-labelledby="events-title">
-				<h2 id="events-title">Events</h2>
+				<h2 id="events-title">Conversation and activity</h2>
 				@timelineEvidenceState(view.Page, view.DiagnosticRefs)
 				<div class="timeline">
-					@eventRows(view.SessionID, view.Page, view.Focused, view.FocusedPayload, view.DiagnosticRefs, view.CSRF)
+					@eventRows(view.SessionID, view.Page, view.DiagnosticRefs, view.CSRF)
 				</div>
 			</section>
 		</main>
 	}
 }
 
-// timelineEvidenceState distinguishes partial or unavailable evidence from successful evidence.
 templ timelineEvidenceState(page app.TimelinePage, refs map[model.EventID]eventReference) {
 	if page.State == app.EvidenceUnavailable {
 		<p class="notice warning">Normalized timeline evidence is unavailable. This is not evidence of success.</p>
@@ -52,52 +53,204 @@ templ timelineEvidenceState(page app.TimelinePage, refs map[model.EventID]eventR
 	@diagnosticSynopsis(page.Diagnostics, refs)
 }
 
-// eventRows renders ordered event summaries and cursor-based continuation controls.
-templ eventRows(sessionID model.SessionID, page app.TimelinePage, focused app.EventDetail, payload string, refs map[model.EventID]eventReference, csrf string) {
+// eventRows is also the continuation fragment. The viewport sentinel replaces
+// itself with the next batch, while its href remains conventional navigation.
+templ eventRows(sessionID model.SessionID, page app.TimelinePage, refs map[model.EventID]eventReference, csrf string) {
 	if len(page.Events) == 0 {
 		<p class="empty-state">No normalized events are available.</p>
 	} else {
 		for _, event := range page.Events {
-			<article id={ eventAnchorID(event.ID) } class="event">
+			<article id={ eventAnchorID(event.ID) } class={ eventCardClass(event, page.FocusedEvent) }>
 				<div class="event-marker" aria-hidden="true"></div>
 				<div class="event-card">
-					<header class="event-heading">
-						<span class="event-kind">{ string(event.Kind) }</span>
-						<span class="metadata">#{ strconvFormatInt(event.Sequence) } · { formatTime(event.Timestamp) }</span>
-					</header>
-					<p>{ event.Summary }</p>
-					<a class="button quiet" href={ templ.URL(focusedTimelineURL(sessionID, event.ID)) } hx-get={ eventFragmentURL(sessionID, event.ID) } hx-target={ "#" + eventAnchorID(event.ID) + " .event-detail" } hx-swap="innerHTML" hx-push-url={ focusedTimelineURL(sessionID, event.ID) }>Inspect event detail</a>
-					<div class="event-detail" aria-live="polite">
-						if focused.Event.ID == event.ID {
-							@eventDetail(focused, payload, refs, csrf)
-						}
-					</div>
+					@eventMetadata(event)
+					if payload, ok := page.Payloads[event.ID]; ok && payload != nil {
+						@timelinePayload(event, payload, csrf)
+					} else {
+						<div class="unavailable-card" role="status">
+							<h3>Evidence unavailable</h3>
+							<p>The normalized payload for this event is unavailable; its summary is not a substitute for complete content.</p>
+						</div>
+					}
 				</div>
 			</article>
 		}
 		if page.NextCursor != "" {
-			<a class="button load-more" rel="next" href={ templ.URL(timelinePageURL(sessionID, page.NextCursor)) } hx-get={ timelineFragmentURL(sessionID, page.NextCursor) } hx-target="this" hx-swap="outerHTML">Load more events</a>
+			<a class="button load-more timeline-sentinel" rel="next" href={ templ.URL(timelinePageURL(sessionID, page.NextCursor)) } hx-get={ timelineFragmentURL(sessionID, page.NextCursor) } hx-trigger="revealed" hx-target="this" hx-swap="outerHTML" hx-indicator="this">
+				<span class="load-label">Load more events</span>
+				<span class="htmx-indicator">Loading more events…</span>
+			</a>
 		}
 	}
 }
 
-// eventDetail renders an explicitly requested normalized payload and its diagnostics.
-templ eventDetail(detail app.EventDetail, payload string, refs map[model.EventID]eventReference, csrf string) {
-	<div class={ "detail-panel state-" + string(detail.State) }>
-		if detail.State == app.EvidenceUnavailable || detail.Payload == nil {
-			<p class="notice warning">The normalized payload is unavailable. This is not evidence of success.</p>
-		} else {
-			<h3>Normalized payload</h3>
-			<pre>{ payload }</pre>
+templ eventMetadata(event model.EventSummary) {
+	<header class="event-heading">
+		<span class="event-kind">{ string(event.Kind) }</span>
+		<span class="metadata">#{ strconvFormatInt(event.Sequence) } · { formatTime(event.Timestamp) }</span>
+	</header>
+}
+
+templ timelinePayload(event model.EventSummary, payload model.NormalizedData, csrf string) {
+	switch value := payload.(type) {
+		case model.MessageData:
+			@messageCard(value)
+		case model.SummaryData:
+			@summaryCard(value)
+		case model.ToolCallData:
+			@toolCallCard(value)
+		case model.ToolResultData:
+			@toolResultCard(value)
+		case model.CommandData:
+			@commandCard(value)
+		case model.PatchData:
+			@patchCard(value)
+		case model.FileReadData:
+			@fileReadCard(value)
+		case model.FileMutationData:
+			@fileMutationCard(value)
+		case model.UsageData:
+			@usageCard(value)
+		case model.ErrorData:
+			@errorCard(value)
+		case model.UnknownData:
+			@unknownCard(event, value, csrf)
+		default:
+			<div class="unavailable-card" role="status"><h3>Evidence unavailable</h3><p>The normalized payload type cannot be presented.</p></div>
+	}
+}
+
+templ messageCard(message model.MessageData) {
+	<section class={ "message-card message-" + string(message.Role) }>
+		<h3>{ messageRoleLabel(message.Role) }</h3>
+		<div class="message-text">{ message.Text }</div>
+	</section>
+}
+
+templ summaryCard(summary model.SummaryData) {
+	<details class={ "activity-card summary-card summary-" + string(summary.Category) }>
+		<summary>
+			<span class="activity-title">{ summaryCategoryTitle(summary.Category) }</span>
+			<span class="summary-preview">{ summary.Text }</span>
+		</summary>
+		<div class="expanded-content">
+			<h3>{ summaryCategoryTitle(summary.Category) }</h3>
+			<pre>{ summary.Text }</pre>
+		</div>
+	</details>
+}
+
+templ toolCallCard(call model.ToolCallData) {
+	<div class="activity-card tool-card">
+		<h3>Tool call <span class="chip">requested</span></h3>
+		<p><strong>{ call.ToolName }</strong> <span class="metadata">Call { call.CallID }</span></p>
+		if formatted, valid := formattedJSON(call.Input); valid {
+			<pre class="json-input">{ formatted }</pre>
 		}
-		if detail.Event.Kind == model.EventKindUnknown {
-			<form method="post" action={ templ.SafeURL(unknownEvidenceFragmentURL(detail.Event.SessionID, detail.Event.ID)) } hx-post={ unknownEvidenceFragmentURL(detail.Event.SessionID, detail.Event.ID) } hx-target="next .unknown-evidence" hx-swap="innerHTML">
-				<input type="hidden" name="csrf" value={ csrf }/>
-				<button type="submit" class="button quiet">Inspect retained Unknown evidence</button>
-			</form>
-			<div class="unknown-evidence" aria-live="polite"></div>
+		<details>
+			<summary>Raw tool input</summary>
+			<pre>{ call.Input }</pre>
+		</details>
+	</div>
+}
+
+templ toolResultCard(result model.ToolResultData) {
+	<div class={ "activity-card tool-card tool-" + toolResultState(result.IsError) }>
+		<h3>Tool result <span class="chip">{ toolResultState(result.IsError) }</span></h3>
+		<p><strong>{ result.ToolName }</strong> <span class="metadata">Call { result.CallID }</span></p>
+		<details>
+			<summary>Tool output</summary>
+			<pre>{ result.Output }</pre>
+		</details>
+	</div>
+}
+
+templ commandCard(command model.CommandData) {
+	<div class={ "activity-card command-card " + commandExitState(command.ExitCode) }>
+		<h3>Command <span class="chip">{ commandExitState(command.ExitCode) }</span></h3>
+		<code class="command-line">{ command.Command }</code>
+		<p class="metadata">
+			Working directory:
+			if command.WorkingDirectory == "" {
+				<span>unreported</span>
+			} else {
+				<span>{ command.WorkingDirectory }</span>
+			}
+		</p>
+		<details>
+			<summary>Command output</summary>
+			<pre>{ command.Output }</pre>
+		</details>
+	</div>
+}
+
+templ patchCard(patch model.PatchData) {
+	<div class="activity-card patch-card">
+		<h3>Changed files</h3>
+		<p class="metadata">{ pathSummary(patch.Paths) }</p>
+		<details>
+			<summary>Patch</summary>
+			<pre class="patch">
+				for _, line := range patchLines(patch.Text) {
+					<span class={ line.Class }>{ line.Text }</span>
+				}
+			</pre>
+		</details>
+	</div>
+}
+
+templ fileReadCard(read model.FileReadData) {
+	<div class="activity-card file-card">
+		<h3>Read file</h3>
+		<code>{ read.Path }</code>
+		<span class="metadata">{ lineRangeLabel(read.StartLine, read.EndLine) }</span>
+	</div>
+}
+
+templ fileMutationCard(mutation model.FileMutationData) {
+	<div class="activity-card file-card">
+		<h3>{ string(mutation.Operation) } file</h3>
+		<code>{ mutation.Path }</code>
+		if mutation.PreviousPath != "" {
+			<p class="metadata">Renamed from <code>{ mutation.PreviousPath }</code></p>
 		}
-		@diagnosticSynopsis(detail.Diagnostics, refs)
+	</div>
+}
+
+templ usageCard(usage model.UsageData) {
+	<div class="activity-card usage-card">
+		<h3>Token usage</h3>
+		<dl>
+			<div><dt>Input</dt><dd>{ tokenCount(usage.InputTokens) }</dd></div>
+			<div><dt>Output</dt><dd>{ tokenCount(usage.OutputTokens) }</dd></div>
+			<div><dt>Cache read</dt><dd>{ tokenCount(usage.CacheReadTokens) }</dd></div>
+			<div><dt>Cache write</dt><dd>{ tokenCount(usage.CacheWriteTokens) }</dd></div>
+		</dl>
+	</div>
+}
+
+templ errorCard(value model.ErrorData) {
+	<div class="activity-card error-card" role="alert">
+		<h3>
+			Error
+			if value.Code != "" {
+				<span>· { value.Code }</span>
+			}
+		</h3>
+		<pre>{ value.Message }</pre>
+	</div>
+}
+
+templ unknownCard(event model.EventSummary, value model.UnknownData, csrf string) {
+	<div class="activity-card unknown-card">
+		<h3>Unknown event</h3>
+		<p><strong>Reason:</strong> { string(value.Reason) }</p>
+		<p><strong>Original kind:</strong> { value.OriginalKind }</p>
+		<form method="post" action={ templ.SafeURL(unknownEvidenceFragmentURL(event.SessionID, event.ID)) } hx-post={ unknownEvidenceFragmentURL(event.SessionID, event.ID) } hx-target="next .unknown-evidence" hx-swap="innerHTML">
+			<input type="hidden" name="csrf" value={ csrf }/>
+			<button type="submit" class="button quiet">Inspect retained Unknown evidence</button>
+		</form>
+		<div class="unknown-evidence" aria-live="polite"></div>
 	</div>
 }
 

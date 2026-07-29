@@ -4,19 +4,16 @@ import (
 	"bytes"
 	"context"
 	"crypto/subtle"
-	"encoding/json"
 	"errors"
 	"io"
 	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 
 	"github.com/a-h/templ"
 
 	"github.com/pooya79/AgentSession/internal/app"
-	"github.com/pooya79/AgentSession/internal/model"
 )
 
 // available fails closed when the shared application service graph is absent.
@@ -66,21 +63,6 @@ func (h *handler) validMutation(w http.ResponseWriter, r *http.Request, fields .
 		return nil, false
 	}
 	return r.PostForm, true
-}
-
-// normalizedPayload formats normalized data for escaped preformatted rendering.
-func normalizedPayload(payload model.NormalizedData) (string, error) {
-	if payload == nil {
-		return "", nil
-	}
-	var output bytes.Buffer
-	encoder := json.NewEncoder(&output)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(payload); err != nil {
-		return "", err
-	}
-	return strings.TrimSuffix(output.String(), "\n"), nil
 }
 
 // render buffers a component so template failures cannot produce partial successful responses.
