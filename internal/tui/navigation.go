@@ -4,7 +4,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/pooya79/AgentSession/internal/app"
-	"github.com/pooya79/AgentSession/internal/model"
 )
 
 func (m *Model) runSearch(cursor string) tea.Cmd {
@@ -270,17 +269,12 @@ func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 		}
 		result := m.searchState.page.Results[m.searchState.cursor]
 		m.sessionsState.selected = result.SessionID
-		m.timelineState.page = app.TimelinePage{State: app.EvidenceComplete, Events: []model.EventSummary{{
-			ID: result.EventID, SessionID: result.SessionID, Sequence: result.Sequence,
-			Timestamp: result.Timestamp, Kind: result.Kind, Summary: result.Summary,
-		}}}
-		m.timelineState.cursor = 0
-		m.invalidateTimelineRender()
-		m.screen = detailScreen
-		m.detailState.detail = app.EventDetail{}
-		m.detailState.loading = true
+		m.screen = timelineScreen
+		m.resetTimelineState()
+		m.timelineState.loading = true
+		m.stopObservation()
 		ctx := m.replaceRequest()
-		return m, m.startSpinner(loadDetail(ctx, m.services, m.requestGeneration, result.SessionID, result.EventID))
+		return m, m.startSpinner(loadTimeline(ctx, m.services, m.requestGeneration, result.SessionID, ""))
 	case sessionsScreen:
 		if m.sessionsState.loading || len(m.sessionsState.page.Sessions) == 0 {
 			return m, nil

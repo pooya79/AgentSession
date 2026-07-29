@@ -60,8 +60,9 @@ representative collection of real sessions.
 - Search is available through the same application service to both interfaces.
 - Text terms and phrases can be combined with supported structured filters for
   session, event kind, time, file, tool, and command.
-- Search results use bounded pagination and link back to canonical event
-  context.
+- Search results group matching evidence into bounded, paginated session
+  results. Each result includes session context, an exact match count, and one
+  best-match excerpt before opening the session timeline.
 - Search availability reports complete, partial, or unavailable projection
   coverage rather than silently using stale data.
 - Retained raw records and unknown raw payloads are not implicitly indexed.

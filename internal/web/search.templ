@@ -7,7 +7,7 @@ templ searchPage(view searchView) {
 				<div>
 					<p class="eyebrow">Canonical evidence projection</p>
 					<h1>Search</h1>
-					<p>Terms are combined with AND. Use double quotes for phrases and structured filters to narrow evidence.</p>
+					<p>Find sessions containing matching canonical evidence. Terms are combined with AND.</p>
 				</div>
 			</section>
 			<form class="panel" action="/search" method="get">
@@ -23,17 +23,21 @@ templ searchPage(view searchView) {
 			} else {
 				<p class="notice" role="status">{ availabilityMessage(view.Page.Availability) }</p>
 				if len(view.Page.Results) == 0 {
-					<section class="empty-state"><h2>No matching evidence</h2></section>
+					<section class="empty-state"><h2>No matching sessions</h2></section>
 				} else {
 					<section class="session-list" aria-label="Search results">
 						for _, result := range view.Page.Results {
 							<article class="session-card">
 								<div class="session-card-heading">
-									<h2><a href={ templ.SafeURL(focusedTimelineURL(result.SessionID, result.EventID)) }>{ result.Summary }</a></h2>
-									<span class="badge">{ string(result.Kind) }</span>
+									<h2><a href={ templ.URL(sessionURL(result.SessionID)) }>{ searchSessionTitle(result) }</a></h2>
+									<span class="badge">{ result.AgentName }</span>
 								</div>
+								if result.Preview != "" && result.Preview != searchSessionTitle(result) {
+									<p>{ result.Preview }</p>
+								}
+								<p class="muted">{ formatTime(result.LastActivityAt) } · { formatCount(result.EventCount, "event") } · { formatCount(result.MatchCount, "matching event") }</p>
+								<p><strong>{ result.BestMatchSummary }</strong></p>
 								<p>{ compactSnippet(result.Snippet) }</p>
-								<p class="muted">{ string(result.SessionID) } · sequence { strconvFormatInt(result.Sequence) } · { formatTime(result.Timestamp) }</p>
 							</article>
 						}
 					</section>

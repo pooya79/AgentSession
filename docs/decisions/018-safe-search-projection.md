@@ -39,11 +39,14 @@ Aggregate availability is complete when all canonical sessions are usable,
 partial when some are usable, and unavailable when sessions exist but none are
 usable. Stale rows are never a fallback.
 
-Text results order by FTS rank and event ID. Filter-only results order by
-timestamp descending with missing timestamps last, then session ID, canonical
-sequence, and event ID. Both use bounded bidirectional keyset cursors bound to
-the raw query and the current usable projection generation. Snippets are
-bounded plain text; HTML escaping and terminal sanitization remain presentation
+Search groups matching documents by session so each session appears at most
+once. Text results order sessions by their best FTS-ranked event and session
+ID. Filter-only results order sessions by canonical last activity with missing
+activity last, then session ID. The best-ranked text event, or newest
+filter-matching event, supplies a bounded explanatory snippet and the result
+also reports the exact number of matching events. Bidirectional keyset cursors
+are bound to the raw query and current usable projection generation. Snippets
+are plain text; HTML escaping and terminal sanitization remain presentation
 responsibilities.
 
 ## Consequences
@@ -54,7 +57,9 @@ responsibilities.
   and restart from the first page.
 - Sessions with pending, running, failed, stale, or unavailable search
   projections are distinguishable and excluded from results.
-- FTS ranking is stable for an unchanged projection, with event ID providing a
-  deterministic tie-breaker.
+- Session-level FTS ranking is stable for an unchanged projection, with stable
+  identifiers providing deterministic tie-breakers.
+- Search results open the matching session timeline rather than treating an
+  individual event as the primary result.
 - Adding searchable canonical fields or changing limits requires a projection
   version change and rebuild.

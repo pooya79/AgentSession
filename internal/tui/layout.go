@@ -42,6 +42,11 @@ func (m Model) helpLine(width int) string {
 			return "↑↓ cards · Enter expand · x projections · Esc back · ? help"
 		case projectionsScreen:
 			return "↑↓ select · t retry · b rebuild · Esc back · ? help"
+		case searchScreen:
+			if m.searchState.editing {
+				return "Type query · Enter search · Esc results · Ctrl-C quit"
+			}
+			return "/ edit · ↑↓ select · Enter timeline · n/p page · Esc back · ? help"
 		default:
 			return "↑↓ scroll · PgUp/PgDn · Esc back · r refresh · ? help"
 		}
@@ -53,7 +58,7 @@ func (m Model) helpLine(width int) string {
 		if m.searchState.editing {
 			return "Type query · Enter search · Esc results · Ctrl-C quit"
 		}
-		return "/ edit · ↑/↓ select · Enter detail · n/p page · Esc sessions · r refresh · ? help"
+		return "/ edit · ↑/↓ select · Enter timeline · n/p page · Esc sessions · r refresh · ? help"
 	case indexingScreen:
 		return "↑/↓ or j/k scroll · g/G top/bottom · PgUp/PgDn scroll · Esc sessions · r rescan · ? help · q quit"
 	case timelineScreen:
