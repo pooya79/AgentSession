@@ -14,7 +14,7 @@ func (m Model) searchLines() []string {
 	if m.searchState.editing {
 		prompt += "█"
 	}
-	lines := []string{"Search canonical evidence", prompt}
+	lines := []string{"Search sessions by canonical evidence", prompt}
 	if m.searchState.loading {
 		return append(lines, "", m.spinner.View()+" Searching…")
 	}
@@ -31,7 +31,7 @@ func (m Model) searchLines() []string {
 		lines = append(lines, fmt.Sprintf("Complete · %d sessions searchable", availability.Usable))
 	}
 	if len(m.searchState.page.Results) == 0 {
-		return append(lines, "", "No matching evidence.")
+		return append(lines, "", "No matching sessions.")
 	}
 	lines = append(lines, "")
 	for index, result := range m.searchState.page.Results {
@@ -40,9 +40,17 @@ func (m Model) searchLines() []string {
 			prefix = "> "
 		}
 		snippet := strings.Join(strings.Fields(sanitization.Terminal(result.Snippet)), " ")
+		title := strings.TrimSpace(sanitization.Terminal(result.Title))
+		if title == "" {
+			title = sanitization.Terminal(result.Preview)
+		}
+		if title == "" {
+			title = sanitization.Terminal(string(result.SessionID))
+		}
 		lines = append(lines,
-			fmt.Sprintf("%s%s · %s · sequence %d", prefix, result.Kind, result.SessionID, result.Sequence),
-			"    "+sanitization.Terminal(result.Summary),
+			fmt.Sprintf("%s%s · %s · %d matching / %d events",
+				prefix, title, sanitization.Terminal(result.AgentName), result.MatchCount, result.EventCount),
+			"    "+sanitization.Terminal(result.BestMatchSummary),
 			"    "+snippet,
 		)
 	}

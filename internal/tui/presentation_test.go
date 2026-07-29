@@ -182,9 +182,10 @@ func TestSearchScreenSanitizesResults(t *testing.T) {
 		State:        app.EvidenceComplete,
 		Availability: app.SearchAvailability{State: app.EvidenceComplete, Sessions: 1, Usable: 1},
 		Results: []app.SearchResult{{
-			SessionID: "session", EventID: "event", Kind: model.EventKindMessage,
-			Summary: "\x1b]8;;https://attacker.invalid\aopen\x1b]8;;\a",
-			Snippet: "\x1b[31mhostile\x1b[0m",
+			SessionID: "session", Title: "\x1b]8;;https://attacker.invalid\aopen\x1b]8;;\a",
+			AgentName: "codex", EventCount: 3, MatchCount: 2,
+			BestMatchSummary: "match",
+			Snippet:          "\x1b[31mhostile\x1b[0m",
 		}},
 	}
 	content := m.View().Content

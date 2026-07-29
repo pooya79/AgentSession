@@ -45,16 +45,18 @@ type SearchAvailability struct {
 	Unimplemented int64
 }
 
-// SearchResult is a presentation-safe reference to one matching canonical
-// event. Timestamp is nil when the event has no timestamp.
+// SearchResult is a presentation-safe summary of one session containing
+// matching canonical evidence. LastActivityAt is nil when activity is unknown.
 type SearchResult struct {
-	SessionID model.SessionID
-	EventID   model.EventID
-	Sequence  int64
-	Timestamp *time.Time
-	Kind      model.EventKind
-	Summary   string
-	Snippet   string
+	SessionID        model.SessionID
+	Title            string
+	AgentName        string
+	Preview          string
+	LastActivityAt   *time.Time
+	EventCount       int64
+	MatchCount       int64
+	BestMatchSummary string
+	Snippet          string
 }
 
 // SearchPage contains one bounded result page, navigation cursors, and the
@@ -126,18 +128,20 @@ func (s *searchService) Search(ctx context.Context, request SearchRequest) (Sear
 	}
 	page.Availability.State = page.State
 	for _, row := range rows.Items {
-		var timestamp *time.Time
-		if row.Timestamp != "" {
-			parsedTime, parseErr := time.Parse(time.RFC3339Nano, row.Timestamp)
+		var lastActivity *time.Time
+		if row.LastActivity != "" {
+			parsedTime, parseErr := time.Parse(time.RFC3339Nano, row.LastActivity)
 			if parseErr != nil {
-				return SearchPage{}, fmt.Errorf("search result contains invalid timestamp: %w", parseErr)
+				return SearchPage{}, fmt.Errorf("search result contains invalid last activity: %w", parseErr)
 			}
-			timestamp = &parsedTime
+			lastActivity = &parsedTime
 		}
 		page.Results = append(page.Results, SearchResult{
-			SessionID: row.SessionID, EventID: row.EventID, Sequence: row.Sequence,
-			Timestamp: timestamp, Kind: row.Kind, Summary: row.Summary,
-			Snippet: truncateUTF8Bytes(row.Snippet, 2*1024),
+			SessionID: row.SessionID, Title: row.Title, AgentName: row.AgentName,
+			Preview:        sessionPreview(row.SessionSummary, row.FirstUserMessage),
+			LastActivityAt: lastActivity, EventCount: row.EventCount, MatchCount: row.MatchCount,
+			BestMatchSummary: row.BestMatchSummary,
+			Snippet:          truncateUTF8Bytes(row.Snippet, 2*1024),
 		})
 	}
 	if len(rows.Items) == 0 {
@@ -166,23 +170,21 @@ func (s *searchService) Search(ctx context.Context, request SearchRequest) (Sear
 }
 
 type searchCursorEnvelope struct {
-	Version    int             `json:"v"`
-	QueryHash  string          `json:"q"`
-	Generation string          `json:"g"`
-	Ranked     bool            `json:"ranked"`
-	Rank       float64         `json:"rank,omitempty"`
-	Timestamp  string          `json:"timestamp,omitempty"`
-	SessionID  model.SessionID `json:"session"`
-	Sequence   int64           `json:"sequence"`
-	EventID    model.EventID   `json:"event"`
-	Before     bool            `json:"before,omitempty"`
+	Version      int             `json:"v"`
+	Scope        string          `json:"scope"`
+	QueryHash    string          `json:"q"`
+	Generation   string          `json:"g"`
+	Ranked       bool            `json:"ranked"`
+	Rank         float64         `json:"rank,omitempty"`
+	LastActivity string          `json:"last_activity,omitempty"`
+	SessionID    model.SessionID `json:"session"`
+	Before       bool            `json:"before,omitempty"`
 }
 
 func encodeSearchCursor(row search.Row, before bool, generation, queryHash string, ranked bool) (string, error) {
 	value, err := json.Marshal(searchCursorEnvelope{
-		Version: 1, QueryHash: queryHash, Generation: generation, Ranked: ranked,
-		Rank: row.Rank, Timestamp: row.Timestamp, SessionID: row.SessionID,
-		Sequence: row.Sequence, EventID: row.EventID, Before: before,
+		Version: 1, Scope: "sessions", QueryHash: queryHash, Generation: generation, Ranked: ranked,
+		Rank: row.Rank, LastActivity: row.LastActivity, SessionID: row.SessionID, Before: before,
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode search cursor: %w", err)
@@ -194,19 +196,19 @@ func decodeSearchCursor(value, queryHash string, ranked bool) (search.Cursor, er
 	decoded, err := base64.RawURLEncoding.DecodeString(value)
 	var envelope searchCursorEnvelope
 	if err != nil || json.Unmarshal(decoded, &envelope) != nil ||
-		envelope.Version != 1 || envelope.QueryHash != queryHash || envelope.Ranked != ranked ||
-		envelope.Generation == "" || validateIdentifier("search cursor session", string(envelope.SessionID)) != nil ||
-		validateEventID(envelope.EventID) != nil || envelope.Sequence < 0 {
+		envelope.Version != 1 || envelope.Scope != "sessions" ||
+		envelope.QueryHash != queryHash || envelope.Ranked != ranked ||
+		envelope.Generation == "" || validateIdentifier("search cursor session", string(envelope.SessionID)) != nil {
 		return search.Cursor{}, &SearchValidationError{Code: "invalid_cursor", Message: "Search cursor is invalid for this query."}
 	}
-	if envelope.Timestamp != "" {
-		if _, err := time.Parse(time.RFC3339Nano, envelope.Timestamp); err != nil {
+	if envelope.LastActivity != "" {
+		if _, err := time.Parse(time.RFC3339Nano, envelope.LastActivity); err != nil {
 			return search.Cursor{}, &SearchValidationError{Code: "invalid_cursor", Message: "Search cursor is invalid for this query."}
 		}
 	}
 	return search.Cursor{
-		Rank: envelope.Rank, Timestamp: envelope.Timestamp, SessionID: envelope.SessionID,
-		Sequence: envelope.Sequence, EventID: envelope.EventID, Before: envelope.Before,
+		Rank: envelope.Rank, LastActivity: envelope.LastActivity, SessionID: envelope.SessionID,
+		Before:     envelope.Before,
 		Generation: envelope.Generation, Ranked: envelope.Ranked,
 	}, nil
 }

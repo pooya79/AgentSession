@@ -36,11 +36,15 @@ func (s *ImportStore) Search(ctx context.Context, query search.Query, cursor *se
 	defer rows.Close()
 	for rows.Next() {
 		var row search.Row
-		var timestamp sql.NullString
-		if err := rows.Scan(&row.SessionID, &row.EventID, &row.Sequence, &timestamp, &row.Kind, &row.Summary, &row.Snippet, &row.Rank); err != nil {
+		var lastActivity sql.NullString
+		if err := rows.Scan(
+			&row.SessionID, &row.Title, &row.SessionSummary, &row.FirstUserMessage,
+			&row.AgentName, &lastActivity, &row.EventCount, &row.MatchCount,
+			&row.BestMatchSummary, &row.Snippet, &row.Rank,
+		); err != nil {
 			return result, fmt.Errorf("sqlite search: scan result: %w", err)
 		}
-		row.Timestamp = timestamp.String
+		row.LastActivity = lastActivity.String
 		result.Items = append(result.Items, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -113,58 +117,96 @@ func buildSearchSQL(query search.Query, cursor *search.Cursor, limit int) (strin
 	var args []any
 	if ranked {
 		statement.WriteString(`
-			WITH matched AS (
-				SELECT rowid, bm25(search_documents_fts) AS rank,
-				       snippet(search_documents_fts, -1, '', '', ' … ', 24) AS snippet
+			WITH raw_matches AS (
+				SELECT d.session_id, d.event_id, d.sequence, d.timestamp,
+				       d.summary AS match_summary,
+				       substr(snippet(search_documents_fts, -1, '', '', ' … ', 24), 1, 512) AS snippet,
+				       bm25(search_documents_fts) AS rank
 				FROM search_documents_fts
+				JOIN search_documents d ON d.rowid = search_documents_fts.rowid
+				JOIN session_projection_states p
+				  ON p.session_id = d.session_id AND p.kind = 'search'
+				 AND p.status = 'ready'
+				 AND p.ready_version = p.target_version
+				 AND p.ready_revision = p.target_revision
+				 AND d.projection_version = p.ready_version
+				 AND d.canonical_revision = p.ready_revision
 				WHERE search_documents_fts MATCH ?
-			)
-			SELECT d.session_id, d.event_id, d.sequence, d.timestamp, d.kind,
-			       d.summary, substr(m.snippet, 1, 512), m.rank
-			FROM matched m
-			JOIN search_documents d ON d.rowid = m.rowid
 		`)
 		args = append(args, ftsExpression(query.Text))
 	} else {
 		statement.WriteString(`
-			SELECT d.session_id, d.event_id, d.sequence, d.timestamp, d.kind,
-			       d.summary, substr(d.content, 1, 512), 0.0
-			FROM search_documents d
+			WITH raw_matches AS (
+				SELECT d.session_id, d.event_id, d.sequence, d.timestamp,
+				       d.summary AS match_summary, substr(d.content, 1, 512) AS snippet,
+				       0.0 AS rank
+				FROM search_documents d
+				JOIN session_projection_states p
+				  ON p.session_id = d.session_id AND p.kind = 'search'
+				 AND p.status = 'ready'
+				 AND p.ready_version = p.target_version
+				 AND p.ready_revision = p.target_revision
+				 AND d.projection_version = p.ready_version
+				 AND d.canonical_revision = p.ready_revision
+				WHERE 1 = 1
+		`)
+	}
+	appendSearchFilters(&statement, &args, query)
+	statement.WriteString(`
+			),
+			ranked_matches AS (
+				SELECT raw_matches.*,
+				       COUNT(*) OVER (PARTITION BY session_id) AS match_count,
+	`)
+	if ranked {
+		statement.WriteString(`
+				       ROW_NUMBER() OVER (
+				         PARTITION BY session_id ORDER BY rank ASC, event_id ASC
+				       ) AS match_position
+		`)
+	} else {
+		statement.WriteString(`
+				       ROW_NUMBER() OVER (
+				         PARTITION BY session_id
+				         ORDER BY timestamp IS NULL ASC, timestamp DESC, sequence DESC, event_id ASC
+				       ) AS match_position
 		`)
 	}
 	statement.WriteString(`
-		JOIN session_projection_states p
-		  ON p.session_id = d.session_id AND p.kind = 'search'
-		 AND p.status = 'ready'
-		 AND p.ready_version = p.target_version
-		 AND p.ready_revision = p.target_revision
-		 AND d.projection_version = p.ready_version
-		 AND d.canonical_revision = p.ready_revision
-		WHERE 1 = 1
+				FROM raw_matches
+			),
+			best_matches AS (
+				SELECT * FROM ranked_matches WHERE match_position = 1
+			)
+			SELECT b.session_id, s.title, s.summary, s.first_user_message,
+			       s.adapter_name, s.last_activity_at, s.event_count, b.match_count,
+			       b.match_summary, b.snippet, b.rank
+			FROM best_matches b
+			JOIN sessions s ON s.id = b.session_id
+			WHERE 1 = 1
 	`)
-	appendSearchFilters(&statement, &args, query)
 	if cursor != nil {
 		if ranked {
 			operator := ">"
 			if cursor.Before {
 				operator = "<"
 			}
-			statement.WriteString(" AND (m.rank " + operator + " ? OR (m.rank = ? AND d.event_id " + operator + " ?))")
-			args = append(args, cursor.Rank, cursor.Rank, cursor.EventID)
+			statement.WriteString(" AND (b.rank " + operator + " ? OR (b.rank = ? AND b.session_id " + operator + " ?))")
+			args = append(args, cursor.Rank, cursor.Rank, cursor.SessionID)
 		} else {
-			appendFilterCursor(&statement, &args, *cursor)
+			appendSessionCursor(&statement, &args, *cursor)
 		}
 	}
 	if ranked {
 		if cursor != nil && cursor.Before {
-			statement.WriteString(` ORDER BY m.rank DESC, d.event_id DESC`)
+			statement.WriteString(` ORDER BY b.rank DESC, b.session_id DESC`)
 		} else {
-			statement.WriteString(` ORDER BY m.rank ASC, d.event_id ASC`)
+			statement.WriteString(` ORDER BY b.rank ASC, b.session_id ASC`)
 		}
 	} else if cursor != nil && cursor.Before {
-		statement.WriteString(` ORDER BY d.timestamp IS NULL DESC, julianday(d.timestamp) ASC, d.session_id DESC, d.sequence DESC, d.event_id DESC`)
+		statement.WriteString(` ORDER BY s.last_activity_at ASC NULLS FIRST, b.session_id DESC`)
 	} else {
-		statement.WriteString(` ORDER BY d.timestamp IS NULL ASC, julianday(d.timestamp) DESC, d.session_id ASC, d.sequence ASC, d.event_id ASC`)
+		statement.WriteString(` ORDER BY s.last_activity_at DESC NULLS LAST, b.session_id ASC`)
 	}
 	statement.WriteString(` LIMIT ?`)
 	args = append(args, limit)
@@ -234,36 +276,26 @@ func appendDateGroup(statement *strings.Builder, args *[]any, operator string, v
 	statement.WriteString(")")
 }
 
-func appendFilterCursor(statement *strings.Builder, args *[]any, cursor search.Cursor) {
+func appendSessionCursor(statement *strings.Builder, args *[]any, cursor search.Cursor) {
 	if cursor.Before {
-		if cursor.Timestamp == "" {
-			statement.WriteString(` AND (d.timestamp IS NOT NULL OR
-				d.timestamp IS NULL AND
-				(d.session_id < ? OR (d.session_id = ? AND
-				 (d.sequence < ? OR (d.sequence = ? AND d.event_id < ?)))))`)
-			*args = append(*args, cursor.SessionID, cursor.SessionID, cursor.Sequence, cursor.Sequence, cursor.EventID)
+		if cursor.LastActivity == "" {
+			statement.WriteString(` AND (s.last_activity_at IS NOT NULL OR
+				(s.last_activity_at IS NULL AND b.session_id < ?))`)
+			*args = append(*args, cursor.SessionID)
 		} else {
-			statement.WriteString(` AND (
-				d.timestamp IS NOT NULL AND julianday(d.timestamp) > julianday(?) OR
-				julianday(d.timestamp) = julianday(?) AND (d.session_id < ? OR (d.session_id = ? AND
-				 (d.sequence < ? OR (d.sequence = ? AND d.event_id < ?))))
-			)`)
-			*args = append(*args, cursor.Timestamp, cursor.Timestamp, cursor.SessionID, cursor.SessionID, cursor.Sequence, cursor.Sequence, cursor.EventID)
+			statement.WriteString(` AND (s.last_activity_at > ? OR
+				(s.last_activity_at = ? AND b.session_id < ?))`)
+			*args = append(*args, cursor.LastActivity, cursor.LastActivity, cursor.SessionID)
 		}
 		return
 	}
-	if cursor.Timestamp == "" {
-		statement.WriteString(` AND d.timestamp IS NULL AND
-			(d.session_id > ? OR (d.session_id = ? AND
-			 (d.sequence > ? OR (d.sequence = ? AND d.event_id > ?))))`)
-		*args = append(*args, cursor.SessionID, cursor.SessionID, cursor.Sequence, cursor.Sequence, cursor.EventID)
+	if cursor.LastActivity == "" {
+		statement.WriteString(` AND s.last_activity_at IS NULL AND b.session_id > ?`)
+		*args = append(*args, cursor.SessionID)
 	} else {
-		statement.WriteString(` AND (
-			d.timestamp IS NULL OR julianday(d.timestamp) < julianday(?) OR
-			julianday(d.timestamp) = julianday(?) AND (d.session_id > ? OR (d.session_id = ? AND
-			 (d.sequence > ? OR (d.sequence = ? AND d.event_id > ?))))
-		)`)
-		*args = append(*args, cursor.Timestamp, cursor.Timestamp, cursor.SessionID, cursor.SessionID, cursor.Sequence, cursor.Sequence, cursor.EventID)
+		statement.WriteString(` AND (s.last_activity_at IS NULL OR s.last_activity_at < ? OR
+			(s.last_activity_at = ? AND b.session_id > ?))`)
+		*args = append(*args, cursor.LastActivity, cursor.LastActivity, cursor.SessionID)
 	}
 }
 

@@ -9,12 +9,10 @@ import (
 	"testing"
 
 	"github.com/pooya79/AgentSession/internal/app"
-	"github.com/pooya79/AgentSession/internal/model"
 )
 
 func TestSearchPageEscapesResultsAndShowsSafeValidation(t *testing.T) {
 	t.Parallel()
-	resultID := model.EventID("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	handler := NewHandler(servicesStub{search: func(_ context.Context, request app.SearchRequest) (app.SearchPage, error) {
 		if request.Query == "bad" {
 			return app.SearchPage{}, &app.SearchValidationError{Code: "invalid_quote", Message: "Search query contains an unterminated quote."}
@@ -23,9 +21,10 @@ func TestSearchPageEscapesResultsAndShowsSafeValidation(t *testing.T) {
 			State:        app.EvidenceComplete,
 			Availability: app.SearchAvailability{State: app.EvidenceComplete, Sessions: 1, Usable: 1},
 			Results: []app.SearchResult{{
-				SessionID: "session", EventID: resultID, Kind: model.EventKindMessage,
-				Summary: `<script>alert("summary")</script>`,
-				Snippet: `<img src=x onerror=alert("snippet")>`,
+				SessionID: "session", Title: `<script>alert("title")</script>`,
+				AgentName: `<img src=x onerror=alert("agent")>`, EventCount: 4, MatchCount: 2,
+				BestMatchSummary: `<script>alert("summary")</script>`,
+				Snippet:          `<img src=x onerror=alert("snippet")>`,
 			}},
 		}, nil
 	}})
@@ -35,6 +34,7 @@ func TestSearchPageEscapesResultsAndShowsSafeValidation(t *testing.T) {
 	body := response.Body.String()
 	if response.Code != http.StatusOK || strings.Contains(body, "<script>") || strings.Contains(body, "<img") ||
 		!strings.Contains(body, "&lt;script&gt;") || !strings.Contains(body, "&lt;img") ||
+		!strings.Contains(body, `href="/sessions/session"`) || !strings.Contains(body, "2 matching events") ||
 		response.Header().Get("Content-Type") != "text/html; charset=utf-8" {
 		t.Fatalf("search response %d:\n%s", response.Code, body)
 	}

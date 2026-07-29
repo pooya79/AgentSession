@@ -22,26 +22,27 @@ type Availability struct {
 // Cursor identifies a stable position and direction within a search result
 // generation.
 type Cursor struct {
-	Rank       float64
-	Timestamp  string
-	SessionID  model.SessionID
-	Sequence   int64
-	EventID    model.EventID
-	Before     bool
-	Generation string
-	Ranked     bool
+	Rank         float64
+	LastActivity string
+	SessionID    model.SessionID
+	Before       bool
+	Generation   string
+	Ranked       bool
 }
 
-// Row is one repository-level search match before application mapping.
+// Row is one repository-level matching session before application mapping.
 type Row struct {
-	SessionID model.SessionID
-	EventID   model.EventID
-	Sequence  int64
-	Timestamp string
-	Kind      model.EventKind
-	Summary   string
-	Snippet   string
-	Rank      float64
+	SessionID        model.SessionID
+	Title            string
+	SessionSummary   string
+	FirstUserMessage string
+	AgentName        string
+	LastActivity     string
+	EventCount       int64
+	MatchCount       int64
+	BestMatchSummary string
+	Snippet          string
+	Rank             float64
 }
 
 // Rows contains a bounded repository result set and its availability snapshot.

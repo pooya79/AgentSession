@@ -77,6 +77,28 @@ func TestSessionNavigationLoadsInlinePayloadsAndEnterTogglesCards(t *testing.T) 
 	}
 }
 
+func TestSearchSelectionOpensSessionTimeline(t *testing.T) {
+	services := &servicesStub{timeline: app.TimelinePage{State: app.EvidenceComplete}}
+	m := New(context.Background(), services)
+	m.screen = searchScreen
+	m.searchState.page = app.SearchPage{Results: []app.SearchResult{{SessionID: "matched-session"}}}
+
+	updated, cmd := m.openSelection()
+	got := updated.(*Model)
+	if got.screen != timelineScreen || got.sessionsState.selected != "matched-session" ||
+		!got.timelineState.loading || cmd == nil {
+		t.Fatalf("search selection = screen %d, session %q, loading %v, cmd %v",
+			got.screen, got.sessionsState.selected, got.timelineState.loading, cmd != nil)
+	}
+	message := cmd().(timelineLoadedMsg)
+	if message.err != nil || len(services.timelineCalls) != 1 ||
+		services.timelineCalls[0].SessionID != "matched-session" ||
+		!services.timelineCalls[0].IncludePayloads || len(services.detailCalls) != 0 {
+		t.Fatalf("timeline navigation = msg %#v, timeline calls %#v, detail calls %#v",
+			message, services.timelineCalls, services.detailCalls)
+	}
+}
+
 func TestTimelineNearEndAppendsChunksSuppressesDuplicatesAndRetries(t *testing.T) {
 	services := &servicesStub{}
 	m := New(context.Background(), services)
