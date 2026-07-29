@@ -98,7 +98,7 @@ func TestSourceAndProbeResultValidation(t *testing.T) {
 
 	sources := []Source{
 		{},
-		{ID: "source-1", Size: -1, Open: validSource.Open},
+		{ID: "source-1", Size: -1, OpenAt: validSource.OpenAt},
 		{ID: "source-1"},
 	}
 	for i, source := range sources {
@@ -130,14 +130,14 @@ func TestProbePreservesOpenErrorsAndCancellation(t *testing.T) {
 		if err := ctx.Err(); err != nil {
 			return ProbeResult{}, err
 		}
-		stream, err := source.Open(ctx)
+		stream, err := source.OpenFrom(ctx, 0)
 		if err != nil {
 			return ProbeResult{}, fmt.Errorf("probe source %q: %w", source.ID, err)
 		}
 		defer stream.Close()
 		return ProbeResult{Confidence: ProbePossible, FormatVersion: "1"}, nil
 	}}
-	source := Source{ID: "source-1", Open: func(context.Context) (io.ReadCloser, error) {
+	source := Source{ID: "source-1", OpenAt: func(context.Context, int64) (io.ReadCloser, error) {
 		return nil, openErr
 	}}
 	if _, err := adapter.Probe(context.Background(), source); !errors.Is(err, openErr) {
@@ -344,7 +344,7 @@ func TestStreamingImportStopsWithoutReadingVeryLargeSource(t *testing.T) {
 		ID:   "source-large",
 		Size: records * int64(len(syntheticLine)),
 		Hint: "fixture-format",
-		Open: func(context.Context) (io.ReadCloser, error) {
+		OpenAt: func(context.Context, int64) (io.ReadCloser, error) {
 			return reader, nil
 		},
 	}
@@ -486,7 +486,7 @@ func TestStreamingImportHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	adapter := &fakeAdapter{importFn: streamSyntheticRecords}
-	source := Source{ID: "source-cancelled", Size: int64(len(syntheticLine)), Open: func(context.Context) (io.ReadCloser, error) {
+	source := Source{ID: "source-cancelled", Size: int64(len(syntheticLine)), OpenAt: func(context.Context, int64) (io.ReadCloser, error) {
 		return &syntheticRecordReader{remaining: 1}, nil
 	}}
 	err := adapter.runImport(ctx, source, nil, sinkFunc(func(context.Context, RecordEnvelope) error {
@@ -603,8 +603,8 @@ func (s *lifecycleSink) Complete(_ context.Context, session model.Session, _ Imp
 }
 
 func testSource(content []byte) Source {
-	return Source{ID: "source-1", Size: int64(len(content)), Hint: "fixture-format", Open: func(context.Context) (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(content)), nil
+	return Source{ID: "source-1", Size: int64(len(content)), Hint: "fixture-format", OpenAt: func(_ context.Context, offset int64) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(content[offset:])), nil
 	}}
 }
 

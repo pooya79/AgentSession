@@ -321,6 +321,6 @@ func parseProjectionTime(value string) (time.Time, error) {
 	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
 		return parsed, nil
 	}
-	// Early migrations used SQLite's default timestamp representation.
+	// SQLite-generated timestamps use this representation.
 	return time.Parse("2006-01-02 15:04:05", value)
 }

@@ -41,6 +41,4 @@ complete builder availability and a server-rendered confirmation.
   continues.
 - Web handlers remain consumers of shared services and do not parse sources,
   query SQLite, or build projections directly.
-- The route change intentionally has no compatibility redirects because the
-  previous web surface was an early scaffold.
 - Polling is the sole production live-update mechanism.

@@ -15,7 +15,7 @@ import (
 )
 
 func managedSource(id model.SourceID) importer.Source {
-	return importer.Source{ID: id, Open: func(context.Context) (io.ReadCloser, error) {
+	return importer.Source{ID: id, OpenAt: func(context.Context, int64) (io.ReadCloser, error) {
 		return io.NopCloser(&emptyReader{}), nil
 	}}
 }

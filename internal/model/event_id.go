@@ -45,16 +45,15 @@ type EventIDInput struct {
 	RecordHash     string
 
 	// EventOrdinal is the zero-based position of a canonical event among all
-	// events normalized from the same raw record. Zero preserves the original
-	// fallback identity for compatibility; positive ordinals disambiguate
-	// additional events from that record.
+	// events normalized from the same raw record. Zero omits the ordinal from
+	// the hash; positive ordinals disambiguate additional events.
 	EventOrdinal uint64
 }
 
 // NewEventID returns a deterministic ID for canonical imported evidence. It
 // hashes a versioned domain tag, identity tier, and length-prefixed fields with
 // SHA-256 so field boundaries cannot collide. The resulting evt_ value is a
-// persisted compatibility contract and must not change without a new version.
+// persisted identity contract and must remain stable.
 func NewEventID(input EventIDInput) (EventID, error) {
 	if input.Native != nil {
 		return eventIDFromNative(*input.Native)

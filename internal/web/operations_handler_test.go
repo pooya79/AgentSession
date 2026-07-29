@@ -98,15 +98,11 @@ func TestDocumentsExposeAccessibleStructureAndControls(t *testing.T) {
 	}
 }
 
-func TestRejectsOldRoutesAndMalformedQueries(t *testing.T) {
+func TestRejectsMalformedQueries(t *testing.T) {
 	handler := NewHandler(servicesStub{})
-	for _, target := range []string{"/timeline?session=s", "/imports", "/projections/retry", "/?unknown=1", "/?cursor=a&cursor=b", "/indexing?notice=unknown"} {
+	for _, target := range []string{"/?unknown=1", "/?cursor=a&cursor=b", "/indexing?notice=unknown"} {
 		response := request(t, handler, http.MethodGet, target, nil, nil)
-		if target == "/imports" || target == "/projections/retry" || strings.HasPrefix(target, "/timeline") {
-			if response.Code != http.StatusNotFound {
-				t.Fatalf("%s status = %d, want 404", target, response.Code)
-			}
-		} else if response.Code != http.StatusBadRequest {
+		if response.Code != http.StatusBadRequest {
 			t.Fatalf("%s status = %d, want 400", target, response.Code)
 		}
 	}

@@ -10,6 +10,8 @@ The application is an observer, not an agent runner. It must remain offline-capa
 
 This repository is at an early scaffold stage. Before changing code, inspect the repository and follow the commands and conventions that actually exist. Do not introduce speculative infrastructure or broad abstractions solely to match the intended layout below.
 
+AgentSession has not been released, so do not preserve compatibility with earlier repository states or add legacy aliases, fallback paths, redirects, or tests that only prove removed behavior stays removed. Keep AgentSession-owned schemas, migrations, cursors, and format identities at their initial v1 until a released version creates a real compatibility requirement; this does not apply to distinct upstream session formats that adapters must parse.
+
 ## Architecture
 
 Build a modular Go monolith with one shared application layer and two presentation layers:

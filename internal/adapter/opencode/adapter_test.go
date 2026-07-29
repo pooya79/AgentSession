@@ -346,7 +346,7 @@ func TestProbeRequiresSchemaAndLocalPath(t *testing.T) {
 		t.Fatalf("probe = %#v", probe)
 	}
 	jsonl := []byte(`{"type":"message"}`)
-	stream := importer.Source{ID: "jsonl", Size: int64(len(jsonl)), Open: func(context.Context) (io.ReadCloser, error) {
+	stream := importer.Source{ID: "jsonl", Size: int64(len(jsonl)), OpenAt: func(context.Context, int64) (io.ReadCloser, error) {
 		return io.NopCloser(strings.NewReader(string(jsonl))), nil
 	}}
 	probe, err = adapter.Probe(ctx, stream)

@@ -107,7 +107,7 @@ func TestExplorerOverviewAndSessionFieldsRemainIndependent(t *testing.T) {
 	}
 }
 
-func TestExplorerOverviewHonorsCancellationAndRejectsObsoleteSessionCursor(t *testing.T) {
+func TestExplorerOverviewHonorsCancellation(t *testing.T) {
 	t.Parallel()
 
 	explorer, _ := NewExplorer(&explorationReaderStub{})
@@ -115,13 +115,6 @@ func TestExplorerOverviewHonorsCancellationAndRejectsObsoleteSessionCursor(t *te
 	cancel()
 	if _, err := explorer.LibraryOverview(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("LibraryOverview(canceled) error = %v", err)
-	}
-	obsolete, err := encodeCursor(cursorEnvelope{Kind: "sessions", SessionID: "session"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := explorer.ListSessions(context.Background(), ListSessionsRequest{Cursor: obsolete}); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("obsolete cursor error = %v", err)
 	}
 }
 func (s *explorationReaderStub) SessionExists(context.Context, model.SessionID) (bool, error) {

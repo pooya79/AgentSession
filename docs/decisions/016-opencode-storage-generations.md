@@ -32,10 +32,10 @@ empty session uses the newest structurally available generation. Rows from
 different generations are never combined.
 
 The selected format and durable marker convention are part of cursor state.
-Normalization version 2, cursor version 2, fingerprint version 2, or a selected
-generation change classifies an existing logical source as replaced. Existing
-staged reconciliation then atomically replaces the prior AgentSession-owned
-canonical generation and projections.
+The initial normalization, cursor, and fingerprint contracts are version 1.
+A future identity change or a selected generation change classifies an existing
+logical source as replaced. Staged reconciliation then atomically replaces the
+prior AgentSession-owned canonical generation and projections.
 
 Only selected session and timeline rows are retained. `session_input` and
 `session_context_epoch` are detection-only and are neither retained nor

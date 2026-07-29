@@ -586,7 +586,7 @@ func TestPrepareStopsAtWindowAndReplaysEveryByte(t *testing.T) {
 	tracker := &trackingReadCloser{reader: bytes.NewReader(bytesValue)}
 	source := importer.Source{
 		ID: "bounded-window", Size: int64(len(bytesValue)),
-		Open: func(context.Context) (io.ReadCloser, error) { return tracker, nil },
+		OpenAt: func(context.Context, int64) (io.ReadCloser, error) { return tracker, nil },
 	}
 	view, err := New().Prepare(context.Background(), source)
 	if err != nil {
@@ -658,7 +658,7 @@ func TestLargeRecordIsDeliveredBeforeRemainderIsConsumed(t *testing.T) {
 	tail := "{\"timestamp\":\"2025-01-01T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"agent_message\",\"message\":\"" + strings.Repeat("y", 128<<10) + "\"}}\n"
 	data := []byte(meta + large + tail)
 	tracker := &trackingReadCloser{reader: bytes.NewReader(data)}
-	source := importer.Source{ID: "streaming", Size: int64(len(data)), Open: func(context.Context) (io.ReadCloser, error) { return tracker, nil }}
+	source := importer.Source{ID: "streaming", Size: int64(len(data)), OpenAt: func(context.Context, int64) (io.ReadCloser, error) { return tracker, nil }}
 	view, err := New().Prepare(context.Background(), source)
 	if err != nil {
 		t.Fatal(err)
@@ -680,7 +680,7 @@ func TestReadFailureStopsPrepare(t *testing.T) {
 	line := []byte("{\"timestamp\":\"2025-01-01T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"read-failure\"}}\n")
 	want := errors.New("injected read failure")
 	reader := &trackingReadCloser{reader: bytes.NewReader(line), failAfter: len(line), fail: want}
-	source := importer.Source{ID: "read-failure", Size: int64(len(line) + 1), Open: func(context.Context) (io.ReadCloser, error) { return reader, nil }}
+	source := importer.Source{ID: "read-failure", Size: int64(len(line) + 1), OpenAt: func(context.Context, int64) (io.ReadCloser, error) { return reader, nil }}
 	if _, err := New().Prepare(context.Background(), source); !errors.Is(err, want) {
 		t.Fatalf("Prepare() error = %v, want injected failure", err)
 	}

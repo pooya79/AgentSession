@@ -432,7 +432,7 @@ func importerSource(source discovery.Source) (importer.Source, error) {
 	}
 	return importer.Source{
 		ID: source.ID, Size: info.Size(), Hint: string(source.Kind), LocalPath: filepath.Clean(source.Path),
-		Open: func(ctx context.Context) (io.ReadCloser, error) { return openAt(ctx, 0) }, OpenAt: openAt,
+		OpenAt: openAt,
 	}, nil
 }
 

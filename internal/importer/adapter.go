@@ -13,24 +13,16 @@ import (
 	"github.com/pooya79/AgentSession/internal/model"
 )
 
-// SourceOpener opens a new read-only view of a source. Probe and Import each
-// receive the same capability and must open and close their own view.
-type SourceOpener func(context.Context) (io.ReadCloser, error)
-
 // SourceOffsetOpener opens a read-only view positioned at offset. Discovery
-// should provide this capability for seekable local sources so verified
-// appends do not have to scan the committed prefix a second time.
+// provides this capability for seekable local sources.
 type SourceOffsetOpener func(context.Context, int64) (io.ReadCloser, error)
 
 // Source is the source-neutral input consumed by adapters. Hint is advisory
 // discovery metadata; shared import code must not interpret it as a format.
 type Source struct {
-	ID   model.SourceID
-	Size int64
-	Hint string
-	Open SourceOpener
-	// OpenAt is optional for compatibility with non-seekable sources. When it
-	// is absent, OpenFrom falls back to opening at zero and discarding bytes.
+	ID     model.SourceID
+	Size   int64
+	Hint   string
 	OpenAt SourceOffsetOpener
 	// LocalPath is an optional, validated absolute path capability for adapters
 	// that must open a local database through its native read-only driver.
@@ -50,14 +42,13 @@ func (s Source) Validate() error {
 			return fmt.Errorf("source local path must be a clean absolute path")
 		}
 	}
-	if s.Open == nil && s.OpenAt == nil && s.LocalPath == "" {
-		return fmt.Errorf("source opener, offset opener, or local path is required")
+	if s.OpenAt == nil && s.LocalPath == "" {
+		return fmt.Errorf("source offset opener or local path is required")
 	}
 	return nil
 }
 
-// OpenFrom opens a source at an absolute byte offset. An offset opener avoids
-// re-reading an already verified prefix; the fallback remains streaming.
+// OpenFrom opens a source at an absolute byte offset.
 func (s Source) OpenFrom(ctx context.Context, offset int64) (io.ReadCloser, error) {
 	if offset < 0 {
 		return nil, fmt.Errorf("source offset must not be negative")
@@ -65,35 +56,21 @@ func (s Source) OpenFrom(ctx context.Context, offset int64) (io.ReadCloser, erro
 	if s.OpenAt != nil {
 		return s.OpenAt(ctx, offset)
 	}
-	if s.Open == nil {
-		if s.LocalPath == "" {
-			return nil, fmt.Errorf("source opener is required")
-		}
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		file, err := os.Open(s.LocalPath)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := file.Seek(offset, io.SeekStart); err != nil {
-			_ = file.Close()
-			return nil, fmt.Errorf("position local source at offset %d: %w", offset, err)
-		}
-		return file, nil
+	if s.LocalPath == "" {
+		return nil, fmt.Errorf("source offset opener is required")
 	}
-	stream, err := s.Open(ctx)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	file, err := os.Open(s.LocalPath)
 	if err != nil {
 		return nil, err
 	}
-	if offset == 0 {
-		return stream, nil
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("position local source at offset %d: %w", offset, err)
 	}
-	if _, err := io.CopyN(io.Discard, stream, offset); err != nil {
-		_ = stream.Close()
-		return nil, fmt.Errorf("position source at offset %d: %w", offset, err)
-	}
-	return stream, nil
+	return file, nil
 }
 
 // ProbeConfidence expresses how strongly an adapter recognizes a source.

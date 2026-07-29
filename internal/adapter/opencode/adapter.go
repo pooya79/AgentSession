@@ -26,14 +26,14 @@ import (
 
 const (
 	AdapterVersion       model.Version = "1"
-	FormatVersion        model.Version = "opencode-sqlite-container-v2"
+	FormatVersion        model.Version = "opencode-sqlite-container-v1"
 	LegacyFormatVersion  model.Version = "opencode-sqlite-message-part-v1"
 	MessageFormatVersion model.Version = "opencode-sqlite-session-message-v1"
 	EventFormatVersion   model.Version = "opencode-sqlite-durable-event-v1"
 	ModelVersion         model.Version = "1"
-	NormalizationVersion model.Version = "2"
-	CursorVersion        model.Version = "opencode-logical-cursor-v2"
-	fingerprintVersion                 = "opencode-logical-fingerprint-v2"
+	NormalizationVersion model.Version = "1"
+	CursorVersion        model.Version = "opencode-logical-cursor-v1"
+	fingerprintVersion                 = "opencode-logical-fingerprint-v1"
 )
 
 type generation string

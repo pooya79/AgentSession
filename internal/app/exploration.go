@@ -524,9 +524,8 @@ type cursorEnvelope struct {
 
 const (
 	// sessionCursorKind separates session cursors from timeline cursors.
-	sessionCursorKind = "sessions-last-activity"
-	// sessionCursorVersion invalidates cursors created under obsolete ordering.
-	sessionCursorVersion = 3
+	sessionCursorKind    = "sessions-last-activity"
+	sessionCursorVersion = 1
 )
 
 // pageLimit applies the default and rejects unbounded exploration reads.
@@ -542,9 +541,6 @@ func pageLimit(limit int) (int, error) {
 
 // encodeCursor serializes a versioned cursor without exposing storage details.
 func encodeCursor(cursor cursorEnvelope) (string, error) {
-	// Session pagination changed from start time to maintained activity time.
-	// Giving that cursor its own version prevents an older cursor from
-	// silently skipping or repeating sessions under the new ordering.
 	cursor.Version = 1
 	if cursor.Kind == sessionCursorKind {
 		cursor.Version = sessionCursorVersion

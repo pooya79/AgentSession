@@ -357,13 +357,13 @@ func TestWindowsUNCPathsRemainAbsolute(t *testing.T) {
 	}
 }
 
-func TestSourceIDCompatibility(t *testing.T) {
+func TestSourceIDIsStable(t *testing.T) {
 	t.Parallel()
 
 	got := newSourceID(SourceCodex, "/home/test/.codex/sessions/2026/07/18/rollout-a.jsonl", "linux")
 	const want = "src_0ae011f262e18ec534e8db1189f9ead3b6d1abe9c5da4d8fec7d756bf70be302"
 	if got != want {
-		t.Fatalf("newSourceID() = %q, want compatibility value %q", got, want)
+		t.Fatalf("newSourceID() = %q, want stable value %q", got, want)
 	}
 }
 

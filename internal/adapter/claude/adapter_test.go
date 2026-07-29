@@ -619,7 +619,7 @@ func TestCancellationSinkBackpressureAndReadFailure(t *testing.T) {
 
 	line := []byte("{\"type\":\"user\",\"sessionId\":\"read-failure\",\"message\":{\"role\":\"user\",\"content\":\"ok\"}}\n")
 	reader := &trackingReadCloser{reader: bytes.NewReader(line), failAfter: len(line), fail: errors.New("injected read failure")}
-	failing := importer.Source{ID: "read-failure", Size: int64(len(line) + 1), Open: func(context.Context) (io.ReadCloser, error) { return reader, nil }}
+	failing := importer.Source{ID: "read-failure", Size: int64(len(line) + 1), OpenAt: func(context.Context, int64) (io.ReadCloser, error) { return reader, nil }}
 	if _, err := New().Prepare(context.Background(), failing); !errors.Is(err, reader.fail) {
 		t.Fatalf("Prepare() error = %v, want read failure", err)
 	}
@@ -657,7 +657,7 @@ func TestOversizedRecordIsDeliveredBeforeRemainingSourceIsConsumed(t *testing.T)
 	data := bytes.Join(records, []byte("\n"))
 	data = append(data, '\n')
 	tracker := &trackingReadCloser{reader: bytes.NewReader(data)}
-	source := importer.Source{ID: "streaming", Size: int64(len(data)), Open: func(context.Context) (io.ReadCloser, error) { return tracker, nil }}
+	source := importer.Source{ID: "streaming", Size: int64(len(data)), OpenAt: func(context.Context, int64) (io.ReadCloser, error) { return tracker, nil }}
 	view, err := New().Prepare(context.Background(), source)
 	if err != nil {
 		t.Fatal(err)
