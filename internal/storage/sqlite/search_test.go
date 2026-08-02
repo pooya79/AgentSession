@@ -2,7 +2,9 @@ package sqlite
 
 import (
 	"context"
+	"math"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pooya79/AgentSession/internal/model"
@@ -189,6 +191,132 @@ func TestSearchExcludesStaleProjection(t *testing.T) {
 	page, err := store.Search(ctx, search.Query{}, nil, 10)
 	if err != nil || page.Availability.Usable != 0 || page.Availability.Stale != 1 || len(page.Items) != 0 {
 		t.Fatalf("stale availability = (%#v, %v)", page, err)
+	}
+}
+
+func TestSearchTextRankingBlendsBM25WithMatchingEventRecency(t *testing.T) {
+	t.Parallel()
+
+	t.Run("bounded linear decay", func(t *testing.T) {
+		rows := searchRankedFixtures(t, []searchRankFixture{
+			{sessionID: "recent", timestamp: "2026-08-01T00:00:00Z", content: "alpha"},
+			{sessionID: "midpoint", timestamp: "2026-06-17T00:00:00Z", content: "alpha"},
+			{sessionID: "expired", timestamp: "2026-05-03T00:00:00Z", content: "alpha"},
+			{sessionID: "missing", content: "alpha"},
+		})
+		ranks := make(map[model.SessionID]float64, len(rows))
+		for _, row := range rows {
+			ranks[row.SessionID] = row.Rank
+		}
+		if len(ranks) != 4 {
+			t.Fatalf("ranked rows = %#v", rows)
+		}
+		assertClose(t, ranks["recent"]/ranks["expired"], 1.35)
+		assertClose(t, ranks["midpoint"]/ranks["expired"], 1.175)
+		assertClose(t, ranks["missing"]/ranks["expired"], 1.0)
+		if rows[0].SessionID != "recent" || rows[1].SessionID != "midpoint" {
+			t.Fatalf("recency order = %#v", rows)
+		}
+	})
+
+	t.Run("recent match beats slightly stronger old match", func(t *testing.T) {
+		rows := searchRankedFixtures(t, []searchRankFixture{
+			{sessionID: "recent", timestamp: "2026-08-01T00:00:00Z", content: "alpha"},
+			{sessionID: "slightly-stronger-old", timestamp: "2026-05-03T00:00:00Z", content: "alpha alpha"},
+		})
+		if len(rows) != 2 || rows[0].SessionID != "recent" {
+			t.Fatalf("balanced ranking order = %#v", rows)
+		}
+	})
+
+	t.Run("future timestamp is capped at the maximum boost", func(t *testing.T) {
+		rows := searchRankedFixtures(t, []searchRankFixture{
+			{sessionID: "future", timestamp: "2099-01-01T00:00:00Z", content: "alpha"},
+			{sessionID: "missing", content: "alpha"},
+		})
+		if len(rows) != 2 || rows[0].SessionID != "future" {
+			t.Fatalf("future timestamp order = %#v", rows)
+		}
+		assertClose(t, rows[0].Rank/rows[1].Rank, 1.35)
+	})
+
+	t.Run("substantially stronger old match keeps relevance priority", func(t *testing.T) {
+		rows := searchRankedFixtures(t, []searchRankFixture{
+			{
+				sessionID: "recent", timestamp: "2026-08-01T00:00:00Z",
+				content: "alpha " + strings.Repeat("unrelated ", 100),
+			},
+			{
+				sessionID: "strong-old", timestamp: "2026-05-03T00:00:00Z",
+				content: strings.Repeat("alpha ", 8),
+			},
+		})
+		if len(rows) != 2 || rows[0].SessionID != "strong-old" {
+			t.Fatalf("relevance-first ranking order = %#v", rows)
+		}
+	})
+}
+
+type searchRankFixture struct {
+	sessionID model.SessionID
+	timestamp string
+	content   string
+}
+
+func searchRankedFixtures(t *testing.T, fixtures []searchRankFixture) []search.Row {
+	t.Helper()
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "ranking.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	store, err := NewImportStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, fixture := range fixtures {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO sessions (
+				id, title, summary, source_id, adapter_name, adapter_version,
+				format_version, model_version, normalization_version, canonical_revision
+			) VALUES (?, '', '', 'source', 'adapter', '1', '1', '1', '1', 1);
+			INSERT INTO session_projection_states (
+				session_id, kind, status, target_version, target_revision,
+				ready_version, ready_revision, updated_at
+			) VALUES (?, 'search', 'ready', '1', 1, '1', 1, CURRENT_TIMESTAMP);
+		`, fixture.sessionID, fixture.sessionID); err != nil {
+			t.Fatal(err)
+		}
+		document := search.Document{
+			SessionID: fixture.sessionID, EventID: testSearchEventID(string(rune('a' + index))),
+			Sequence: 1, Timestamp: fixture.timestamp, Kind: model.EventKindMessage,
+			Summary: "alpha", Content: fixture.content,
+			ProjectionVersion: "1", CanonicalRevision: 1,
+		}
+		token := "token-" + string(rune('a'+index))
+		if err := store.StageSearchDocuments(ctx, token, []search.Document{document}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.PublishSearchDocuments(ctx, token, fixture.sessionID, "1", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	query, err := search.Parse("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := store.Search(ctx, query, nil, len(fixtures))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return page.Items
+}
+
+func assertClose(t *testing.T, got, want float64) {
+	t.Helper()
+	if math.Abs(got-want) > 1e-9 {
+		t.Fatalf("value = %.12f, want %.12f", got, want)
 	}
 }
 

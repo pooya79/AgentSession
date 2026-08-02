@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -79,6 +81,16 @@ func TestSearchMapsSessionResultsAndBindsCursorToQuery(t *testing.T) {
 		Query: "different", Cursor: page.NextCursor, Limit: 10,
 	}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("query-mismatched cursor error = %v", err)
+	}
+	legacyHash := sha256.Sum256([]byte("alpha"))
+	legacyCursor := testSearchCursor(t, searchCursorEnvelope{
+		Version: 1, Scope: "sessions", QueryHash: hex.EncodeToString(legacyHash[:]),
+		Generation: "generation", Ranked: true, Rank: -1.25, SessionID: "session-a",
+	})
+	if _, err := service.Search(context.Background(), SearchRequest{
+		Query: "alpha", Cursor: legacyCursor, Limit: 10,
+	}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("old-ranking cursor error = %v", err)
 	}
 
 	repository.rows = search.Rows{

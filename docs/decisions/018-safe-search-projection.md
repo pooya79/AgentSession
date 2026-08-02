@@ -40,14 +40,22 @@ partial when some are usable, and unavailable when sessions exist but none are
 usable. Stale rows are never a fallback.
 
 Search groups matching documents by session so each session appears at most
-once. Text results order sessions by their best FTS-ranked event and session
-ID. Filter-only results order sessions by canonical last activity with missing
+once. Text ranking multiplies each event's FTS5 BM25 rank by a bounded recency
+factor. The newest timestamp in the current ready search corpus is the stable
+age anchor; an event receives a 35 percent boost at that anchor, fading
+linearly to no boost after 90 days. Missing timestamps receive no boost and
+future timestamps cannot exceed the maximum. This matching-event policy avoids
+refreshing old evidence merely because its session has unrelated later
+activity. The best adjusted event ranks its session, with session ID as the
+stable tie-breaker.
+
+Filter-only results order sessions by canonical last activity with missing
 activity last, then session ID. The best-ranked text event, or newest
 filter-matching event, supplies a bounded explanatory snippet and the result
 also reports the exact number of matching events. Bidirectional keyset cursors
-are bound to the raw query and current usable projection generation. Snippets
-are plain text; HTML escaping and terminal sanitization remain presentation
-responsibilities.
+are bound to the raw query, the ranking-policy identity, and the current usable
+projection generation. Snippets are plain text; HTML escaping and terminal
+sanitization remain presentation responsibilities.
 
 ## Consequences
 
@@ -59,6 +67,8 @@ responsibilities.
   projections are distinguishable and excluded from results.
 - Session-level FTS ranking is stable for an unchanged projection, with stable
   identifiers providing deterministic tie-breakers.
+- Recency is relative to indexed canonical evidence rather than the wall clock,
+  preserving deterministic offline results and stable pagination.
 - Search results open the matching session timeline rather than treating an
   individual event as the primary result.
 - Adding searchable canonical fields or changing limits requires a projection

@@ -15,6 +15,8 @@ import (
 	"github.com/pooya79/AgentSession/internal/search"
 )
 
+const searchRankingPolicy = "bm25-event-recency-35pct-90d-v1"
+
 // SearchValidationError is a presentation-safe invalid request with a stable
 // code. It unwraps to ErrInvalidRequest for shared error handling.
 type SearchValidationError struct {
@@ -253,7 +255,7 @@ func decodeSearchCursor(value, queryHash string, ranked bool) (search.Cursor, er
 }
 
 func hashSearchQuery(value string) string {
-	sum := sha256.Sum256([]byte(value))
+	sum := sha256.Sum256([]byte(searchRankingPolicy + "\x00" + value))
 	return hex.EncodeToString(sum[:])
 }
 

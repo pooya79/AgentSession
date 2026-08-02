@@ -15,6 +15,11 @@ import (
 
 var _ search.Repository = (*ImportStore)(nil)
 
+const (
+	searchRecencyBoostMaximum = 0.35
+	searchRecencyWindowDays   = 90.0
+)
+
 // Search queries current ready search projections and returns a bounded page.
 func (s *ImportStore) Search(ctx context.Context, query search.Query, cursor *search.Cursor, limit int) (search.Rows, error) {
 	availability, err := s.searchAvailability(ctx)
@@ -143,11 +148,28 @@ func appendRawMatchesCTE(statement *strings.Builder, args *[]any, query search.Q
 
 func appendRankedRawMatchesCTE(statement *strings.Builder, args *[]any, query search.Query) {
 	statement.WriteString(`
-		WITH raw_matches AS (
+		WITH corpus_anchor AS (
+			SELECT MAX(julianday(d.timestamp)) AS timestamp_day
+			FROM search_documents d
+			JOIN session_projection_states p
+			  ON p.session_id = d.session_id AND p.kind = 'search'
+			 AND p.status = 'ready'
+			 AND p.ready_version = p.target_version
+			 AND p.ready_revision = p.target_revision
+			 AND d.projection_version = p.ready_version
+			 AND d.canonical_revision = p.ready_revision
+			WHERE d.timestamp IS NOT NULL
+		),
+		raw_matches AS (
 			SELECT d.session_id, d.event_id, d.sequence, d.timestamp,
 			       d.summary AS match_summary,
 			       substr(snippet(search_documents_fts, -1, '', '', ' … ', 24), 1, 512) AS snippet,
-			       bm25(search_documents_fts) AS rank
+			       bm25(search_documents_fts) *
+			       CASE
+			         WHEN julianday(d.timestamp) IS NULL OR corpus_anchor.timestamp_day IS NULL THEN 1.0
+			         ELSE 1.0 + ? * MAX(0.0, 1.0 -
+			           MAX(0.0, corpus_anchor.timestamp_day - julianday(d.timestamp)) / ?)
+			       END AS rank
 			FROM search_documents_fts
 			JOIN search_documents d ON d.rowid = search_documents_fts.rowid
 			JOIN session_projection_states p
@@ -157,9 +179,10 @@ func appendRankedRawMatchesCTE(statement *strings.Builder, args *[]any, query se
 			 AND p.ready_revision = p.target_revision
 			 AND d.projection_version = p.ready_version
 			 AND d.canonical_revision = p.ready_revision
+			CROSS JOIN corpus_anchor
 			WHERE search_documents_fts MATCH ?
 	`)
-	*args = append(*args, ftsExpression(query.Text))
+	*args = append(*args, searchRecencyBoostMaximum, searchRecencyWindowDays, ftsExpression(query.Text))
 }
 
 func appendUnrankedRawMatchesCTE(statement *strings.Builder) {
