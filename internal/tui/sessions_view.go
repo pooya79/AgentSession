@@ -14,7 +14,7 @@ import (
 // sessionsLines renders the current bounded sessions page and its evidence
 // quality without exposing source-specific data.
 func (m Model) sessionsLines() []string {
-	lines := []string{"Sessions dashboard"}
+	lines := []string{"[FOCUS] Sessions · last activity ↓"}
 	lines = append(lines, m.metricsLines()...)
 	switch {
 	case m.sessionsState.loading && len(m.sessionsState.page.Sessions) == 0:
@@ -35,127 +35,101 @@ func (m Model) sessionsLines() []string {
 	} else if m.sessionsState.loading {
 		lines = append(lines, m.spinner.View()+" Refreshing sessions; current evidence remains visible.")
 	}
-	switch m.sessionsState.page.State {
-	case app.EvidencePartial:
-		lines = append(lines, "Some sessions contain diagnostics; available evidence is still shown.")
-	case app.EvidenceUnavailable:
+	if m.sessionsState.page.State == app.EvidenceUnavailable {
 		lines = append(lines, "Session evidence is unavailable.")
 	}
 	lines = append(lines, "")
-	compactLayout := m.renderWidth() < 72 || m.height > 0 && m.height < 18
-	rowHeight := 1
-	if m.renderWidth() < 110 {
-		rowHeight = 2
+	width := m.renderWidth()
+	wide := width >= 110 && (m.height <= 0 || m.height >= 24)
+	listWidth := width
+	if wide {
+		listWidth = min(52, width*45/100)
 	}
-	if compactLayout {
-		rowHeight = 3
-	}
-	visible := max(1, (m.contentHeight()-len(lines)-1)/rowHeight)
+	available := max(1, m.contentHeight()-len(lines)-1)
+	visible := max(1, available/3)
 	start := windowStart(m.sessionsState.cursor, len(m.sessionsState.page.Sessions), visible)
 	end := min(len(m.sessionsState.page.Sessions), start+visible)
-	if !compactLayout && m.renderWidth() >= 110 {
-		lines = append(lines, "  LAST ACTIVITY ↓       AGENT       SESSION / PREVIEW                         EVENTS  CANONICAL  DERIVED")
-	} else if !compactLayout {
-		lines = append(lines, "  LAST ACTIVITY ↓       AGENT       SESSION / PREVIEW")
-	}
+	var list []string
 	for i := start; i < end; i++ {
 		session := m.sessionsState.page.Sessions[i]
 		marker := " "
 		if i == m.sessionsState.cursor {
 			marker = ">"
 		}
-		title := sessionLabel(session)
-		agent := strings.ToUpper(session.AgentName)
-		activity := formatActivity(session.LastActivityAt)
-		derived := compactDerived(session.Projections)
-		if compactLayout {
-			lines = append(lines, fmt.Sprintf("%s %s", marker, truncateCell(title, max(1, m.renderWidth()-2))))
-			lines = append(lines, fmt.Sprintf("  %s · %s · %d events · canonical %s · %s",
-				activity, agent, session.EventCount, evidenceLabel(session.State), derived))
-			if session.Preview != "" && session.Preview != title {
-				lines = append(lines, "  "+truncateCell(session.Preview, max(1, m.renderWidth()-2)))
-			} else {
-				lines = append(lines, "")
+		list = append(list,
+			marker+" "+truncateCell(sessionLabel(session), listWidth-2),
+			"  "+truncateCell(strings.ToUpper(safeInline(session.AgentName))+" · "+formatActivity(session.LastActivityAt), listWidth-2),
+			"  "+truncateCell(fmt.Sprintf("%d events · %s", session.EventCount, evidenceLabel(session.State)), listWidth-2),
+		)
+	}
+	if wide {
+		preview := m.sessionPreviewLines(width - listWidth - 3)
+		for i := range min(available, max(len(list), len(preview))) {
+			left, right := "", ""
+			if i < len(list) {
+				left = list[i]
 			}
-		} else if m.renderWidth() < 110 {
-			lines = append(lines, fmt.Sprintf("%s %-21s %-11s %s",
-				marker, truncateCell(activity, 21), truncateCell(agent, 11),
-				truncateCell(title, max(1, m.renderWidth()-38))))
-			lines = append(lines, fmt.Sprintf("  %d events · canonical %s · %s%s",
-				session.EventCount, evidenceLabel(session.State), derived, previewSuffix(session, m.renderWidth()-46)))
-		} else {
-			label := title
-			if session.Preview != "" && session.Preview != title {
-				label += " — " + session.Preview
+			if i < len(preview) {
+				right = preview[i]
 			}
-			lines = append(lines, fmt.Sprintf("%s %-21s %-11s %-41s %6d  %-9s  %s",
-				marker, truncateCell(activity, 21), truncateCell(agent, 11),
-				truncateCell(label, 41), session.EventCount, evidenceLabel(session.State), derived))
+			lines = append(lines, padCell(left, listWidth)+" │ "+right)
 		}
+	} else {
+		lines = append(lines, list...)
 	}
 	lines = append(lines, fmt.Sprintf("Page %d · %d shown%s", m.sessionsState.pageNumber+1, len(m.sessionsState.page.Sessions), nextLabel(m.sessionsState.page.NextCursor)))
+	return lines
+}
+
+// sessionPreviewLines uses only the already-loaded shared session summary.
+// No source-specific interpretation or inferred session outcome belongs here.
+func (m Model) sessionPreviewLines(width int) []string {
+	session := m.sessionsState.page.Sessions[m.sessionsState.cursor]
+	lines := []string{"PREVIEW", truncateCell(sessionLabel(session), width)}
+	lines = append(lines, "Outcome: Unknown (not assessed)",
+		"Canonical: "+evidenceLabel(session.State),
+		"Interpretation: "+reportedString(string(session.Interpretation.State)),
+		fmt.Sprintf("%d events · %d Unknown · %d diagnostics", session.EventCount, session.Interpretation.UnknownEvents, session.Diagnostics.Total),
+		compactDerived(session.Projections), "", "Recorded preview")
+	preview := session.Preview
+	if preview == "" {
+		preview = "Preview evidence unavailable."
+	}
+	lines = append(lines, strings.Split(ansi.Wrap(safeInline(preview), width, ""), "\n")...)
+	if session.Summary != "" && session.Summary != session.Preview {
+		lines = append(lines, "", "Recorded summary")
+		lines = append(lines, strings.Split(ansi.Wrap(safeInline(session.Summary), width, ""), "\n")...)
+	}
 	return lines
 }
 
 func (m Model) metricsLines() []string {
 	labels := []string{"Sessions", "Events", "Agents", "Evidence issues"}
 	values := []int64{m.sessionsState.overview.Sessions, m.sessionsState.overview.Events, m.sessionsState.overview.Agents, m.sessionsState.overview.IssueSessions}
-	render := func(index, width int) string {
-		value := fmt.Sprintf("%d", values[index])
+	parts := make([]string, len(labels))
+	for i := range labels {
+		value := fmt.Sprintf("%d", values[i])
 		if m.sessionsState.overviewLoading {
 			value = "…"
 		} else if m.sessionsState.overviewErr != nil {
 			value = "— unavailable"
 		}
-		return "┌" + strings.Repeat("─", max(1, width-2)) + "┐\n" +
-			"│" + padCell(" "+labels[index], max(1, width-2)) + "│\n" +
-			"│" + padCell(" "+value, max(1, width-2)) + "│\n" +
-			"└" + strings.Repeat("─", max(1, width-2)) + "┘"
+		parts[i] = labels[i] + " " + value
 	}
-	width := m.renderWidth()
-	if width < 72 || m.height > 0 && m.height < 18 {
-		parts := make([]string, len(labels))
-		for i := range labels {
-			value := fmt.Sprintf("%d", values[i])
-			if m.sessionsState.overviewLoading {
-				value = "…"
-			} else if m.sessionsState.overviewErr != nil {
-				value = "— unavailable"
-			}
-			parts[i] = labels[i] + " " + value
-		}
-		return []string{strings.Join(parts, " · ")}
+	if m.renderWidth() < 80 {
+		return []string{strings.Join(parts[:2], " · "), strings.Join(parts[2:], " · ")}
 	}
-	columns := 4
-	if width < 110 {
-		columns = 2
-	}
-	cardWidth := max(12, (width-(columns-1))/columns)
-	rows := make([]string, 0, 6)
-	for start := 0; start < len(labels); start += columns {
-		cards := make([][]string, 0, columns)
-		for i := start; i < min(len(labels), start+columns); i++ {
-			cards = append(cards, strings.Split(render(i, cardWidth), "\n"))
-		}
-		for line := 0; line < 4; line++ {
-			parts := make([]string, len(cards))
-			for i := range cards {
-				parts[i] = cards[i][line]
-			}
-			rows = append(rows, strings.Join(parts, " "))
-		}
-	}
-	return rows
+	return []string{strings.Join(parts, " · ")}
 }
 
 func sessionLabel(session app.SessionSummary) string {
 	if strings.TrimSpace(session.Title) != "" {
-		return session.Title
+		return safeInline(session.Title)
 	}
 	if session.Preview != "" {
-		return session.Preview
+		return safeInline(session.Preview)
 	}
-	return truncateCell(string(session.ID), 28)
+	return truncateCell(safeInline(string(session.ID)), 28)
 }
 
 func previewSuffix(session app.SessionSummary, width int) string {

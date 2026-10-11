@@ -21,13 +21,19 @@ func (m Model) View() tea.View {
 		height = 24
 	}
 
+	if width < 40 || height < 12 {
+		view := terminalView(fit([]string{"AgentSession", "Resize to at least 40×12", fmt.Sprintf("Current: %d×%d", width, height), "q quit"}, width, height))
+		view.AltScreen = true
+		return view
+	}
+
 	snapshot := m
 	snapshot.syncViewports()
 	header := "AgentSession  /  " + snapshot.screenLabel() + "  ·  local · offline · read-only"
 	if width < 40 {
 		header = "AgentSession / " + snapshot.screenLabel()
 	}
-	lines := []string{header, snapshot.indexSummary(), ""}
+	lines := []string{header}
 	var body []string
 	if snapshot.helpOpen {
 		body = strings.Split(snapshot.helpViewport.View(), "\n")
@@ -39,7 +45,9 @@ func (m Model) View() tea.View {
 			body = strings.Split(snapshot.indexingState.viewport.View(), "\n")
 		case timelineScreen:
 			body = snapshot.timelineLines()
-		case detailScreen, findingsScreen:
+		case detailScreen:
+			body = append(snapshot.detailHeaderLines(), strings.Split(snapshot.detailState.viewport.View(), "\n")...)
+		case findingsScreen:
 			body = strings.Split(snapshot.detailState.viewport.View(), "\n")
 		case projectionsScreen:
 			body = snapshot.projectionLines()
@@ -48,7 +56,10 @@ func (m Model) View() tea.View {
 		}
 	}
 	lines = append(lines, body...)
-	lines = append(lines, "", snapshot.helpLine(width))
+	for len(lines) < height-2 {
+		lines = append(lines, "")
+	}
+	lines = append(lines, snapshot.statusLine(), snapshot.helpLine(width))
 	lines = snapshot.styleLines(lines)
 
 	view := terminalView(fit(lines, width, height))

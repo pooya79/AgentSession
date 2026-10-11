@@ -53,7 +53,16 @@ type timelineState struct {
 
 // detailState retains the last usable detail while a refresh is in flight or
 // fails, allowing the UI to represent partial availability honestly.
+type inspectionPosition struct{ line, column int }
+
 type detailState struct {
+	unwrapped         bool
+	renderedUnwrapped bool
+	renderedPositions []inspectionPosition
+	anchor            inspectionPosition
+	anchorSet         bool
+	lastTop, lastX    int
+
 	detail            app.EventDetail
 	loading           bool
 	err               error

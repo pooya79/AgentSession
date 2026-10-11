@@ -11,14 +11,13 @@ import (
 	"github.com/pooya79/AgentSession/internal/model"
 )
 
-// contentHeight reserves rows for the title, persistent index summary, and
-// contextual help.
+// contentHeight reserves one title row and two persistent footer rows.
 func (m Model) contentHeight() int {
 	height := m.height
 	if height <= 0 {
 		height = 24
 	}
-	return max(1, height-5)
+	return max(1, height-3)
 }
 
 // renderWidth supplies a deterministic fallback before the first resize event.
@@ -31,15 +30,31 @@ func (m Model) renderWidth() int {
 
 // helpLine uses compact controls when terminal dimensions are constrained.
 func (m Model) helpLine(width int) string {
-	if width < 40 || m.height > 0 && m.height < 8 {
-		return "↑↓ move · ? help · q quit"
+	if width < 80 || m.height > 0 && m.height < 24 {
+		switch m.screen {
+		case sessionsScreen:
+			return "↑↓ select · Enter open · ? help"
+		case timelineScreen:
+			return "↑↓ scroll · [/] target · ? help"
+		case searchScreen:
+			if m.searchState.editing {
+				return "Type query · Enter search · Esc results"
+			}
+			return "Enter timeline · / edit · ? help"
+		case detailScreen:
+			return "w wrap · ←→ pan · Esc back · ? help"
+		default:
+			return "↑↓ move · Esc back · ? help"
+		}
 	}
 	if width < 96 || m.height > 0 && m.height < 18 {
 		switch m.screen {
 		case sessionsScreen:
 			return "↑↓ move · Enter open · i index · r rescan · ? help · q quit"
 		case timelineScreen:
-			return "↑↓ scroll · [/] events · Enter details · f rules · Esc back · ? help"
+			return "↑↓ scroll · [/] events · Enter toggle · d inspect · Esc back · ? help"
+		case detailScreen:
+			return "↑↓ scroll · w wrap · ←→ pan · Esc back · ? help"
 		case projectionsScreen:
 			return "↑↓ select · t retry · b rebuild · Esc back · ? help"
 		case searchScreen:
@@ -64,7 +79,7 @@ func (m Model) helpLine(width int) string {
 	case indexingScreen:
 		return "↑/↓ or j/k scroll · g/G top/bottom · PgUp/PgDn scroll · Esc sessions · r rescan · ? help · q quit"
 	case timelineScreen:
-		return "↑↓ j/k scroll · PgUp/PgDn · [/] events · Enter details · u raw · f rules · x projections · Esc back · ? help"
+		return "↑↓ j/k scroll · PgUp/PgDn · [/] events · Enter toggle · d inspect · u raw · f rules · x projections · Esc back · ? help"
 	case projectionsScreen:
 		return "↑/↓ select · r refresh · t retry implemented · b rebuild selected · a rebuild all when available · Esc timeline · ? help"
 	default:
@@ -72,6 +87,65 @@ func (m Model) helpLine(width int) string {
 			return "↑/↓ or j/k scroll · u inspect Unknown · Esc timeline · r reload · ? help · q quit"
 		}
 		return "↑/↓ or j/k scroll · g/G top/bottom · PgUp/PgDn scroll · Esc timeline · r reload · ? help · q quit"
+	}
+}
+
+// statusLine keeps the action target visible even when it is outside the
+// reading viewport. Scrolling never changes which event Enter acts on.
+func (m Model) statusLine() string {
+	if m.screen == detailScreen && !m.helpOpen {
+		if m.detailState.unwrapped {
+			return fmt.Sprintf("Unwrapped · column %d · ←/→ pan · w wrap", m.detailState.viewport.XOffset()+1)
+		}
+		return "Wrapped · w unwrapped inspection · Esc restores timeline"
+	}
+	if m.screen == timelineScreen && !m.helpOpen && m.timelineState.selected != "" {
+		state := "open"
+		if m.timelineState.page.Payloads[m.timelineState.selected] == nil {
+			state = "unavailable"
+		}
+		if timelinePayloadTruncatable(m.timelineState.page.Payloads[m.timelineState.selected]) {
+			state = "+ closed"
+			if m.timelineState.expanded[m.timelineState.selected] {
+				state = "- expanded"
+			}
+		}
+		if m.renderWidth() < 80 {
+			state = strings.TrimSuffix(strings.TrimSuffix(state, " closed"), " expanded")
+		}
+		if r, ok := m.timelineState.cachedRanges[m.timelineState.selected]; ok {
+			top := m.timelineState.viewport.YOffset()
+			if r.end <= top || r.start >= top+m.timelineState.viewport.Height() {
+				state += " off-screen"
+			}
+		}
+		target := truncateCell(string(m.timelineState.selected), max(8, m.renderWidth()/3-8))
+		if len(m.timelineState.page.Events) > m.timelineState.cursor {
+			sequence := fmt.Sprintf("#%d", m.timelineState.page.Events[m.timelineState.cursor].Sequence)
+			if m.renderWidth() < 80 {
+				target = sequence
+			} else {
+				target += " " + sequence
+			}
+		}
+		return "Target: " + target + " · " + state + " · " + m.compactIndexStatus()
+	}
+	return m.indexSummary()
+}
+
+func (m Model) compactIndexStatus() string {
+	status := m.indexingState.status
+	switch {
+	case m.indexingState.err != nil || status.Failure != "":
+		return "Index: ERROR · i in sessions"
+	case status.Active:
+		return "Index: indexing"
+	case status.Phase == app.ImportAllIssues:
+		return "Index: issues"
+	case status.Phase == app.ImportAllUpToDate:
+		return "Index: complete"
+	default:
+		return "Index: unavailable"
 	}
 }
 

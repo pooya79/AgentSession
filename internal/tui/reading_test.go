@@ -322,10 +322,13 @@ func TestTimelineDelayedContinuationCannotOverwriteInspectionOrBlockRetry(t *tes
 	m, _ = updateModel(t, m, cmd())
 	close(services.release)
 	m, _ = updateModel(t, m, <-completed)
-	if got := m.View().Content; strings.Contains(got, "STALE EVIDENCE") || !strings.Contains(got, "FRESH RAW EVIDENCE") {
+	if got := m.View().Content; strings.Contains(got, "STALE EVIDENCE") {
 		t.Fatalf("late result routed into current evidence:\n%s", got)
 	}
 	m, cmd = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if got := m.View().Content; !strings.Contains(got, "FRESH RAW EVIDENCE") {
+		t.Fatalf("requested evidence is not reachable by scrolling:\n%s", got)
+	}
 	if cmd == nil {
 		t.Fatal("superseded continuation left retry blocked")
 	}

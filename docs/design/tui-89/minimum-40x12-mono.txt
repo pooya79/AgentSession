@@ -1,0 +1,12 @@
+AgentSession  /  Timeline  ·  local · o…
+Timeline · session fixture-17 · canonic…
+> #3 - Command · RECORDED FAILURE (ex…
+  Invocation ID: test
+  Phase: completed
+  Command: go test ./internal/client
+  Working directory: /fixture/project
+  Exit status: 1
+  Output:     --- FAIL: TestRetryTimeo
+              ut (0.03s)
+Target: #3 · - · Index: complete
+↑↓ scroll · [/] target · ? help

@@ -82,8 +82,8 @@ func TestTimelineCardRendererCoversCanonicalKindsAndSanitizes(t *testing.T) {
 func TestTimelineActivitiesHideDetailsUntilExpanded(t *testing.T) {
 	event := model.EventSummary{ID: "event", Sequence: 1, Kind: model.EventKindSummary}
 	payload := model.SummaryData{Category: model.SummaryCategorySummary, Text: strings.Repeat("界", 120)}
-	collapsed := timelineCardLines(event, payload, 20, true, false, app.UnknownEvidenceInspection{}, false, nil)
-	expanded := timelineCardLines(event, payload, 20, true, true, app.UnknownEvidenceInspection{}, false, nil)
+	collapsed := timelineCardLines(event, payload, 40, true, false, app.UnknownEvidenceInspection{}, false, nil)
+	expanded := timelineCardLines(event, payload, 40, true, true, app.UnknownEvidenceInspection{}, false, nil)
 	if len(collapsed) >= len(expanded) || strings.Contains(strings.Join(collapsed, "\n"), "界") ||
 		!strings.Contains(strings.Join(collapsed, "\n"), "Session summary") {
 		t.Fatalf("collapsed=%q\nexpanded=%q", collapsed, expanded)

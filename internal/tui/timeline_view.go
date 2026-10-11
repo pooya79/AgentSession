@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/pooya79/AgentSession/internal/app"
@@ -10,26 +9,14 @@ import (
 // timelineHeaderLines is shared by viewport sizing and timeline rendering so
 // optional diagnostics and continuation failures reserve exactly their rows.
 func (m Model) timelineHeaderLines() []string {
-	lines := []string{"Timeline · session " + string(m.sessionsState.selected), "Rule assessments: press f to inspect; x for projection readiness."}
-	if m.timelineState.selected != "" {
-		action := "message (always open)"
-		if timelinePayloadTruncatable(m.timelineState.page.Payloads[m.timelineState.selected]) {
-			action = "Enter to show details"
-			if m.timelineState.expanded[m.timelineState.selected] {
-				action = "Enter to hide details"
-			}
-		}
-		lines[1] = "Target: " + safeInline(string(m.timelineState.selected))
-		lines = append(lines, action)
-	}
+	label := "Timeline · session " + truncateCell(string(m.sessionsState.selected), max(12, m.renderWidth()/2-20))
 	for _, session := range m.sessionsState.page.Sessions {
 		if session.ID == m.sessionsState.selected {
-			lines = append(lines, fmt.Sprintf("Canonical evidence: %s · projections: %d usable, %d pending, %d running, %d failed, %d stale",
-				evidenceLabel(session.State), session.Projections.Usable, session.Projections.Pending,
-				session.Projections.Running, session.Projections.Failed, session.Projections.Stale))
+			label += " · canonical " + evidenceLabel(session.State)
 			break
 		}
 	}
+	lines := []string{label}
 	if len(m.timelineState.page.Events) > 0 {
 		if m.timelineState.err != nil {
 			lines = append(lines, "Timeline read failed: "+safeInline(m.timelineState.err.Error()), "Loaded evidence retained · r to retry; scroll near end for continuation.")
@@ -37,7 +24,6 @@ func (m Model) timelineHeaderLines() []string {
 		if m.timelineState.page.State == app.EvidencePartial {
 			lines = append(lines, diagnosticSummary(m.timelineState.page.Diagnostics))
 		}
-		lines = append(lines, "")
 	}
 	if m.timelineState.notice != "" {
 		lines = append(lines, m.timelineState.notice)

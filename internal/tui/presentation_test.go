@@ -123,10 +123,10 @@ func TestSessionsDashboardResponsiveLayoutsAndUnavailableMetrics(t *testing.T) {
 		height int
 		want   []string
 	}{
-		{name: "wide", width: 120, height: 30, want: []string{"LAST ACTIVITY ↓", "SESSION / PREVIEW", "CODEX", "2026-07-25 09:30 UTC", "┌"}},
-		{name: "medium", width: 90, height: 30, want: []string{"LAST ACTIVITY ↓", "CODEX", "Sessions", "Evidence issues"}},
-		{name: "narrow", width: 60, height: 30, want: []string{"Sessions 12 · Events 345 · Agents 3", "CODEX", "first user request"}},
-		{name: "short", width: 120, height: 14, want: []string{"Sessions 12 · Events 345 · Agents 3", "CODEX", "first user request"}},
+		{name: "wide", width: 120, height: 30, want: []string{"last activity ↓", "PREVIEW", "CODEX", "2026-07-25 09:30 UTC", "Outcome: Unknown"}},
+		{name: "medium", width: 90, height: 30, want: []string{"last activity ↓", "CODEX", "Sessions", "Evidence issues"}},
+		{name: "narrow", width: 60, height: 30, want: []string{"Sessions 12 · Events 345", "Agents 3", "CODEX", "first user request"}},
+		{name: "short", width: 120, height: 14, want: []string{"Sessions 12 · Events 345", "Agents 3", "CODEX", "first user request"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -171,7 +171,7 @@ func TestSessionsDashboardSanitizesHostileFieldsAndRestoresSelection(t *testing.
 	if strings.Contains(content, "attacker.invalid") || strings.Contains(content, "\x1b]8;") {
 		t.Fatalf("hostile terminal content survived sanitization: %q", content)
 	}
-	if !strings.Contains(ansi.Strip(content), "> 202") && !strings.Contains(ansi.Strip(content), "> —") {
+	if !strings.Contains(ansi.Strip(content), "> selected") {
 		t.Fatalf("focused row marker missing: %q", ansi.Strip(content))
 	}
 }

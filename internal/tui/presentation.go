@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/pooya79/AgentSession/internal/sanitization"
 )
 
@@ -19,13 +20,11 @@ func (m *Model) syncViewports() {
 	m.timelineState.viewport.SetContentLines(timelineLines)
 	m.restoreTimelineAnchor(timelineRanges)
 
-	m.detailState.viewport.SetWidth(width)
-	m.detailState.viewport.SetHeight(height)
-	if m.screen == findingsScreen {
-		m.detailState.viewport.SetContentLines(sanitizeLines(m.findingsContentLines()))
-	} else {
-		m.detailState.viewport.SetContentLines(sanitizeLines(m.detailContentLines()))
+	detailHeight := height
+	if m.screen == detailScreen {
+		detailHeight -= len(m.detailHeaderLines())
 	}
+	m.syncDetailViewport(width, max(1, detailHeight))
 
 	m.indexingState.viewport.SetWidth(width)
 	m.indexingState.viewport.SetHeight(height)
@@ -34,6 +33,75 @@ func (m *Model) syncViewports() {
 	m.helpViewport.SetWidth(width)
 	m.helpViewport.SetHeight(height)
 	m.helpViewport.SetContentLines(sanitizeLines(m.helpLines()))
+}
+
+// syncDetailViewport retains a logical line and display-cell position through
+// wrapping, panning and viewport clamping. The independent anchor survives when
+// a short unwrapped document cannot put its target line at the top of the view.
+func (m *Model) syncDetailViewport(width, height int) {
+	state := &m.detailState
+	if m.screen == findingsScreen {
+		state.viewport.SoftWrap = true
+		state.viewport.SetWidth(width)
+		state.viewport.SetHeight(height)
+		state.viewport.SetContentLines(sanitizeLines(m.findingsContentLines()))
+		return
+	}
+	top, x := state.viewport.YOffset(), state.viewport.XOffset()
+	if !state.anchorSet || top != state.lastTop {
+		if len(state.renderedPositions) > 0 {
+			state.anchor = state.renderedPositions[min(top, len(state.renderedPositions)-1)]
+			if state.renderedUnwrapped {
+				state.anchor.column += x
+			}
+		}
+	} else if state.renderedUnwrapped && x != state.lastX {
+		state.anchor.column = max(0, state.anchor.column+x-state.lastX)
+	}
+	var lines []string
+	var positions []inspectionPosition
+	physical := m.detailContentLines()
+	for index, line := range physical {
+		line = terminalText(line)
+		parts := []string{line}
+		indent := 0
+		if !state.unwrapped {
+			parts = wrapIndented(line, width, true)
+			indent = len(line) - len(strings.TrimLeft(line, " "))
+			if indent >= width {
+				indent = 0
+			}
+		}
+		column := 0
+		for i, part := range parts {
+			positions = append(positions, inspectionPosition{line: index, column: column})
+			lines = append(lines, part)
+			column += ansi.StringWidth(part)
+			if i > 0 {
+				column -= indent
+			}
+		}
+	}
+	state.anchor.line = clamp(state.anchor.line, 0, max(0, len(physical)-1))
+	row := 0
+	for i, position := range positions {
+		if position.line == state.anchor.line && position.column <= state.anchor.column {
+			row = i
+		}
+	}
+	state.viewport.SoftWrap = false
+	state.viewport.SetWidth(width)
+	state.viewport.SetHeight(height)
+	state.viewport.SetContentLines(lines)
+	state.viewport.SetYOffset(row)
+	if state.unwrapped {
+		state.viewport.SetXOffset(state.anchor.column)
+	} else {
+		state.viewport.SetXOffset(0)
+	}
+	state.renderedPositions, state.renderedUnwrapped = positions, state.unwrapped
+	state.anchorSet = true
+	state.lastTop, state.lastX = state.viewport.YOffset(), state.viewport.XOffset()
 }
 
 // sanitizeLines establishes the terminal-safety boundary before any
@@ -56,8 +124,10 @@ func (m Model) styleLines(lines []string) []string {
 		switch {
 		case index == 0:
 			safe[index] = m.theme.accent.Render(line)
-		case index == 1:
+		case strings.Contains(line, "CANONICAL INDEX"):
 			safe[index] = styleStatusLine(m.theme, line)
+		case strings.HasPrefix(line, "[FOCUS]"):
+			safe[index] = m.theme.title.Render(line)
 		case strings.HasPrefix(line, ">"):
 			safe[index] = m.theme.focused.Render(line)
 		case strings.Contains(line, "╭─ You"):
@@ -68,14 +138,12 @@ func (m Model) styleLines(lines []string) []string {
 			safe[index] = m.theme.muted.Render(line)
 		case strings.Contains(lower, "could not ") || strings.Contains(lower, "unavailable") || strings.Contains(lower, "failed"):
 			safe[index] = m.theme.danger.Render(line)
-		case strings.Contains(lower, "partial") || strings.Contains(lower, "issues") || strings.Contains(lower, "diagnostic"):
+		case strings.Contains(lower, "outcome: unknown") || strings.Contains(lower, "partial") || strings.Contains(lower, "issues") || strings.Contains(lower, "diagnostic"):
 			safe[index] = m.theme.warning.Render(line)
-		case strings.HasPrefix(trimmed, "+") && !strings.HasPrefix(trimmed, "+++"):
-			safe[index] = m.theme.success.Render(line)
-		case strings.HasPrefix(trimmed, "-") && !strings.HasPrefix(trimmed, "---"):
+		case strings.Contains(line, "RECORDED FAILURE") || strings.Contains(line, "Index: ERROR"):
 			safe[index] = m.theme.danger.Render(line)
-		case strings.Contains(lower, "complete") || strings.Contains(lower, "usable"):
-			safe[index] = m.theme.success.Render(line)
+		case strings.HasPrefix(trimmed, "§ ") || strings.HasPrefix(trimmed, "Code ·"):
+			safe[index] = m.theme.title.Render(line)
 		case strings.HasPrefix(lower, "loading") || strings.Contains(lower, "active"):
 			safe[index] = m.theme.info.Render(line)
 		case index == len(safe)-1:
@@ -135,11 +203,14 @@ func (m Model) helpLines() []string {
 		"  Home/End     jump to the first or last row",
 		"  g/G          jump to the first or last row",
 		"  PgUp/PgDn    scroll long evidence",
+		"  n/p          next/previous session or search page",
 		"  Enter        open a session or expand/collapse a timeline card",
-		"  Target       timeline header names the event Enter and u act on",
+		"  Target       footer names the event Enter, d and u act on",
 		"  Esc          return to the previous reading context, including search",
 		"",
 		"Actions",
+		"  d            inspect selected normalized event",
+		"  w            toggle wrapping in inspection; ←/→ pan when unwrapped",
 		"  r            refresh current evidence; rescan from overview screens",
 		"  f            inspect rule assessments from the timeline",
 		"  [ / ]        select assessment evidence; Enter opens timeline context",

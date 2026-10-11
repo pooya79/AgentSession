@@ -124,6 +124,16 @@ The application provides ordered evidence, summaries, diagnostics, and search,
 but it does not yet reduce a long session into a concise explanation of what
 was important, what changed, or what remained unresolved.
 
+The TUI session browser shows a selected-session preview at 110 columns and
+above. The timeline uses the full main area, with inline safe Markdown, compact
+technical disclosure, a persistent action target and `d` normalized inspection.
+Inspection offers wrapped text or `w` plus horizontal panning. Layouts are
+validated at 80×24, compact down to 40×12, with an explicit resize state below
+that size. [Production PTY captures](design/tui-89/README.md) include dark,
+light and color-free output. The preview uses available shared summary fields;
+repository/branch/latest-event fields and session outcome assessment are not
+added by the TUI.
+
 Session titles, summaries, previews, and timestamps depend on evidence that
 varies by source. Their usefulness across a representative real-world library
 has not yet been established.

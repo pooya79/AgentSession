@@ -2,7 +2,10 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/pooya79/AgentSession/internal/app"
 	"github.com/pooya79/AgentSession/internal/app/apptest"
@@ -74,4 +77,37 @@ func TestOpenCodeEvidenceServiceContract(t *testing.T) {
 func TestMoveConfigurationServiceContract(t *testing.T) {
 	fixture := apptest.NewFixture(t, "moves_configuration.jsonl")
 	apptest.RunMoveConfigurationContract(t, contractConsumer{services: fixture.Services})
+}
+
+func TestTimelineDisplaysSharedSummaryCategoriesWithoutDisclosure(t *testing.T) {
+	for _, test := range []struct {
+		category model.SummaryCategory
+		title    string
+	}{
+		{model.SummaryCategoryReasoning, "Reasoning"},
+		{model.SummaryCategoryContext, "Conversation context"},
+		{model.SummaryCategoryPlan, "Plan update"},
+		{model.SummaryCategorySummary, "Session summary"},
+	} {
+		t.Run(string(test.category), func(t *testing.T) {
+			event := testEvent("summary", 7)
+			event.Kind = model.EventKindSummary
+			services := &servicesStub{timeline: app.TimelinePage{State: app.EvidenceComplete, Events: []model.EventSummary{event}, Payloads: map[model.EventID]model.NormalizedData{event.ID: model.SummaryData{Category: test.category, Text: "RETAINED SUMMARY TEXT"}}}}
+			m := New(t.Context(), services)
+			m.sessionsState.loading = false
+			m.sessionsState.page = app.SessionPage{Sessions: []app.SessionSummary{testSession("session-1")}}
+			m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			m, _ = updateModel(t, m, cmd())
+			if got := m.View().Content; !strings.Contains(got, test.title) || strings.Contains(got, "RETAINED SUMMARY TEXT") {
+				t.Fatalf("category/disclosure mismatch:\n%s", got)
+			}
+			m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			if got := m.View().Content; !strings.Contains(got, "RETAINED SUMMARY TEXT") {
+				t.Fatalf("summary not accessible:\n%s", got)
+			}
+			if len(services.timelineCalls) != 1 || !services.timelineCalls[0].IncludePayloads {
+				t.Fatalf("unexpected shared service request: %+v", services.timelineCalls)
+			}
+		})
+	}
 }

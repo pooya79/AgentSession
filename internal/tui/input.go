@@ -102,6 +102,37 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		}
 	}
 	switch key {
+	case "d":
+		if m.screen == timelineScreen && len(m.timelineState.page.Events) > 0 {
+			event := m.timelineState.page.Events[m.timelineState.cursor]
+			m.pushNavigation()
+			m.screen = detailScreen
+			vp := m.detailState.viewport
+			vp.GotoTop()
+			vp.SetXOffset(0)
+			m.detailState = detailState{viewport: vp, loading: true}
+			ctx := m.replaceRequest()
+			return m, m.startSpinner(loadDetail(ctx, m.services, m.requestGeneration, m.sessionsState.selected, event.ID))
+		}
+	case "w":
+		if m.screen == detailScreen {
+			m.detailState.unwrapped = !m.detailState.unwrapped
+			m.syncViewports()
+			if !m.detailState.unwrapped {
+				m.detailState.viewport.SetXOffset(0)
+			}
+			return m, nil
+		}
+	case "left", "right":
+		if m.screen == detailScreen && m.detailState.unwrapped {
+			m.syncViewports()
+			if key == "left" {
+				m.detailState.viewport.ScrollLeft(8)
+			} else {
+				m.detailState.viewport.ScrollRight(8)
+			}
+			return m, nil
+		}
 	case "f":
 		if m.screen == timelineScreen {
 			m.pushNavigation()

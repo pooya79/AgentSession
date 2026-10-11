@@ -34,7 +34,7 @@ func TestInitStartsImportAllAndLoadsSessions(t *testing.T) {
 	if services.startCalls != 1 || len(services.sessionCalls) != 1 {
 		t.Fatalf("startup calls = start %d, sessions %d", services.startCalls, len(services.sessionCalls))
 	}
-	if got := m.View().Content; !strings.Contains(got, "Sessions dashboard") || strings.Contains(got, "Select source") {
+	if got := m.View().Content; !strings.Contains(got, "[FOCUS] Sessions") || strings.Contains(got, "Select source") {
 		t.Fatalf("startup view = %q", got)
 	}
 }

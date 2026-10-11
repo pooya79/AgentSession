@@ -161,7 +161,6 @@ func (m *Model) refresh() (tea.Model, tea.Cmd) {
 		m.detailState.inspection = app.UnknownEvidenceInspection{}
 		m.detailState.inspectionErr = nil
 		m.detailState.inspectionLoading = false
-		m.detailState.viewport.GotoTop()
 		event := m.timelineState.page.Events[m.timelineState.cursor]
 		return m, m.startSpinner(loadDetail(ctx, m.services, m.requestGeneration, m.sessionsState.selected, event.ID))
 	}

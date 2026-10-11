@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -9,8 +8,25 @@ import (
 	"github.com/pooya79/AgentSession/internal/model"
 )
 
-// detailContentLines renders normalized evidence as indented JSON and never renders
-// the retained raw-record contents.
+// detailHeaderLines keeps event identity/result visible while payload text is
+// panned horizontally. Full envelope metadata remains in the scrolling body.
+func (m Model) detailHeaderLines() []string {
+	event := m.detailState.detail.Event
+	if event.ID == "" {
+		return []string{"Inspection · normalized evidence"}
+	}
+	title := strings.TrimPrefix(timelineActivityTitle(m.detailState.detail.Payload, string(event.Kind)), "▸ ")
+	lines := []string{fmt.Sprintf("Inspection #%d · %s", event.Sequence, title)}
+	if m.detailState.err != nil {
+		lines = append(lines, "Inspection refresh failed: "+safeInline(m.detailState.err.Error()), "Previous evidence retained · r retry")
+	} else if m.detailState.loading {
+		lines = append(lines, "Refreshing inspection · previous evidence retained")
+	}
+	return lines
+}
+
+// detailContentLines renders normalized evidence for reading. Retained raw
+// records stay behind the explicit bounded/redacted Unknown inspection action.
 func (m Model) detailContentLines() []string {
 	lines := []string{"Event detail · session " + string(m.sessionsState.selected)}
 	switch {
@@ -30,6 +46,7 @@ func (m Model) detailContentLines() []string {
 	lines = append(lines,
 		fmt.Sprintf("#%d · %s · %s", event.Sequence, event.Kind, evidenceLabel(m.detailState.detail.State)),
 		event.Summary,
+		"Event: "+string(event.ID),
 		fmt.Sprintf("Interpretation: %s · %d Unknown events · %d malformed records",
 			m.detailState.detail.Interpretation.State,
 			m.detailState.detail.Interpretation.UnknownEvents,
@@ -41,17 +58,20 @@ func (m Model) detailContentLines() []string {
 			lines = append(lines, fmt.Sprintf("[%s] %s: %s", diagnostic.Severity, diagnostic.Code, diagnostic.Message))
 		}
 	}
-	lines = append(lines, "", "Normalized payload")
+	metadata := lines
+	lines = []string{"Normalized payload"}
 	if m.detailState.detail.State == app.EvidenceUnavailable || m.detailState.detail.Payload == nil {
-		lines = append(lines, "Payload evidence is unavailable.")
+		lines = append(lines, "Payload evidence is unavailable.", "")
+		lines = append(lines, metadata...)
 		return lines
 	}
-	payload, err := json.MarshalIndent(m.detailState.detail.Payload, "", "  ")
-	if err != nil {
-		lines = append(lines, "Could not render normalized payload: "+err.Error())
-	} else {
-		lines = append(lines, strings.Split(string(payload), "\n")...)
+	card := timelineCardLines(event, m.detailState.detail.Payload, 1<<30, false, true, app.UnknownEvidenceInspection{}, false, nil)
+	if timelinePayloadTruncatable(m.detailState.detail.Payload) {
+		card = card[:len(card)-1]
 	}
+	lines = append(lines, card...)
+	lines = append(lines, "", "Event metadata")
+	lines = append(lines, metadata...)
 	if event.Kind == model.EventKindUnknown {
 		lines = append(lines, "", "Retained Unknown evidence")
 		switch {

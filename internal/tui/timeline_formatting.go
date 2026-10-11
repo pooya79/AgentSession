@@ -11,19 +11,22 @@ import (
 
 func wrappedField(label, value string, width int) []string {
 	prefix := "  " + safeInline(label) + ": "
-	safe := sanitization.Terminal(strings.ToValidUTF8(value, "\uFFFD"))
+	safe := terminalText(value)
 	if safe == "" {
 		safe = "—"
 	}
-	wrapped := ansi.Wrap(safe, max(1, width-ansi.StringWidth(prefix)), "")
-	parts := strings.Split(wrapped, "\n")
-	for index := range parts {
-		if index == 0 {
-			parts[index] = prefix + parts[index]
-		} else {
-			parts[index] = strings.Repeat(" ", ansi.StringWidth(prefix)) + parts[index]
+	var parts []string
+	padding := strings.Repeat(" ", ansi.StringWidth(prefix))
+	for _, line := range strings.Split(safe, "\n") {
+		for _, wrapped := range wrapIndented(line, max(1, width-ansi.StringWidth(prefix)), true) {
+			if len(parts) == 0 {
+				parts = append(parts, prefix+wrapped)
+			} else {
+				parts = append(parts, padding+wrapped)
+			}
 		}
 	}
+
 	return parts
 }
 

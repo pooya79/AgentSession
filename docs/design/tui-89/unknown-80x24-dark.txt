@@ -1,0 +1,24 @@
+AgentSession  /  Timeline  ·  local · offline · read-only
+Timeline · session fixture-17 · canonical complete
+  Working directory: /fixture/project
+  Exit status: 1
+  Output:     --- FAIL: TestRetryTimeout (0.03s)
+                  retry_test.go:42: expected deadline exceeded; got request co
+                  mpleted after caller cancellation; request_id=fixture-00017;
+                   attempt=3; timeout=3000ms
+              FAIL example.invalid/project/internal/client
+  Enter to hide details
+
+  #4 + Command · RESULT UNAVAILABLE · go build ./...
+
+  #5 + Command · recorded exit 0 · go build ./...
+
+> #6 - Unsupported session activity · future_activity
+  Reason: unsupported_record_kind
+  Original kind: future_activity
+  Press u to inspect bounded, redacted retained evidence.
+  Enter to hide details
+
+  ╭─ Assistant
+Target: evt_a0eab2183d7b9… #6 · - expanded · Index: complete
+↑↓ scroll · [/] events · Enter toggle · d inspect · Esc back · ? help

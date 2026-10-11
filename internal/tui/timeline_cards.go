@@ -6,10 +6,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/charmbracelet/x/ansi"
 	"github.com/pooya79/AgentSession/internal/app"
 	"github.com/pooya79/AgentSession/internal/model"
-	"github.com/pooya79/AgentSession/internal/sanitization"
 )
 
 type timelineCardRange struct {
@@ -93,17 +91,15 @@ func timelineCardLines(
 		return timelineMessageLines(message, width, selected)
 	}
 
-	title := timelineActivityTitle(payload, event.Summary)
-	lines := []string{marker + " " + title}
+	title := strings.TrimPrefix(timelineActivityTitle(payload, event.Summary), "▸ ")
+	disclosure := "+"
+	if expanded {
+		disclosure = "-"
+	}
+	lines := []string{truncateCell(fmt.Sprintf("%s #%d %s %s", marker, event.Sequence, disclosure, title), width)}
 	if !expanded {
-		if _, ok := payload.(model.UnknownData); ok {
-			lines = append(lines, "  Press Enter for details · u to inspect retained evidence")
-		} else {
-			lines = append(lines, "  Press Enter to show details")
-		}
 		return lines
 	}
-	lines[0] = marker + " " + strings.Replace(title, "▸", "▾", 1)
 	addField := func(label, value string) {
 		lines = append(lines, wrappedField(label, value, width)...)
 	}
@@ -128,11 +124,22 @@ func timelineCardLines(
 		addField("Error", optionalBool(value.IsError))
 		addField("Output", value.Output)
 	case model.CommandData:
+		addField("Invocation ID", reportedString(value.InvocationID))
+		addField("Phase", reportedString(string(value.Phase)))
 		addField("Command", value.Command)
 		addField("Working directory", reportedString(value.WorkingDirectory))
 		addField("Exit status", optionalInt(value.ExitCode))
 		addField("Output", value.Output)
 	case model.PatchData:
+		addField("Change ID", reportedString(value.ChangeID))
+		addField("Status", reportedString(string(value.Status)))
+		addField("Working directory", reportedString(value.WorkingDirectory))
+		for _, change := range value.Changes {
+			addField("Change", string(change.Operation)+" · "+change.Path)
+			if change.PreviousPath != "" {
+				addField("Renamed from", change.PreviousPath)
+			}
+		}
 		addField("Paths", strings.Join(value.Paths, ", "))
 		addField("Patch", value.Text)
 	case model.FileReadData:
@@ -209,13 +216,12 @@ func timelineMessageLines(message model.MessageData, width int, selected bool) [
 		marker = ">"
 	}
 	header := marker + " ╭─ " + label
-	safe := sanitization.Terminal(strings.ToValidUTF8(message.Text, "\uFFFD"))
-	if safe == "" {
-		safe = "—"
+	text := message.Text
+	if text == "" {
+		text = "—"
 	}
-	wrapped := strings.Split(ansi.Wrap(safe, max(1, width), ""), "\n")
 	lines := []string{header}
-	lines = append(lines, wrapped...)
+	lines = append(lines, markdownLines(text, width)...)
 	return append(lines, "╰─")
 }
 
@@ -234,11 +240,25 @@ func timelineActivityTitle(payload model.NormalizedData, fallback string) string
 		if value.ToolName != "" {
 			title += " · " + value.ToolName
 		}
-		if value.IsError != nil && *value.IsError {
-			title += " · failed"
+		if value.IsError == nil {
+			title += " · RESULT UNAVAILABLE"
+		} else if *value.IsError {
+			title += " · RECORDED FAILURE"
+		} else {
+			title += " · recorded tool success"
 		}
 	case model.CommandData:
-		title = "Ran a command"
+		title = "Command · RESULT UNAVAILABLE"
+		if value.ExitCode != nil {
+			if *value.ExitCode != 0 {
+				title = fmt.Sprintf("Command · RECORDED FAILURE (exit %d)", *value.ExitCode)
+			} else {
+				title = "Command · recorded exit 0"
+			}
+		}
+		if value.Command != "" {
+			title += " · " + value.Command
+		}
 	case model.PatchData:
 		title = "Changed files"
 		if len(value.Paths) > 0 {
@@ -271,7 +291,7 @@ func timelineActivityTitle(payload model.NormalizedData, fallback string) string
 	case model.UsageData:
 		title = "Usage details"
 	case model.ErrorData:
-		title = "Error"
+		title = "Recorded error"
 		if value.Code != "" {
 			title += " · " + value.Code
 		}

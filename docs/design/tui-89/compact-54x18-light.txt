@@ -1,0 +1,18 @@
+AgentSession  /  Timeline  ·  local · offline · read-…
+Timeline · session fixture-17 · canonical complete
+> #3 - Command · RECORDED FAILURE (exit 1) · go tes…
+  Invocation ID: test
+  Phase: completed
+  Command: go test ./internal/client
+  Working directory: /fixture/project
+  Exit status: 1
+  Output:     --- FAIL: TestRetryTimeout (0.03s)
+                  retry_test.go:42: expected deadlin
+                  e exceeded; got request completed
+                  after caller cancellation; request
+                  _id=fixture-00017; attempt=3; time
+                  out=3000ms
+              FAIL example.invalid/project/internal/
+              client
+Target: #3 · - · Index: complete
+↑↓ scroll · [/] target · ? help
