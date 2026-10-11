@@ -2,10 +2,8 @@ package model
 
 import (
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"hash"
 	"strconv"
 	"strings"
 )
@@ -56,17 +54,10 @@ func NewRawRecordID(input RawRecordIDInput) (RawRecordID, error) {
 
 func hashRawRecordID(tier string, fields ...string) RawRecordID {
 	digest := sha256.New()
-	writeRawRecordHashField(digest, "agentsession:raw-record-id:v1")
-	writeRawRecordHashField(digest, tier)
+	writeHashField(digest, "agentsession:raw-record-id:v1")
+	writeHashField(digest, tier)
 	for _, field := range fields {
-		writeRawRecordHashField(digest, field)
+		writeHashField(digest, field)
 	}
 	return RawRecordID("raw_" + hex.EncodeToString(digest.Sum(nil)))
-}
-
-func writeRawRecordHashField(digest hash.Hash, value string) {
-	var length [8]byte
-	binary.BigEndian.PutUint64(length[:], uint64(len(value)))
-	_, _ = digest.Write(length[:])
-	_, _ = digest.Write([]byte(value))
 }

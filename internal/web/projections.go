@@ -14,16 +14,24 @@ func (h *handler) projectionFragment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID := model.SessionID(r.PathValue("session"))
-	status, err := h.services.ProjectionStatus(r.Context(), sessionID)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	if status.State == app.EvidenceNotFound {
-		writeError(w, http.StatusNotFound)
+	status, ok := h.loadProjectionStatus(w, r, sessionID)
+	if !ok {
 		return
 	}
 	render(w, r, http.StatusOK, projectionStatus(status, h.csrf, ""))
+}
+
+func (h *handler) loadProjectionStatus(w http.ResponseWriter, r *http.Request, sessionID model.SessionID) (app.ProjectionStatus, bool) {
+	status, err := h.services.ProjectionStatus(r.Context(), sessionID)
+	if err != nil {
+		writeServiceError(w, err)
+		return app.ProjectionStatus{}, false
+	}
+	if status.State == app.EvidenceNotFound {
+		writeError(w, http.StatusNotFound)
+		return app.ProjectionStatus{}, false
+	}
+	return status, true
 }
 
 // retryProjections schedules retryable projection work through the application service.
@@ -83,13 +91,8 @@ func (h *handler) confirmRebuildAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID := model.SessionID(r.PathValue("session"))
-	status, err := h.services.ProjectionStatus(r.Context(), sessionID)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	if status.State == app.EvidenceNotFound {
-		writeError(w, http.StatusNotFound)
+	status, ok := h.loadProjectionStatus(w, r, sessionID)
+	if !ok {
 		return
 	}
 	if !allBuildersAvailable(status) {
@@ -108,13 +111,8 @@ func (h *handler) rebuildAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID := model.SessionID(r.PathValue("session"))
-	status, err := h.services.ProjectionStatus(r.Context(), sessionID)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	if status.State == app.EvidenceNotFound {
-		writeError(w, http.StatusNotFound)
+	status, ok := h.loadProjectionStatus(w, r, sessionID)
+	if !ok {
 		return
 	}
 	if !allBuildersAvailable(status) {

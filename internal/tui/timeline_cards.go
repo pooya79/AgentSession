@@ -90,13 +90,10 @@ func timelineCardLines(
 	addField := func(label, value string) {
 		lines = append(lines, wrappedField(label, value, width)...)
 	}
-	addLong := func(label, value string) {
-		lines = append(lines, wrappedField(label, value, width)...)
-	}
 
 	switch value := payload.(type) {
 	case model.SummaryData:
-		addLong("Summary", value.Text)
+		addField("Summary", value.Text)
 	case model.ToolCallData:
 		addField("Tool", value.ToolName)
 		addField("Call ID", value.CallID)
@@ -112,15 +109,15 @@ func timelineCardLines(
 		addField("Tool", value.ToolName)
 		addField("Call ID", value.CallID)
 		addField("Error", optionalBool(value.IsError))
-		addLong("Output", value.Output)
+		addField("Output", value.Output)
 	case model.CommandData:
 		addField("Command", value.Command)
 		addField("Working directory", reportedString(value.WorkingDirectory))
 		addField("Exit status", optionalInt(value.ExitCode))
-		addLong("Output", value.Output)
+		addField("Output", value.Output)
 	case model.PatchData:
 		addField("Paths", strings.Join(value.Paths, ", "))
-		addLong("Patch", value.Text)
+		addField("Patch", value.Text)
 	case model.FileReadData:
 		addField("Path", value.Path)
 		addField("Lines", lineRange(value.StartLine, value.EndLine))
@@ -138,7 +135,7 @@ func timelineCardLines(
 		))
 	case model.ErrorData:
 		addField("Code", reportedString(value.Code))
-		addLong("Error", value.Message)
+		addField("Error", value.Message)
 	case model.UnknownData:
 		addField("Reason", string(value.Reason))
 		addField("Original kind", value.OriginalKind)
@@ -154,7 +151,7 @@ func timelineCardLines(
 			case app.EvidenceNotFound:
 				lines = append(lines, "  This event's retained evidence could not be located.")
 			default:
-				addLong("Retained evidence", inspection.Text)
+				addField("Retained evidence", inspection.Text)
 				lines = append(lines, fmt.Sprintf(
 					"  Returned %d/%d bytes · %d redactions · truncated %t",
 					inspection.ReturnedSize, inspection.OriginalSize, inspection.RedactionCount, inspection.Truncated,
