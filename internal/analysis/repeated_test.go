@@ -23,7 +23,7 @@ func (e evidence) WalkCommands(ctx context.Context, _ model.SessionID, visit fun
 			return analysis.CommandCoverage{}, err
 		}
 		for _, next := range e.commands {
-			if next.ExitCode != nil && *next.ExitCode == 0 && next.Command == c.Command && next.Directory == c.Directory && next.Start > c.Completion && (c.LaterSuccess.StartEvent == "" || next.Start < c.LaterSuccess.Start) {
+			if next.StartEvent != "" && next.ResultEvent != "" && next.Completion > next.Start && next.ExitCode != nil && *next.ExitCode == 0 && strings.TrimSpace(next.Command) == strings.TrimSpace(c.Command) && next.Directory == c.Directory && next.Start > c.Completion && (c.LaterSuccess.StartEvent == "" || next.Start < c.LaterSuccess.Start) {
 				c.LaterSuccess = analysis.CommandSuccess{StartEvent: next.StartEvent, ResultEvent: next.ResultEvent, Start: next.Start}
 			}
 		}

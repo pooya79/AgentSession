@@ -106,8 +106,8 @@ missing/contradictory evidence limit affected sequences; they do not discard
 independently established repetition. Overlapping failed invocations can establish
 repetition; a successful invocation counts as recovery only when it starts after
 that sequence's repeated failures completed. Sequences retain independent recovery
-evidence, including when invocations overlap. No severity grade or session outcome is assigned. The
-verification rules described in ADR-021 are not implemented yet.
+evidence, including when invocations overlap. No severity grade or session outcome is assigned.
+Missing verification after source changes has not been assessed yet.
 
 All invocations are evaluated. At most 12 representative event links are shown,
 with totals and an omission notice. Command text over 16 KiB, directories over
@@ -115,6 +115,55 @@ with totals and an omission notice. Command text over 16 KiB, directories over
 excluded from identity matching and reported as uncertainty. Findings contain
 counts and fixed explanations, without copying commands or output prose into
 metadata. Rebuilds use stored evidence and work after source files disappear.
+
+## Unresolved Go verification
+
+Both session-detail interfaces also show `unresolved_failed_verification`.
+It uses the same explicit command evidence and projection controls described
+above. Recognized standalone forms require a recorded working directory and
+at most one local package/directory target:
+
+| Command | Optional flags | Kind |
+| --- | --- | --- |
+| `go test` | `-v`, `-json`, `-race`, `-count=1` | Test |
+| `go vet` | `-json` | Static check |
+| `go build` | `-v`, `-trimpath` | Build |
+
+Targets may be omitted, `.`, `./...`, a literal `./path`, or `./path/...`.
+Literal path components use ASCII letters, digits, `_`, `-`, and `.`, excluding
+empty, `.`/`..`, and wildcard components; `.go` file targets are unsupported.
+Flags precede targets for vet/build; supported test flags may also follow the
+target. Unknown flags, multiple targets, import paths, compile-only/list/filter
+forms, wrappers, chains, substitutions, environment assignments, and other
+languages remain uncertain. These forms can still establish language-independent
+repeated command failures when explicit identity and results suffice. Recognition
+never executes a command or inspects a live repository. A recognized target
+describes declared scope, not actual file participation, coverage, or correctness.
+
+A failed verification is resolved only by an explicitly successful invocation
+of the exact same recorded command (ignoring surrounding whitespace) in the same
+established directory, starting after that failure completed in source order.
+Timestamps do not override source order. A different check or directory,
+parallel success, pending rerun, or assistant assurance does not prove recovery.
+A later failure reopens the condition. Tests, static checks, and builds retain
+separate counts; build success does not establish test success.
+
+The assessment reports total recognized invocations, failed invocations,
+recovered failures, conclusively unresolved failures, and uncertainty, with at
+most 12 representative event links and an omission notice. One successful rerun
+may resolve multiple earlier failures. A completed invocation with an unknown
+exit result cannot leave an unresolved failure after a later same-identity
+success starts, provided its identity and completion are established. Its exit
+stays unknown; the explanation reports these settled unknown results separately
+from known failures and recoveries. Missing starts/completions, conflicting
+results, and compatible gaps after a failure can leave recovery uncertain.
+Gaps before completion and uncertain commands of other known identities cannot
+hide its recovery. Any conclusively unresolved failure triggers the assessment
+ahead of remaining uncertainty; otherwise relevant uncertainty yields
+`insufficient_evidence`, assessed checks without an unresolved failure yield
+`not_triggered`, and an interpreted record with no applicable commands yields
+`not_applicable`. New imports reassess the record; rebuilds use stored evidence
+even after sources disappear. The missing-verification rule remains unimplemented.
 
 ## Development
 

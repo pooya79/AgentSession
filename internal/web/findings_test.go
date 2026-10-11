@@ -13,7 +13,7 @@ import (
 )
 
 func TestImportedStreamedAssessmentAndEvidenceNavigation(t *testing.T) {
-	fixture := apptest.NewFixture(t)
+	fixture := apptest.NewFixture(t, "streamed_commands.jsonl")
 	ctx := context.Background()
 	sessions, err := fixture.Services.ListSessions(ctx, app.ListSessionsRequest{})
 	if err != nil || len(sessions.Sessions) != 1 {
@@ -27,12 +27,16 @@ func TestImportedStreamedAssessmentAndEvidenceNavigation(t *testing.T) {
 	h := NewHandler(fixture.Services)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, sessionURL(session), nil))
-	for _, want := range []string{"triggered", "Invocations: 4", "failures: 2", "recovered: 1", "uncertainties: 1", "Missing, conflicting, unsupported, or oversized evidence"} {
+	for _, want := range []string{"triggered", "Invocations: 4", "failures: 2", "recovered: 1", "uncertainties: 1", "Missing, conflicting, unsupported, or oversized evidence", "unresolved_failed_verification", "unresolved: 0", "tests: 4", "static checks: 0", "builds: 0", "Missing verification has not been assessed."} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("missing %q in imported assessment", want)
 		}
 	}
-	for _, id := range page.Assessments[0].EventIDs {
+	var references []model.EventID
+	for _, assessment := range page.Assessments {
+		references = append(references, assessment.EventIDs...)
+	}
+	for _, id := range references {
 		url := focusedTimelineURL(session, id)
 		if !strings.Contains(w.Body.String(), url) {
 			t.Fatalf("missing evidence link %s", id)

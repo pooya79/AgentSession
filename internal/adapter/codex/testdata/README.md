@@ -29,6 +29,14 @@ not become Unknown events.
 
 ## Command evidence coverage
 
+`go_verification.jsonl` contains sanitized explicit command starts and results
+for Go test, vet, and build, including a duplicate failure result, recovery,
+an unknown completed exit settled by later verification,
+reopening, overlapping invocations, timestamp/source-order disagreement, and
+assistant assurance. Shared service contracts consume this fixture through the
+real importer and both interfaces. Incremental prefix tests cover all four
+assessment states; rebuild tests remove the source before rebuilding.
+
 The shapes above follow these tagged upstream definitions rather than developer
 session data:
 

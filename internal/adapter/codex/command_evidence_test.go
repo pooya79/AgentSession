@@ -63,3 +63,35 @@ func TestMalformedCommandArgumentsDoNotBecomeKnownCommands(t *testing.T) {
 		}
 	}
 }
+
+func TestGoVerificationFixtureRetainsOrderAndExplicitResults(t *testing.T) {
+	sink, _ := importSource(t, fixtureSource(t, "go_verification.jsonl"), nil, nil)
+	got := events(sink.records)
+	if len(got) != 18 {
+		t.Fatalf("events = %d", len(got))
+	}
+	again, _ := importSource(t, fixtureSource(t, "go_verification.jsonl"), nil, nil)
+	for i, event := range got {
+		if event.ID != events(again.records)[i].ID || event.Sequence != int64(i) {
+			t.Fatal("unstable verification identity/order")
+		}
+		if !bytes.Equal(sink.records[i+1].RawRecord.Content, mustReadFixtureLine(t, "go_verification.jsonl", i+1)) {
+			t.Fatal("verification raw record changed")
+		}
+	}
+	if !got[0].Timestamp.After(*got[1].Timestamp) {
+		t.Fatal("fixture must exercise source-order/timestamp disagreement")
+	}
+	for i, invocation := range []string{"test-first", "test-first", "test-first", "build", "build", "test-recovery", "test-recovery", "test-reopened", "test-parallel", "test-reopened", "test-parallel", "vet-first", "vet-first", "vet-unknown", "vet-unknown", "vet-recovery", "vet-recovery"} {
+		data := got[i].Data.(model.CommandData)
+		if data.InvocationID != invocation || data.WorkingDirectory != "/workspace" {
+			t.Fatalf("command %d = %#v", i, data)
+		}
+	}
+	if got[0].Data.(model.CommandData).Command != "go test -race ./..." || got[1].Data.(model.CommandData).ExitCode == nil || *got[1].Data.(model.CommandData).ExitCode != 1 {
+		t.Fatal("explicit verification lost")
+	}
+	if got[17].Kind != model.EventKindMessage {
+		t.Fatal("assurance must remain a message")
+	}
+}

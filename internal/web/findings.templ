@@ -22,7 +22,13 @@ templ ruleAssessments(session model.SessionID, page app.FindingsPage, failed boo
 					<summary>{ assessment.RuleID } · { string(assessment.State) }</summary>
 					<p class="metadata">Rule version { string(assessment.RuleVersion) } · assessment { string(assessment.ID) }</p>
 					<p>{ assessment.Explanation }</p>
-					<p class="metadata">Invocations: { assessment.Metadata["invocations"] } · failures: { assessment.Metadata["failures"] } · sequences: { assessment.Metadata["sequences"] } · recovered: { assessment.Metadata["recovered"] } · uncertainties: { assessment.Metadata["uncertainties"] } · omitted references: { assessment.Metadata["omitted_references"] }</p>
+					<p class="metadata">Invocations: { assessment.Metadata["invocations"] } · failures: { assessment.Metadata["failures"] } · recovered: { assessment.Metadata["recovered"] } · uncertainties: { assessment.Metadata["uncertainties"] } · omitted references: { assessment.Metadata["omitted_references"] }</p>
+					if assessment.Metadata["sequences"] != "" {
+						<p class="metadata">Repeated failure sequences: { assessment.Metadata["sequences"] }</p>
+					}
+					if assessment.Metadata["unresolved"] != "" {
+						<p class="metadata">Conclusively unresolved: { assessment.Metadata["unresolved"] } · tests: { assessment.Metadata["tests"] } · static checks: { assessment.Metadata["static_checks"] } · builds: { assessment.Metadata["builds"] }</p>
+					}
 					<ul>
 						for _, id := range assessment.EventIDs {
 							<li><a href={ templ.URL(focusedTimelineURL(session, id)) }>Supporting event { string(id) }</a></li>
@@ -30,7 +36,7 @@ templ ruleAssessments(session model.SessionID, page app.FindingsPage, failed boo
 					</ul>
 				</details>
 			}
-			<p class="muted">Only repeated command failures is implemented. Other rules have not been assessed. No severity grade or session outcome is assigned.</p>
+			<p class="muted">Missing verification has not been assessed. No severity grade or session outcome is assigned.</p>
 		}
 	</section>
 }

@@ -142,20 +142,25 @@ distinct agents, and sessions with evidence issues.
 ### Projection lifecycle
 
 The application durably models lifecycle state for search, Git correlation,
-findings, outcomes, and aggregates. Search and repeated-command findings have
+findings, outcomes, and aggregates. Search and rule assessments have
 implemented builders. The remaining projection kinds are reported as unavailable rather than treated as ready.
 
-Session detail exposes one assessment for repeated command failures through the
+Session detail exposes assessments for repeated command failures and unresolved
+Go verification through the
 shared application service in both interfaces. Explicit linked Codex command
 starts and completions establish invocations and exit results; unknown or
 contradictory evidence limits conclusions. Results are rebuilt from stored
 canonical evidence, published atomically for a current claim, and served only
-for the current revision/version. See the [rule and evidence limits](../README.md#repeated-command-failures).
+for the current revision/version. Unresolved verification recognizes only the
+documented standalone Go test/vet/build forms. Exact-identity recovery must start
+after failure completion in source order; compatible evidence gaps remain
+uncertain. See the [repetition limits](../README.md#repeated-command-failures) and
+[Go verification grammar and limits](../README.md#unresolved-go-verification).
 
 ## Not yet implemented
 
 - Repository and Git correlation.
-- Unresolved-verification and missing-verification rule assessments.
+- Missing-verification rule assessments.
 - Session outcome classification.
 - Cross-session aggregate projections and a dedicated statistics experience.
 - Aggregate token, tool, command, model, provider, or time-series reporting.

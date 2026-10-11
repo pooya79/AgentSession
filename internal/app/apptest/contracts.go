@@ -45,11 +45,11 @@ type Fixture struct {
 }
 
 // NewFixture creates an isolated runtime backed by sanitized test session data.
-func NewFixture(t *testing.T) Fixture {
+func NewFixture(t *testing.T, name string) Fixture {
 	t.Helper()
 	root := t.TempDir()
 	_, filename, _, _ := runtime.Caller(0)
-	sourceFixture := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "adapter", "codex", "testdata", "streamed_commands.jsonl"))
+	sourceFixture := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "adapter", "codex", "testdata", name))
 	contents, err := os.ReadFile(sourceFixture)
 	if err != nil {
 		t.Fatalf("read contract fixture: %v", err)
@@ -108,12 +108,16 @@ func RunConsumerContract(t *testing.T, consumer Consumer) {
 		}
 	}
 	findings, err := consumer.SessionFindings(ctx, sessionID)
-	if err != nil || findings.State != app.EvidenceComplete || len(findings.Assessments) != 1 || findings.Assessments[0].State != model.FindingTriggered {
+	if err != nil || findings.State != app.EvidenceComplete || len(findings.Assessments) != 2 || findings.Assessments[0].State != model.FindingTriggered {
 		t.Fatalf("SessionFindings() = %#v, %v", findings, err)
 	}
 	f := findings.Assessments[0]
 	if f.Metadata["invocations"] != "4" || f.Metadata["failures"] != "2" || f.Metadata["recovered"] != "1" || f.Metadata["uncertainties"] != "1" {
 		t.Fatalf("streamed repetition, recovery and pending evidence = %#v", f)
+	}
+	v := findings.Assessments[1]
+	if v.RuleID != "unresolved_failed_verification" || v.State != model.FindingInsufficientEvidence || v.Metadata["failures"] != "2" || v.Metadata["recovered"] != "2" || v.Metadata["unresolved"] != "0" {
+		t.Fatalf("verification recovery and pending rerun = %#v", v)
 	}
 	for _, f := range findings.Assessments {
 		locations, err := consumer.EventLocations(ctx, f.EventIDs)
@@ -212,5 +216,40 @@ func RunConsumerContract(t *testing.T, consumer Consumer) {
 	missingProjection, err := consumer.ProjectionStatus(ctx, "missing-session")
 	if err != nil || missingProjection.State != app.EvidenceNotFound {
 		t.Fatalf("ProjectionStatus(missing) = (%#v, %v)", missingProjection, err)
+	}
+}
+
+// RunVerificationContract exercises explicit imported command evidence through
+// the same assessment and navigation services consumed by both interfaces.
+func RunVerificationContract(t *testing.T, consumer Consumer) {
+	t.Helper()
+	ctx := context.Background()
+	page, err := consumer.SessionFindings(ctx, "go-verification")
+	if err != nil || page.State != app.EvidenceComplete || len(page.Assessments) != 2 {
+		t.Fatalf("verification findings = %#v, %v", page, err)
+	}
+	f := page.Assessments[0]
+	if f.RuleID != "unresolved_failed_verification" || f.State != model.FindingTriggered || f.Metadata["invocations"] != "8" || f.Metadata["tests"] != "4" || f.Metadata["static_checks"] != "3" || f.Metadata["builds"] != "1" || f.Metadata["failures"] != "3" || f.Metadata["recovered"] != "2" || f.Metadata["unresolved"] != "1" || f.Metadata["uncertainties"] != "0" || f.Metadata["settled_unknown_results"] != "1" {
+		t.Fatalf("verification recovery/reopening = %#v", f)
+	}
+	// The unknown vet result can still change historical repetition, even
+	// though later success settles the separate unresolved-failure predicate.
+	if page.Assessments[1].RuleID != "repeated_command_failures" || page.Assessments[1].State != model.FindingInsufficientEvidence {
+		t.Fatalf("triggered ordering = %#v", page)
+	}
+	for _, assessment := range page.Assessments {
+		if assessment.RuleVersion != "1" || assessment.Explanation == "" || len(assessment.EventIDs) > 12 {
+			t.Fatalf("invalid assessment = %#v", assessment)
+		}
+		for _, id := range assessment.EventIDs {
+			detail, err := consumer.EventDetail(ctx, app.EventDetailRequest{SessionID: "go-verification", EventID: id, IncludePayload: true})
+			if err != nil || detail.State != app.EvidenceComplete || detail.Event.SessionID != "go-verification" {
+				t.Fatalf("verification event = %#v, %v", detail, err)
+			}
+			focused, err := consumer.Timeline(ctx, app.TimelineRequest{SessionID: "go-verification", FocusedEvent: id, Limit: 1})
+			if err != nil || focused.FocusedEvent != id {
+				t.Fatalf("focused verification = %#v, %v", focused, err)
+			}
+		}
 	}
 }

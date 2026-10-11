@@ -40,7 +40,7 @@ func TestFindingsPublicationAndRebuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := store.SessionFindings(ctx, batch.Session.ID)
-	if err != nil || !first.Usable || len(first.Assessments) != 1 || first.Assessments[0].State != model.FindingNotApplicable {
+	if err != nil || !first.Usable || len(first.Assessments) != 2 || first.Assessments[0].State != model.FindingNotApplicable || first.Assessments[1].RuleID != analysis.UnresolvedVerificationRule || first.Assessments[1].State != model.FindingNotApplicable {
 		t.Fatalf("findings = %#v, %v", first, err)
 	}
 	kind := projection.KindFindings
@@ -99,9 +99,13 @@ func TestFindingsClaimValidationCancellationAndRevisionGating(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign := f
+	v, err := analysis.AssessUnresolvedVerification(ctx, batch.Session.ID, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := v
 	foreign.EventIDs = []model.EventID{model.EventID("evt_" + strings.Repeat("f", 64))}
-	if err := store.PublishFindings(ctx, claim, []model.Finding{foreign}); err == nil {
+	if err := store.PublishFindings(ctx, claim, []model.Finding{f, foreign}); err == nil {
 		t.Fatal("unowned evidence accepted")
 	}
 	if err := builder.Build(ctx, request); err != nil {
@@ -128,7 +132,7 @@ func TestFindingsClaimValidationCancellationAndRevisionGating(t *testing.T) {
 	if !stale.Stale || stale.Usable || len(stale.Assessments) != 0 {
 		t.Fatalf("stale=%#v", stale)
 	}
-	if err := store.PublishFindings(ctx, claim, []model.Finding{f}); err == nil {
+	if err := store.PublishFindings(ctx, claim, []model.Finding{f, v}); err == nil {
 		t.Fatal("old revision accepted")
 	}
 	// Truncation/replacement removes command evidence with its canonical events.

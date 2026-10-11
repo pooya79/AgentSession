@@ -172,3 +172,65 @@ func TestUnrelatedDirectoryContradictionsDoNotBreakRepetition(t *testing.T) {
 		t.Fatalf("unrelated contradictions=%#v, %v", got, err)
 	}
 }
+
+func TestStoredUnresolvedVerification(t *testing.T) {
+	fail, success := 1, 0
+	start := func(id string) commandRecord {
+		return commandRecord{invocation: id, phase: model.CommandStarted, command: "go test ./...", dir: "/workspace"}
+	}
+	end := func(id string, code *int) commandRecord {
+		return commandRecord{invocation: id, phase: model.CommandCompleted, command: "go test ./...", dir: "/workspace", exit: code}
+	}
+	tests := []struct {
+		name                  string
+		records               []commandRecord
+		state                 model.FindingState
+		unresolved, recovered string
+	}{
+		{"failure", []commandRecord{start("a"), end("a", &fail)}, model.FindingTriggered, "1", "0"},
+		{"recovery", []commandRecord{start("a"), end("a", &fail), start("b"), end("b", &success)}, model.FindingNotTriggered, "0", "1"},
+		{"reopening", []commandRecord{start("a"), end("a", &fail), start("b"), end("b", &success), start("c"), end("c", &fail)}, model.FindingTriggered, "1", "1"},
+		{"parallel success", []commandRecord{start("a"), start("b"), end("a", &fail), end("b", &success)}, model.FindingTriggered, "1", "0"},
+		{"parallel pending", []commandRecord{start("a"), start("b"), end("a", &fail)}, model.FindingTriggered, "1", "0"},
+		{"parallel conflicting identity", []commandRecord{start("a"), {invocation: "b", phase: model.CommandStarted, command: "go vet ./...", dir: "/workspace"}, end("a", &fail), end("b", &success)}, model.FindingTriggered, "1", "0"},
+		{"pending rerun", []commandRecord{start("a"), end("a", &fail), start("b")}, model.FindingInsufficientEvidence, "0", "0"},
+		{"unknown completed result then recovery", []commandRecord{start("a"), end("a", &fail), start("b"), end("b", nil), start("c"), end("c", &success)}, model.FindingNotTriggered, "0", "1"},
+		{"contradictory result then recovery", []commandRecord{start("a"), end("a", &fail), end("a", &success), start("b"), end("b", &success)}, model.FindingNotTriggered, "0", "0"},
+		{"missing completion despite later success", []commandRecord{start("a"), start("b"), end("b", &success)}, model.FindingInsufficientEvidence, "0", "0"},
+		{"identity conflict despite later success", []commandRecord{start("a"), {invocation: "a", phase: model.CommandCompleted, command: "go vet ./...", dir: "/workspace", exit: &fail}, start("b"), end("b", &success)}, model.FindingInsufficientEvidence, "0", "0"},
+		{"end before start despite later success", []commandRecord{end("a", nil), start("a"), start("b"), end("b", &success)}, model.FindingInsufficientEvidence, "0", "0"},
+		{"unknown rerun result", []commandRecord{start("a"), end("a", &fail), start("b"), end("b", nil)}, model.FindingInsufficientEvidence, "0", "0"},
+		{"contradictory recovery", []commandRecord{start("a"), end("a", &fail), start("b"), end("b", &success), end("b", &fail)}, model.FindingInsufficientEvidence, "0", "0"},
+		{"contradictory failure", []commandRecord{start("a"), end("a", &fail), end("a", &success)}, model.FindingInsufficientEvidence, "0", "0"},
+		{"gap after", []commandRecord{start("a"), end("a", &fail), {gap: true}}, model.FindingInsufficientEvidence, "0", "0"},
+		{"gap before", []commandRecord{{gap: true}, start("a"), end("a", &fail)}, model.FindingTriggered, "1", "0"},
+		{"gap during", []commandRecord{start("a"), {gap: true}, end("a", &fail)}, model.FindingTriggered, "1", "0"},
+		{"malformed after", []commandRecord{start("a"), end("a", &fail), {malformed: true}}, model.FindingInsufficientEvidence, "0", "0"},
+		{"recovery after gap", []commandRecord{start("a"), end("a", &fail), {gap: true}, start("b"), end("b", &success)}, model.FindingInsufficientEvidence, "0", "1"},
+		{"independent trigger", []commandRecord{start("a"), end("a", &fail), {gap: true}, start("b"), end("b", &fail)}, model.FindingTriggered, "1", "0"},
+		{"unrelated unknown command", []commandRecord{start("a"), end("a", &fail), {invocation: "other", phase: model.CommandStarted, command: "go vet ./...", dir: "/workspace"}}, model.FindingTriggered, "1", "0"},
+		{"unrelated orphan result", []commandRecord{start("a"), end("a", &fail), {invocation: "other", phase: model.CommandCompleted, command: "go vet ./...", dir: "/workspace", exit: &success}}, model.FindingTriggered, "1", "0"},
+		{"other directory", []commandRecord{start("a"), end("a", &fail), {invocation: "other", phase: model.CommandStarted, command: "go test ./...", dir: "/elsewhere"}}, model.FindingTriggered, "1", "0"},
+		{"orphan recovery", []commandRecord{start("a"), end("a", &fail), end("orphan", &success)}, model.FindingInsufficientEvidence, "0", "0"},
+		{"unknown start", []commandRecord{end("orphan", &fail)}, model.FindingInsufficientEvidence, "0", "0"},
+		{"end before start", []commandRecord{end("a", &fail), start("a")}, model.FindingInsufficientEvidence, "0", "0"},
+		{"duplicate result", []commandRecord{start("a"), end("a", &fail), end("a", &fail)}, model.FindingTriggered, "1", "0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := openImportStore(t)
+			batch := commandBatch(tt.records)
+			if err := store.CommitBatch(ctx, batch); err != nil {
+				t.Fatal(err)
+			}
+			got, err := analysis.AssessUnresolvedVerification(ctx, batch.Session.ID, store)
+			if err != nil || got.State != tt.state || got.Metadata["unresolved"] != tt.unresolved || got.Metadata["recovered"] != tt.recovered {
+				t.Fatalf("assessment = %#v, %v", got, err)
+			}
+			if err := got.Validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

@@ -49,7 +49,7 @@ func TestStreamedFindingsIncrementalRebuildAndReconciliation(t *testing.T) {
 			t.Fatal("import modified source")
 		}
 		page, err := runtime.SessionFindings(ctx, session)
-		if err != nil || page.State != EvidenceComplete || len(page.Assessments) != 1 {
+		if err != nil || page.State != EvidenceComplete || len(page.Assessments) != 2 {
 			t.Fatalf("findings = %#v, %v", page, err)
 		}
 		return page
@@ -142,7 +142,7 @@ func TestStreamedFindingsIncrementalRebuildAndReconciliation(t *testing.T) {
 func TestFindingsRebuildAfterSourceDisappears(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	source := copyFixture(t, filepath.Join("..", "adapter", "codex", "testdata", "explicit_commands.jsonl"), filepath.Join(root, "sources", "commands.jsonl"))
+	source := copyFixture(t, filepath.Join("..", "adapter", "codex", "testdata", "go_verification.jsonl"), filepath.Join(root, "sources", "commands.jsonl"))
 	before := hashFile(t, source)
 	inputs := discovery.Inputs{FileSystem: discovery.OSFileSystem{}, HomeDir: root, WorkingDir: root, GOOS: "linux", ExplicitPaths: []discovery.ConfiguredPath{{Kind: discovery.SourceCodex, Path: source}}}
 	paths := PathInputs{GOOS: "linux", HomeDir: root, WorkingDir: root}
@@ -163,13 +163,17 @@ func TestFindingsRebuildAfterSourceDisappears(t *testing.T) {
 	}
 	session := sessions.Sessions[0].ID
 	first, err := runtime.SessionFindings(ctx, session)
-	if err != nil || first.State != EvidenceComplete || len(first.Assessments) != 1 || first.Assessments[0].State != model.FindingTriggered {
+	if err != nil || first.State != EvidenceComplete || len(first.Assessments) != 2 || first.Assessments[0].State != model.FindingTriggered {
 		t.Fatalf("assessment=%#v, %v", first, err)
 	}
-	if first.Assessments[0].Metadata["invocations"] != "3" {
+	if first.Assessments[0].RuleID != "unresolved_failed_verification" || first.Assessments[0].Metadata["invocations"] != "8" || first.Assessments[0].Metadata["unresolved"] != "1" || first.Assessments[0].Metadata["recovered"] != "2" {
 		t.Fatal("linked duplicate counted as another attempt")
 	}
-	for _, id := range first.Assessments[0].EventIDs {
+	var references []model.EventID
+	for _, f := range first.Assessments {
+		references = append(references, f.EventIDs...)
+	}
+	for _, id := range references {
 		focused, err := runtime.Timeline(ctx, TimelineRequest{SessionID: session, FocusedEvent: id, Limit: 1})
 		if err != nil || focused.FocusedEvent != id {
 			t.Fatalf("focused evidence=%#v, %v", focused, err)
@@ -185,5 +189,73 @@ func TestFindingsRebuildAfterSourceDisappears(t *testing.T) {
 	rebuilt, err := runtime.SessionFindings(ctx, session)
 	if err != nil || !reflect.DeepEqual(first, rebuilt) {
 		t.Fatalf("rebuild=%#v, %v", rebuilt, err)
+	}
+}
+
+func TestExplicitVerificationIncrementalStates(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	data, err := os.ReadFile(filepath.Join("..", "adapter", "codex", "testdata", "go_verification.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.SplitAfter(data, []byte{'\n'})
+	source := filepath.Join(root, "verification.jsonl")
+	inputs := discovery.Inputs{FileSystem: discovery.OSFileSystem{}, HomeDir: root, WorkingDir: root, GOOS: "linux", ExplicitPaths: []discovery.ConfiguredPath{{Kind: discovery.SourceCodex, Path: source}}}
+	paths := PathInputs{GOOS: "linux", HomeDir: root, WorkingDir: root}
+	runtime, err := OpenRuntime(ctx, RuntimeConfig{DataDir: filepath.Join(root, "data"), ConfigDir: filepath.Join(root, "config"), PathInputs: &paths, DiscoveryInputs: &inputs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Shutdown(context.Background()) })
+	var identity model.FindingID
+	for _, tt := range []struct {
+		name                  string
+		lines                 int
+		state                 model.FindingState
+		unresolved, recovered string
+	}{
+		{"no checks", 1, model.FindingNotApplicable, "0", "0"},
+		{"pending", 2, model.FindingInsufficientEvidence, "0", "0"},
+		{"failed", 4, model.FindingTriggered, "1", "0"},
+		{"recovered", 8, model.FindingNotTriggered, "0", "1"},
+		{"reopened", len(lines), model.FindingTriggered, "1", "2"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := os.WriteFile(source, bytes.Join(lines[:tt.lines], nil), 0600); err != nil {
+				t.Fatal(err)
+			}
+			before := hashFile(t, source)
+			if _, err := runtime.DiscoverAndImport(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if before != hashFile(t, source) {
+				t.Fatal("import modified evidence")
+			}
+			page, err := runtime.SessionFindings(ctx, "go-verification")
+			if err != nil || page.State != EvidenceComplete || len(page.Assessments) != 2 {
+				t.Fatalf("findings = %#v, %v", page, err)
+			}
+			var f model.Finding
+			for _, assessment := range page.Assessments {
+				if assessment.RuleID == "unresolved_failed_verification" {
+					f = assessment
+				}
+			}
+			if f.State != tt.state || f.Metadata["unresolved"] != tt.unresolved || f.Metadata["recovered"] != tt.recovered {
+				t.Fatalf("assessment = %#v", f)
+			}
+			if identity != "" && identity != f.ID {
+				t.Fatal("assessment identity changed after append")
+			}
+			identity = f.ID
+			if _, err := runtime.DiscoverAndImport(ctx); err != nil {
+				t.Fatal(err)
+			}
+			again, err := runtime.SessionFindings(ctx, "go-verification")
+			if err != nil || !reflect.DeepEqual(page, again) {
+				t.Fatal("duplicate import changed assessment")
+			}
+		})
 	}
 }

@@ -46,7 +46,7 @@ func (s *ImportStore) WalkCommands(ctx context.Context, session model.SessionID,
 		}
 		var c analysis.CommandEvidence
 		var exit sql.NullInt64
-		if err := rows.Scan(&c.Command, &c.Directory, &c.StartEvent, &c.ResultEvent, &c.Start, &c.Completion, &exit, &c.GapBefore, &c.LaterSuccess.StartEvent, &c.LaterSuccess.ResultEvent, &c.LaterSuccess.Start); err != nil {
+		if err := rows.Scan(&c.Command, &c.Directory, &c.StartEvent, &c.ResultEvent, &c.Start, &c.Completion, &exit, &c.GapBefore, &c.LaterSuccess.StartEvent, &c.LaterSuccess.ResultEvent, &c.LaterSuccess.Start, &c.RecoveryUncertain); err != nil {
 			return analysis.CommandCoverage{}, fmt.Errorf("sqlite findings: scan command evidence: %w", err)
 		}
 		if exit.Valid {
@@ -95,13 +95,15 @@ const commandGapsSQL = `
  SELECT e.sequence AS position,
  CASE WHEN e.kind<>'command' OR c.invocation_id='' OR NOT EXISTS(SELECT 1 FROM command_evidence start JOIN events se ON se.id=start.event_id WHERE se.session_id=e.session_id AND start.invocation_id=c.invocation_id AND start.phase='started') THEN e.id END AS event_id,
  CASE WHEN ` + commandTextConflictSQL + ` THEN NULL ELSE COALESCE(NULLIF(c.command_text,''),(SELECT MIN(NULLIF(start.command_text,'')) FROM command_evidence start JOIN events se ON se.id=start.event_id WHERE se.session_id=e.session_id AND start.invocation_id=c.invocation_id AND start.phase='started')) END AS command,
- CASE WHEN ` + commandDirectoryConflictSQL + ` THEN NULL ELSE NULLIF(c.directory,'') END AS directory FROM events e LEFT JOIN command_evidence c ON c.event_id=e.id
+ CASE WHEN ` + commandDirectoryConflictSQL + ` THEN NULL ELSE NULLIF(c.directory,'') END AS directory,
+ (SELECT MIN(se.sequence) FROM command_evidence start JOIN events se ON se.id=start.event_id WHERE se.session_id=e.session_id AND start.invocation_id=c.invocation_id AND c.invocation_id<>'' AND start.phase='started') AS invocation_start
+ FROM events e LEFT JOIN command_evidence c ON c.event_id=e.id
  WHERE e.session_id=? AND (e.kind IN ('unknown','tool_call','tool_result') OR
   (e.kind='command' AND (c.invocation_id='' OR c.phase NOT IN ('started','completed') OR c.oversized=1 OR ` + commandIdentityConflictSQL + ` OR (c.phase='started' AND (c.command_text='' OR c.directory='')) OR
    NOT EXISTS(SELECT 1 FROM command_evidence start JOIN events se ON se.id=start.event_id WHERE se.session_id=e.session_id AND start.invocation_id=c.invocation_id AND start.phase='started'))))
  UNION ALL
  SELECT CASE WHEN r.record_sequence IS NULL OR EXISTS(SELECT 1 FROM events e WHERE e.session_id=d.session_id AND e.raw_record_sequence IS NULL) THEN NULL
-  ELSE COALESCE((SELECT MIN(e.sequence) FROM events e WHERE e.session_id=d.session_id AND e.raw_record_sequence>=r.record_sequence),9223372036854775807) END, NULL AS event_id, NULL AS command, NULL AS directory
+  ELSE COALESCE((SELECT MIN(e.sequence) FROM events e WHERE e.session_id=d.session_id AND e.raw_record_sequence>=r.record_sequence),9223372036854775807) END, NULL AS event_id, NULL AS command, NULL AS directory, NULL AS invocation_start
  FROM record_diagnostics d JOIN raw_records r ON r.id=d.raw_record_id
  WHERE d.session_id=? AND d.interpretation_reason<>'' GROUP BY d.raw_record_id
 `
@@ -115,6 +117,8 @@ const commandWalkSQL = `
    MIN(CASE WHEN phase='started' THEN directory END) AS directory,
    MIN(CASE WHEN phase='started' THEN sequence END) AS start,
    MIN(CASE WHEN phase='completed' THEN sequence END) AS completion,
+   MIN(NULLIF(command_text,''))=MAX(NULLIF(command_text,'')) AND MIN(NULLIF(directory,''))=MAX(NULLIF(directory,'')) AND MAX(oversized)=0 AS identity_established,
+   MIN(CASE WHEN phase='completed' THEN sequence END)>MAX(CASE WHEN phase='started' THEN sequence END) AS completion_established,
    CASE WHEN MIN(NULLIF(command_text,''))=MAX(NULLIF(command_text,'')) AND MIN(NULLIF(directory,''))=MAX(NULLIF(directory,'')) AND MAX(oversized)=0
      AND SUM(CASE WHEN phase='completed' AND exit_code IS NULL THEN 1 ELSE 0 END)=0
      AND MIN(CASE WHEN phase='completed' THEN exit_code END)=MAX(CASE WHEN phase='completed' THEN exit_code END)
@@ -131,8 +135,10 @@ const commandWalkSQL = `
   i.start,COALESCE(i.completion,i.start),i.exit_code,
   EXISTS(SELECT 1 FROM gaps WHERE (position IS NULL OR (position>i.previous_start AND position<=i.start)) AND (gaps.command IS NULL OR gaps.command=i.command) AND (gaps.directory IS NULL OR gaps.directory=i.directory)),
   COALESCE((SELECT event_id FROM records WHERE sequence=later.start),''),
-  COALESCE((SELECT event_id FROM records WHERE sequence=later.completion),''),COALESCE(later.start,0)
+  COALESCE((SELECT event_id FROM records WHERE sequence=later.completion),''),COALESCE(later.start,0),
+  (EXISTS(SELECT 1 FROM gaps WHERE (position IS NULL OR position>i.completion) AND (invocation_start IS NULL OR invocation_start>i.completion) AND (gaps.command IS NULL OR gaps.command=i.command) AND (gaps.directory IS NULL OR gaps.directory=i.directory)) OR
+   EXISTS(SELECT 1 FROM invocations next WHERE next.command=i.command AND next.directory=i.directory AND next.start>i.completion AND next.exit_code IS NULL))
  FROM ordered i LEFT JOIN invocations later ON later.start=(
-  SELECT MIN(next.start) FROM invocations next WHERE next.command=i.command AND next.directory=i.directory AND next.exit_code=0 AND next.start>i.completion
+  SELECT MIN(next.start) FROM invocations next WHERE i.identity_established AND i.completion_established AND next.command=i.command AND next.directory=i.directory AND next.exit_code=0 AND next.start>i.completion
  ) ORDER BY i.command,i.directory,i.start
 `

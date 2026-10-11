@@ -25,7 +25,7 @@ func (s *findingsNavigationServices) Timeline(ctx context.Context, request app.T
 }
 
 func TestImportedStreamedAssessmentAndEvidenceNavigation(t *testing.T) {
-	fixture := apptest.NewFixture(t)
+	fixture := apptest.NewFixture(t, "streamed_commands.jsonl")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sessions, err := fixture.Services.ListSessions(ctx, app.ListSessionsRequest{})
@@ -34,7 +34,7 @@ func TestImportedStreamedAssessmentAndEvidenceNavigation(t *testing.T) {
 	}
 	session := sessions.Sessions[0].ID
 	findings, err := fixture.Services.SessionFindings(ctx, session)
-	if err != nil || len(findings.Assessments) != 1 || len(findings.Assessments[0].EventIDs) == 0 {
+	if err != nil || len(findings.Assessments) != 2 || len(findings.Assessments[0].EventIDs) == 0 {
 		t.Fatalf("supporting evidence = %#v, %v", findings, err)
 	}
 	services := &findingsNavigationServices{Services: fixture.Services}
@@ -71,12 +71,16 @@ func TestImportedStreamedAssessmentAndEvidenceNavigation(t *testing.T) {
 	send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	send(tea.KeyPressMsg{Code: 'f', Text: "f"})
 	view := m.View().Content
-	for _, want := range []string{"triggered", "Invocations 4", "failures 2", "recovered 1", "uncertainties 1", "Missing, conflicting, unsupported, or oversized evidence"} {
+	for _, want := range []string{"triggered", "Invocations 4", "failures 2", "recovered 1", "uncertainties 1", "Missing, conflicting, unsupported, or oversized evidence", "unresolved_failed_verification", "unresolved 0", "tests 4", "static checks 0", "builds 0", "Missing verification has not been assessed."} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing %q in imported assessment: %s", want, view)
 		}
 	}
-	for i, id := range findings.Assessments[0].EventIDs {
+	var references []model.EventID
+	for _, assessment := range findings.Assessments {
+		references = append(references, assessment.EventIDs...)
+	}
+	for i, id := range references {
 		if i > 0 {
 			send(tea.KeyPressMsg{Code: 'f', Text: "f"})
 		}

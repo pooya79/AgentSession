@@ -33,10 +33,15 @@ type CommandEvidence struct {
 	ExitCode                *int
 	GapBefore               bool
 	LaterSuccess            CommandSuccess
+	// RecoveryUncertain means a compatible interpretation gap or unknown-result
+	// invocation after Completion could hide recovery. Readers compute this over
+	// all evidence, independently of selected example links.
+	RecoveryUncertain bool
 }
 
 // CommandSuccess links the first established successful invocation of the same
-// identity whose start follows Completion. Empty event IDs mean none exists.
+// established identity whose start follows established Completion, even when
+// the earlier exit code is unknown. Empty event IDs mean none exists.
 // Readers establish this relation across the full record, before sampling.
 type CommandSuccess struct {
 	StartEvent, ResultEvent model.EventID

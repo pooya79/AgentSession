@@ -43,9 +43,15 @@ func (m Model) findingsContentLines() []string {
 	}
 	for _, f := range page.Assessments {
 		lines = append(lines, "", fmt.Sprintf("%s · %s · version %s", f.RuleID, f.State, f.RuleVersion), "Assessment "+string(f.ID), f.Explanation,
-			fmt.Sprintf("Invocations %s · failures %s · sequences %s · recovered %s · uncertainties %s · omitted references %s", f.Metadata["invocations"], f.Metadata["failures"], f.Metadata["sequences"], f.Metadata["recovered"], f.Metadata["uncertainties"], f.Metadata["omitted_references"]))
+			fmt.Sprintf("Invocations %s · failures %s · recovered %s · uncertainties %s · omitted references %s", f.Metadata["invocations"], f.Metadata["failures"], f.Metadata["recovered"], f.Metadata["uncertainties"], f.Metadata["omitted_references"]))
+		if f.Metadata["sequences"] != "" {
+			lines = append(lines, "Repeated failure sequences "+f.Metadata["sequences"])
+		}
+		if f.Metadata["unresolved"] != "" {
+			lines = append(lines, fmt.Sprintf("Conclusively unresolved %s · tests %s · static checks %s · builds %s", f.Metadata["unresolved"], f.Metadata["tests"], f.Metadata["static_checks"], f.Metadata["builds"]))
+		}
 	}
-	lines = append(lines, "", "Only repeated command failures is implemented. Other rules have not been assessed.", "Supporting events · [ / ] select · Enter opens timeline context")
+	lines = append(lines, "", "Missing verification has not been assessed.", "Supporting events · [ / ] select · Enter opens timeline context")
 	for i, id := range m.findingReferences() {
 		marker := " "
 		if i == m.findingsState.evidenceCursor {
