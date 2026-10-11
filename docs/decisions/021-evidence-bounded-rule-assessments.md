@@ -158,8 +158,20 @@ affected paths independently of arbitrary patch text. Rebuilds use these fields
 and existing explicit command/interpretation evidence. Oversized fields produce
 uncertainty without truncating the authoritative normalized payload or raw
 record. The findings projection atomically publishes all three v1 assessments.
-Ordinary package-local Go changes are assessed now; move/module/workspace scope
-recognition remains uncertain as permitted by the staged implementation in #82.
+Ordinary package-local Go changes and both endpoints of confirmed moves are
+assessed. Issue #85 extends the same stored evidence to module configuration:
+confirmed `go.mod` creation/update supplies a structural module marker at or
+before the affected change, and `go.mod`/`go.sum` require a recursive target
+rooted exactly at that module directory. Working directories and `go.sum` paths
+alone do not establish roots. Recorded nested module relationships, module
+removal/relocation, and overlapping workspace configuration remain uncertain;
+later markers cannot retroactively establish roots. Recursive source targets
+crossing a recorded module boundary remain uncertain. These are declared-scope
+assessments, without inspecting module contents, dependencies, or repositories.
+The current canonical contract does not establish workspace membership, so
+workspace configuration cannot yet receive conclusive scope verification.
+Move origin/destination counts and limitations travel through the existing v1
+findings projection and shared service; no schema or identity changes are needed.
 
 ### Positioned interpretation gaps
 

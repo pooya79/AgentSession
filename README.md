@@ -168,7 +168,7 @@ even after sources disappear.
 ## Missing verification after changes
 
 Both session-detail interfaces expose `missing_verification` alongside the
-other two assessments. It assesses confirmed ordinary Go source changes against
+other two assessments. It assesses confirmed Go source and module configuration changes against
 the recorded declared targets of the Go checks listed above. A completed relevant
 check counts even when it fails: missing verification can be `not_triggered`
 while unresolved failed verification is `triggered`. The check must start after
@@ -191,13 +191,39 @@ correctness, test coverage, or dependency coverage. No live repository is inspec
 and no recorded command is executed.
 
 Clearly documentation-only paths (`.md`, `.rst`, `.adoc`, `LICENSE`, `COPYING`)
-are exempt. Other languages, unfamiliar roles, moves, `go.mod`/`go.sum`, workspace
-configuration, traversal/Windows paths, unavailable bases, and Go files under
-`vendor`, `testdata`, or dot/underscore-prefixed components remain uncertain.
-Module and workspace boundaries are not inferred from working directories.
+are exempt. Confirmed moves assess the origin and destination independently,
+including each endpoint's file role and check-kind exclusions. Checking only the
+destination does not verify the origin. Unknown endpoints remain uncertain;
+independent known missing scopes can still trigger the assessment.
+
+Confirmed `go.mod` creation/update records establish a module directory for
+scope analysis. Changes to `go.mod` and `go.sum` require a recursive declared
+target rooted exactly there, such as `go test ./...` from that directory or
+`go vet ./module/...` from its parent. An isolated package target or recursion
+from an ancestor does not establish whole-module verification. A `go.sum` path
+or working directory alone cannot establish a module root: the record must also
+contain a confirmed `go.mod` creation/update at or before the configuration
+change. Module contents and dependencies are not inferred from these markers.
+
+Recorded nested module relationships, module deletion/relocation, and overlapping
+workspace configuration (`go.work`, `go.work.sum`) leave affected configuration
+scope uncertain. Later structural evidence can disclose ambiguity but cannot
+retroactively establish an earlier module root. Recursive source targets crossing
+a recorded module boundary also remain uncertain. The current canonical evidence
+does not establish workspace membership, so workspace configuration remains
+uncertain even after a successful recursive check. Unrelated known scopes remain
+independently assessable.
+
+Other languages, unfamiliar roles, traversal/Windows paths, unavailable bases,
+and Go files under `vendor`, `testdata`, or dot/underscore-prefixed components
+remain uncertain. Module and workspace boundaries are not inferred from working
+directories.
 Paths/bases over 4 KiB and change IDs over 512 bytes remain canonical evidence
 but cannot establish analysis identity. All affected paths are assessed, with
-counts, up to 12 representative event links, and an omission notice. Compatible
+counts (including separate move origin/destination totals), up to 12 representative
+event links, and an omission notice. Omitted-reference counts represent evaluated
+reference occurrences beyond the sample, including repeated links once the bound
+is reached. Compatible
 unknown commands or interpretation gaps can prevent proof of omission; independent
 conclusive missing changes still trigger the assessment. Imports reassess the
 record, and offline rebuilds use stored canonical evidence.

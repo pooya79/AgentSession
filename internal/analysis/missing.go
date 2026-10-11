@@ -14,6 +14,8 @@ import (
 
 const MissingVerificationRule = "missing_verification"
 
+type moveScopeCounts struct{ total, verified, missing, uncertain int64 }
+
 // ChangeEvidence is one affected path after linked results have been reconciled.
 // Unconfirmed, conflicting and unbounded evidence has an uncertain status.
 type ChangeEvidence struct {
@@ -40,13 +42,14 @@ type ChangeReader interface {
 	WalkEvidenceGaps(context.Context, model.SessionID, func(EvidenceGap) error) error
 }
 
-// AssessMissingVerification evaluates each confirmed ordinary Go path against
+// AssessMissingVerification evaluates each confirmed affected Go path against
 // later declared targets. Failure is verification performed, independent of
 // unresolved-failure analysis. All paths are assessed; only links are sampled.
 func AssessMissingVerification(ctx context.Context, session model.SessionID, reader ChangeReader) (model.Finding, error) {
 	f := model.Finding{ID: model.FindingID(fmt.Sprintf("finding_%x", sha256.Sum256([]byte("agentsession:assessment:v1\x00"+string(session)+"\x00"+MissingVerificationRule)))), SessionID: session, RuleID: MissingVerificationRule, RuleVersion: RuleVersion}
-	var confirmed, applicable, verified, missing, exempt, uncertain, references int64
+	var confirmed, applicable, verified, missing, exempt, uncertain, references, configurations int64
 	var missingLinks, otherLinks []model.EventID
+	var origins, destinations moveScopeCounts
 	add := func(to *[]model.EventID, ids ...model.EventID) {
 		for _, id := range ids {
 			if id == "" {
@@ -66,37 +69,26 @@ func AssessMissingVerification(ctx context.Context, session model.SessionID, rea
 	}
 	record := func(ids ...model.EventID) {
 		for _, id := range ids {
-			if id != "" {
-				references++
+			if id == "" {
+				continue
 			}
+			retained := false
+			for _, old := range otherLinks {
+				if old == id {
+					retained = true
+					break
+				}
+			}
+			if retained {
+				continue
+			}
+			references++
+			add(&otherLinks, id)
 		}
-		add(&otherLinks, ids...)
 	}
-	err := reader.WalkChanges(ctx, session, func(c ChangeEvidence) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if c.EventID != "" {
-			record(c.EventID)
-		}
-		switch c.Status {
-		case model.ChangeFailed:
-			// A failed multi-file application can have partial effects. Recorded
-			// intended paths do not establish which mutations, if any, occurred.
-			if c.Path != "" {
-				uncertain++
-			}
-			return nil
-		case model.ChangeNoOp:
-			return nil
-		case model.ChangeConfirmed:
-			confirmed++
-		default:
-			uncertain++
-			return nil
-		}
+	assessPath := func(c ChangeEvidence) error {
 		file, ok := establishedPath(c.Path, c.Directory)
-		if !ok || c.PreviousPath != "" || c.Operation == model.FileMutationRename || c.Operation == model.FileMutationUnknown {
+		if !ok {
 			uncertain++
 			return nil
 		}
@@ -104,7 +96,19 @@ func AssessMissingVerification(ctx context.Context, session model.SessionID, rea
 			exempt++
 			return nil
 		}
-		if !ordinaryGoPath(file) {
+		configuration := path.Base(file) == "go.mod" || path.Base(file) == "go.sum"
+		if configuration {
+			configurations++
+			known, links, err := configurationScope(ctx, session, reader, c, file)
+			if err != nil {
+				return err
+			}
+			record(links...)
+			if !known {
+				uncertain++
+				return nil
+			}
+		} else if !ordinaryGoPath(file) {
 			uncertain++
 			return nil
 		}
@@ -130,11 +134,25 @@ func AssessMissingVerification(ctx context.Context, session model.SessionID, rea
 			}
 			recursive := strings.HasSuffix(v.Target, "/...")
 			directory := path.Dir(file)
-			if directory != target && !(recursive && strings.HasPrefix(directory, strings.TrimSuffix(target, "/")+"/")) {
+			if configuration && (!recursive || directory != target) {
+				return nil
+			}
+			if directory != target && !(recursive && containsDirectory(target, directory)) {
 				return nil
 			}
 			if v.Kind == VerificationBuild && strings.HasSuffix(file, "_test.go") {
 				return nil
+			}
+			if !configuration && recursive && directory != target {
+				boundary, err := crossesRecordedModule(ctx, session, reader, target, directory, command.Start)
+				if err != nil {
+					return err
+				}
+				if boundary != "" {
+					limited = true
+					record(boundary, command.StartEvent, command.ResultEvent)
+					return nil
+				}
 			}
 			record(command.StartEvent, command.ResultEvent)
 			if command.StartEvent == "" || command.ResultEvent == "" || command.Completion <= command.Start || command.ExitCode == nil {
@@ -154,7 +172,7 @@ func AssessMissingVerification(ctx context.Context, session model.SessionID, rea
 		err = reader.WalkEvidenceGaps(ctx, session, func(g EvidenceGap) error {
 			if (g.Position == nil || *g.Position > c.Position) && (g.InvocationStart == nil || *g.InvocationStart > c.Position) {
 				limited = true
-				add(&otherLinks, g.EventID)
+				record(g.EventID)
 			}
 			return ctx.Err()
 		})
@@ -168,6 +186,52 @@ func AssessMissingVerification(ctx context.Context, session model.SessionID, rea
 			add(&missingLinks, c.EventID)
 		}
 		return nil
+	}
+	assessMoveScope := func(c ChangeEvidence, counts *moveScopeCounts) error {
+		v, m, u := verified, missing, uncertain
+		err := assessPath(c)
+		counts.total++
+		counts.verified += verified - v
+		counts.missing += missing - m
+		counts.uncertain += uncertain - u
+		return err
+	}
+	err := reader.WalkChanges(ctx, session, func(c ChangeEvidence) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if c.EventID != "" {
+			record(c.EventID)
+		}
+		switch c.Status {
+		case model.ChangeFailed:
+			// A failed multi-file application can have partial effects. Recorded
+			// intended paths do not establish which mutations, if any, occurred.
+			if c.Path != "" {
+				uncertain++
+			}
+			return nil
+		case model.ChangeNoOp:
+			return nil
+		case model.ChangeConfirmed:
+			confirmed++
+		default:
+			uncertain++
+			return nil
+		}
+		if c.Operation == model.FileMutationUnknown {
+			uncertain++
+			return nil
+		}
+		if c.PreviousPath != "" || c.Operation == model.FileMutationRename {
+			origin := c
+			origin.Path = c.PreviousPath
+			if err := assessMoveScope(origin, &origins); err != nil {
+				return err
+			}
+			return assessMoveScope(c, &destinations)
+		}
+		return assessPath(c)
 	})
 	if err != nil {
 		return model.Finding{}, fmt.Errorf("assess missing verification: %w", err)
@@ -203,13 +267,25 @@ func AssessMissingVerification(ctx context.Context, session model.SessionID, rea
 	if omitted < 0 {
 		omitted = 0
 	}
-	f.Metadata = map[string]string{"confirmed_changes": strconv.FormatInt(confirmed, 10), "applicable_changes": strconv.FormatInt(applicable, 10), "verified_changes": strconv.FormatInt(verified, 10), "missing_changes": strconv.FormatInt(missing, 10), "documentation_changes": strconv.FormatInt(exempt, 10), "uncertainties": strconv.FormatInt(uncertain, 10), "omitted_references": strconv.FormatInt(omitted, 10)}
-	f.Explanation = fmt.Sprintf("Within the currently imported record in source order: %d confirmed affected paths, %d applicable ordinary Go changes, %d with completed relevant verification, %d conclusively missing verification, %d documentation-only exemptions. A suitable check must begin after the change and target its package/directory; a failed completed check counts as verification performed. Earlier and still-running checks do not verify a later edit. Build checks exclude test files. Declared local or recursive targets establish relevance only, not actual file participation, correctness, test coverage, or dependency coverage.", confirmed, applicable, verified, missing, exempt)
+	f.Metadata = map[string]string{"confirmed_changes": strconv.FormatInt(confirmed, 10), "configuration_scopes": strconv.FormatInt(configurations, 10), "applicable_changes": strconv.FormatInt(applicable, 10), "verified_changes": strconv.FormatInt(verified, 10), "missing_changes": strconv.FormatInt(missing, 10), "documentation_changes": strconv.FormatInt(exempt, 10), "uncertainties": strconv.FormatInt(uncertain, 10), "omitted_references": strconv.FormatInt(omitted, 10)}
+	for key, count := range map[string]int64{
+		"move_origins": origins.total, "move_origins_verified": origins.verified, "move_origins_missing": origins.missing, "move_origins_uncertain": origins.uncertain,
+		"move_destinations": destinations.total, "move_destinations_verified": destinations.verified, "move_destinations_missing": destinations.missing, "move_destinations_uncertain": destinations.uncertain,
+	} {
+		f.Metadata[key] = strconv.FormatInt(count, 10)
+	}
+	f.Explanation = fmt.Sprintf("Within the currently imported record in source order: %d confirmed mutations, %d applicable Go scopes, %d with completed relevant verification, %d conclusively missing verification, %d documentation-only exemptions. Both origin and destination of a confirmed move are assessed independently, including file roles and exclusions. A suitable check must begin after the change and target its package/directory; a failed completed check counts as verification performed. Earlier and still-running checks do not verify a later edit. Build checks exclude test files. Confirmed go.mod/go.sum configuration requires a recursive target rooted exactly at an established module directory; isolated package checks are insufficient. Module roots require recorded confirmed go.mod effects at or before the change. Workspace membership and nested module relationships remain uncertain. Declared local or recursive targets establish relevance only, not actual file participation, correctness, test coverage, or dependency coverage.", confirmed, applicable, verified, missing, exempt)
+	if origins.total > 0 {
+		f.Explanation += fmt.Sprintf(" Move origin scopes: %d verified, %d missing, %d uncertain; destination scopes: %d verified, %d missing, %d uncertain.", origins.verified, origins.missing, origins.uncertain, destinations.verified, destinations.missing, destinations.uncertain)
+	}
+	if configurations > 0 {
+		f.Explanation += fmt.Sprintf(" %d module configuration scopes evaluated, requiring whole-module declared targets.", configurations)
+	}
 	if uncertain > 0 {
-		f.Explanation += " Unconfirmed or contradictory changes, unknown results/commands, interpretation gaps, unfamiliar file roles, unclear path bases, moves, and module/workspace boundaries limit affected conclusions. Independent conclusive instances remain usable."
+		f.Explanation += " Unconfirmed or contradictory changes, unknown results/commands, interpretation gaps, unfamiliar file roles, unclear path bases, unknown move endpoints, and module/workspace boundaries limit affected conclusions. Independent conclusive instances remain usable."
 	}
 	if omitted > 0 {
-		f.Explanation += fmt.Sprintf(" Representative event links only; %d evaluated evidence references omitted. The canonical timeline retains the full evidence.", omitted)
+		f.Explanation += fmt.Sprintf(" Representative event links only; %d evaluated reference occurrences omitted (including repeated links beyond the sample bound). The canonical timeline retains the full evidence.", omitted)
 	}
 	return f, nil
 }
@@ -248,13 +324,18 @@ func documentationPath(file string) bool {
 }
 
 func ordinaryGoPath(file string) bool {
-	if !strings.HasSuffix(file, ".go") {
-		return false
-	}
-	for _, part := range strings.Split(strings.TrimPrefix(file, "/"), "/") {
-		if part == "vendor" || part == "testdata" || strings.HasPrefix(part, ".") || strings.HasPrefix(part, "_") {
+	return strings.HasSuffix(file, ".go") && ordinaryGoDirectory(path.Dir(file)) && ordinaryGoComponent(path.Base(file))
+}
+
+func ordinaryGoDirectory(directory string) bool {
+	for _, part := range strings.Split(strings.TrimPrefix(directory, "/"), "/") {
+		if !ordinaryGoComponent(part) {
 			return false
 		}
 	}
 	return true
+}
+
+func ordinaryGoComponent(part string) bool {
+	return part != "vendor" && part != "testdata" && !strings.HasPrefix(part, ".") && !strings.HasPrefix(part, "_")
 }

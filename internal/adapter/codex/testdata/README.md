@@ -120,3 +120,14 @@ events, generic responses and turn diffs are retained without claiming mutation.
 Generic responses linked to a patch request remain patch context; their prose
 cannot supply affected paths or confirmation. Invocation directories are bounded
 and reconstructed from the verified prefix. No filesystem inspection occurs.
+
+
+`moves_configuration.jsonl` uses the same structured patch-result and explicit
+command-event contracts as `changes.jsonl`. It records go.mod/go.sum effects,
+a source move retaining both endpoints, and a documentation change. A failing
+destination-only check leaves the origin and module configuration unverified;
+a later whole-module vet invocation supplies relevant completed verification.
+The shared-service tests stop at each stage, append evidence, verify source
+read-only behavior, and rebuild the same assessments after removing the fixture
+copy. These sanitized structural records do not claim workspace membership or
+actual file participation in the declared checks.

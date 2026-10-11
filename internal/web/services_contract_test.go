@@ -70,3 +70,8 @@ func TestOpenCodeEvidenceServiceContract(t *testing.T) {
 	fixture := apptest.NewOpenCodeFixture(t, "findings_evidence_v1.sql")
 	apptest.RunOpenCodeEvidenceContract(t, contractConsumer{services: fixture.Services})
 }
+
+func TestMoveConfigurationServiceContract(t *testing.T) {
+	fixture := apptest.NewFixture(t, "moves_configuration.jsonl")
+	apptest.RunMoveConfigurationContract(t, contractConsumer{services: fixture.Services})
+}

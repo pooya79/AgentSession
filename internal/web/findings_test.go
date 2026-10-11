@@ -136,3 +136,14 @@ func TestOpenCodeAssessmentRenderingAndNavigation(t *testing.T) {
 	}
 	t.Fatal("durable session missing")
 }
+
+func TestMoveConfigurationAssessmentRendering(t *testing.T) {
+	fixture := apptest.NewFixture(t, "moves_configuration.jsonl")
+	w := httptest.NewRecorder()
+	NewHandler(fixture.Services).ServeHTTP(w, httptest.NewRequest(http.MethodGet, sessionURL("move-configuration"), nil))
+	for _, want := range []string{"Move origin scopes: 1 verified, 0 missing, 0 uncertain", "destination scopes: 1 verified, 0 missing, 0 uncertain", "2 module configuration scopes evaluated", "Workspace membership and nested module relationships remain uncertain", "actual file participation"} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("missing %q in scope assessment", want)
+		}
+	}
+}

@@ -198,3 +198,22 @@ func TestOpenCodeAssessmentRendering(t *testing.T) {
 	}
 	t.Fatal("durable session missing")
 }
+
+func TestMoveConfigurationAssessmentRendering(t *testing.T) {
+	fixture := apptest.NewFixture(t, "moves_configuration.jsonl")
+	page, err := fixture.Services.SessionFindings(context.Background(), "move-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(context.Background(), fixture.Services)
+	m.screen = findingsScreen
+	m.sessionsState.selected = "move-configuration"
+	m.findingsState.page = page
+	m.width, m.height = 240, 120
+	view := m.View().Content
+	for _, want := range []string{"Move origin scopes: 1 verified, 0 missing, 0 uncertain", "destination scopes: 1 verified, 0 missing, 0 uncertain", "2 module configuration scopes evaluated", "Workspace membership and nested module relationships remain uncertain", "actual file participation"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("missing %q in scope assessment: %s", want, view)
+		}
+	}
+}

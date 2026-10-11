@@ -159,8 +159,12 @@ uncertain. See the [repetition limits](../README.md#repeated-command-failures) a
 Missing verification uses structured completed Codex patch results, ordinary
 Go paths, and declared local/recursive check targets. A completed failed relevant
 check counts as performed verification while remaining independently unresolved.
-Requests, no-ops, unsupported roles, moves and unclear module/workspace scopes
-do not become conclusive missing changes. See the
+Confirmed moves assess both old and new applicable scopes. Confirmed `go.mod`
+creation/update establishes a module marker; module configuration requires a
+recursive declared target at that root, and `go.sum` alone cannot establish it.
+Requests, no-ops, unsupported roles, unknown move endpoints and unclear nested
+module/workspace scopes do not become conclusive missing changes. Workspace
+membership remains unavailable from the current canonical evidence. See the
 [change scope and limits](../README.md#missing-verification-after-changes).
 
 ## Not yet implemented

@@ -417,3 +417,47 @@ func RunOpenCodeEvidenceContract(t *testing.T, consumer Consumer) {
 		}
 	}
 }
+
+// RunMoveConfigurationContract verifies bounded scope explanations and event
+// navigation for the same recorded evidence through both presentation consumers.
+func RunMoveConfigurationContract(t *testing.T, consumer Consumer) {
+	t.Helper()
+	ctx := context.Background()
+	page, err := consumer.SessionFindings(ctx, "move-configuration")
+	if err != nil || page.State != app.EvidenceComplete || len(page.Assessments) != 3 {
+		t.Fatalf("scope findings = %#v, %v", page, err)
+	}
+	var missing model.Finding
+	for _, f := range page.Assessments {
+		if f.RuleID == "missing_verification" {
+			missing = f
+		}
+	}
+	if missing.State != model.FindingNotTriggered || missing.Metadata["omitted_references"] != "0" || missing.Metadata["configuration_scopes"] != "2" || missing.Metadata["move_origins_verified"] != "1" || missing.Metadata["move_destinations_verified"] != "1" || missing.Metadata["verified_changes"] != "4" || missing.Metadata["documentation_changes"] != "1" {
+		t.Fatalf("scope assessment = %#v", missing)
+	}
+	if page.Assessments[0].RuleID != "unresolved_failed_verification" || page.Assessments[0].State != model.FindingTriggered {
+		t.Fatalf("independent failed check = %#v", page)
+	}
+	var move bool
+	for _, id := range missing.EventIDs {
+		detail, err := consumer.EventDetail(ctx, app.EventDetailRequest{SessionID: "move-configuration", EventID: id, IncludePayload: true})
+		if err != nil || detail.State != app.EvidenceComplete {
+			t.Fatalf("scope detail = %#v, %v", detail, err)
+		}
+		if p, ok := detail.Payload.(model.PatchData); ok {
+			for _, c := range p.Changes {
+				if c.Operation == model.FileMutationRename && c.PreviousPath == "old/core.go" && c.Path == "new/core.go" {
+					move = true
+				}
+			}
+		}
+		timeline, err := consumer.Timeline(ctx, app.TimelineRequest{SessionID: "move-configuration", FocusedEvent: id, Limit: 1})
+		if err != nil || timeline.FocusedEvent != id {
+			t.Fatalf("scope navigation = %#v, %v", timeline, err)
+		}
+	}
+	if !move {
+		t.Fatal("move evidence omitted")
+	}
+}
