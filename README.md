@@ -42,6 +42,17 @@ go run ./cmd/agentsession
 The default command starts the terminal interface and discovers supported
 sessions automatically.
 
+In a session timeline, arrows or `j`/`k` scroll text, Page Up/Page Down scroll
+one viewport, and `[`/`]` jump between events. The `Target` header identifies
+the event acted on by Enter (show/hide technical details) and `u` (inspect
+bounded, redacted Unknown evidence). Messages always remain open. Press `?`
+for help, `/` for search, and Esc to return to your previous reading context.
+Returning from search results or assessment evidence restores the earlier
+timeline, selection, disclosure, and reading position. Resizing and refreshing
+preserve the position within available content; refresh explains changed or
+removed anchor evidence. Failed reads retain usable evidence and can be retried
+with `r`; interrupted continuation can resume when you scroll near the end.
+
 To start the web interface:
 
 ```bash

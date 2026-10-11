@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -37,10 +38,11 @@ type overviewLoadedMsg struct {
 
 // timelineLoadedMsg carries one bounded page of lightweight event summaries.
 type timelineLoadedMsg struct {
-	generation uint64
-	cursor     string
-	page       app.TimelinePage
-	err        error
+	generation  uint64
+	cursor      string
+	page        app.TimelinePage
+	err         error
+	inspections map[model.EventID]app.UnknownEvidenceInspection
 }
 
 // detailLoadedMsg carries the only exploration response that includes a
@@ -224,7 +226,7 @@ func (m *Model) replaceRequest() context.Context {
 	if m.requestCancel != nil {
 		m.requestCancel()
 	}
-	m.clearSupersededInspections()
+	m.clearSupersededReads()
 	m.requestGeneration++
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.requestCtx = ctx
@@ -237,7 +239,7 @@ func (m *Model) cancelRequest() {
 	if m.requestCancel != nil {
 		m.requestCancel()
 	}
-	m.clearSupersededInspections()
+	m.clearSupersededReads()
 	m.requestGeneration++
 	m.requestCtx = nil
 	m.requestCancel = nil
@@ -329,15 +331,78 @@ func (m *Model) reloadSessions() tea.Cmd {
 	))
 }
 
-// reloadTimeline refreshes the first chunk. Existing cards remain visible if
-// the replacement read fails.
+// reloadTimeline refreshes the explored range through bounded service reads.
+// The replacement is published atomically; usable cards remain while loading
+// or if any read fails. A focused read also supports assessment windows.
 func (m *Model) reloadTimeline() tea.Cmd {
 	ctx := m.replaceRequest()
 	m.timelineState.loading = true
 	m.timelineState.err = nil
+	m.timelineState.notice = ""
 	m.timelineState.pendingCursor = ""
 	m.invalidateTimelineRender()
-	return m.startSpinner(loadTimeline(ctx, m.services, m.requestGeneration, m.sessionsState.selected, ""))
+	if len(m.timelineState.page.Events) == 0 {
+		return m.startSpinner(loadTimeline(ctx, m.services, m.requestGeneration, m.sessionsState.selected, ""))
+	}
+	events := m.timelineState.page.Events
+	first, through := events[0].ID, events[len(events)-1].Sequence
+	inspected := make([]model.EventID, 0, len(m.timelineState.inspections))
+	for _, event := range events {
+		if _, ok := m.timelineState.inspections[event.ID]; ok {
+			inspected = append(inspected, event.ID)
+		}
+	}
+	generation, services, session := m.requestGeneration, m.services, m.sessionsState.selected
+	return m.startSpinner(func() tea.Msg {
+		request := app.TimelineRequest{SessionID: session, FocusedEvent: first, Limit: pageSize, IncludePayloads: true}
+		page, err := services.Timeline(ctx, request)
+		if err == nil && page.State == app.EvidenceNotFound {
+			// The first retained event may have disappeared in a reimport.
+			request.FocusedEvent = ""
+			page, err = services.Timeline(ctx, request)
+		}
+		seen := make(map[string]bool)
+		for err == nil && page.NextCursor != "" && (len(page.Events) == 0 || page.Events[len(page.Events)-1].Sequence < through) {
+			if err = ctx.Err(); err != nil {
+				break
+			}
+			cursor := page.NextCursor
+			if seen[cursor] {
+				err = fmt.Errorf("refresh timeline: continuation did not advance")
+				break
+			}
+			seen[cursor] = true
+			request.FocusedEvent, request.Cursor = "", cursor
+			var next app.TimelinePage
+			next, err = services.Timeline(ctx, request)
+			if err == nil {
+				page = mergeTimelinePage(page, next)
+			}
+		}
+		inspections := make(map[model.EventID]app.UnknownEvidenceInspection, len(inspected))
+		if err == nil {
+			available := make(map[model.EventID]bool, len(page.Events))
+			for _, event := range page.Events {
+				available[event.ID] = true
+			}
+			for _, id := range inspected {
+				if !available[id] {
+					continue
+				}
+				if err = ctx.Err(); err != nil {
+					break
+				}
+				var inspection app.UnknownEvidenceInspection
+				inspection, err = services.InspectUnknownEvidence(ctx, session, id)
+				if err != nil {
+					err = fmt.Errorf("refresh retained inspection: %w", err)
+					break
+				}
+				inspections[id] = inspection
+			}
+		}
+		return timelineLoadedMsg{generation: generation, page: page, inspections: inspections, err: err}
+	})
 }
 
 // observeNow starts a fresh observer and immediately reads indexing status.

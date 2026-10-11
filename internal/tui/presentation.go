@@ -12,11 +12,12 @@ func (m *Model) syncViewports() {
 	width := max(1, m.renderWidth())
 	height := max(1, m.contentHeight())
 
+	m.captureTimelineAnchor()
 	timelineLines, timelineRanges := m.timelineContent()
 	m.timelineState.viewport.SetWidth(width)
 	m.timelineState.viewport.SetHeight(max(1, height-len(m.timelineHeaderLines())))
 	m.timelineState.viewport.SetContentLines(timelineLines)
-	m.anchorTimelineSelection(timelineRanges)
+	m.restoreTimelineAnchor(timelineRanges)
 
 	m.detailState.viewport.SetWidth(width)
 	m.detailState.viewport.SetHeight(height)
@@ -129,11 +130,14 @@ func (m Model) helpLines() []string {
 		"  q / Ctrl-C   quit",
 		"",
 		"Navigation",
-		"  ↑/↓ or j/k   move one row or line",
+		"  ↑/↓ or j/k   scroll timeline text; move rows in lists",
+		"  [ / ]        jump to previous/next timeline event",
 		"  Home/End     jump to the first or last row",
 		"  g/G          jump to the first or last row",
 		"  PgUp/PgDn    scroll long evidence",
 		"  Enter        open a session or expand/collapse a timeline card",
+		"  Target       timeline header names the event Enter and u act on",
+		"  Esc          return to the previous reading context, including search",
 		"",
 		"Actions",
 		"  r            refresh current evidence; rescan from overview screens",

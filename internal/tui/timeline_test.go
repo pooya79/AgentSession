@@ -42,7 +42,7 @@ func TestTimelineNearEndAppendsChunksSuppressesDuplicatesAndRetries(t *testing.T
 		},
 	}
 
-	m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: ']', Text: "]"})
 	if cmd == nil || !m.timelineState.loading {
 		t.Fatal("near-end navigation did not request continuation")
 	}

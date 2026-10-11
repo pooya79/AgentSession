@@ -34,9 +34,10 @@ type Model struct {
 	ctx      context.Context
 	services app.Services
 
-	width  int
-	height int
-	screen screen
+	width      int
+	height     int
+	screen     screen
+	navigation []navigationContext
 
 	// Requests and import observation have independent lifetimes. Generations
 	// reject responses from commands canceled by later navigation or refreshes.
@@ -96,6 +97,7 @@ func New(ctx context.Context, services app.Services) Model {
 		timelineState: timelineState{
 			requestedCursors:  make(map[string]bool),
 			expanded:          make(map[model.EventID]bool),
+			disclosureAnchors: make(map[model.EventID]timelineReadingAnchor),
 			inspections:       make(map[model.EventID]app.UnknownEvidenceInspection),
 			inspectionErrors:  make(map[model.EventID]error),
 			inspectionLoading: make(map[model.EventID]bool),
@@ -132,6 +134,11 @@ func (m Model) Init() tea.Cmd {
 // busy reports whether any visible request or application-owned workflow needs
 // spinner animation.
 func (m Model) busy() bool {
+	for _, loading := range m.timelineState.inspectionLoading {
+		if loading {
+			return true
+		}
+	}
 	return m.findingsState.loading || m.sessionsState.loading || m.sessionsState.overviewLoading || m.timelineState.loading || m.detailState.loading || m.detailState.inspectionLoading ||
 		m.projectionsState.loading || m.projectionsState.status.Active || m.indexingState.status.Active || m.searchState.loading
 }

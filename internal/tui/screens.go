@@ -37,6 +37,7 @@ type timelineState struct {
 	pendingCursor     string
 	requestedCursors  map[string]bool
 	expanded          map[model.EventID]bool
+	disclosureAnchors map[model.EventID]timelineReadingAnchor
 	inspections       map[model.EventID]app.UnknownEvidenceInspection
 	inspectionErrors  map[model.EventID]error
 	inspectionLoading map[model.EventID]bool
@@ -46,6 +47,8 @@ type timelineState struct {
 	cachedWidth       int
 	cachedLines       []string
 	cachedRanges      map[model.EventID]timelineCardRange
+	anchor            timelineReadingAnchor
+	notice            string
 }
 
 // detailState retains the last usable detail while a refresh is in flight or

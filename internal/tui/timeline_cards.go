@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/pooya79/AgentSession/internal/app"
@@ -14,6 +15,9 @@ import (
 type timelineCardRange struct {
 	start int
 	end   int
+	// offsets locate rows within content independently of wrapping. Whitespace
+	// added or removed by wrapping/field indentation does not advance position.
+	offsets []int
 }
 
 func (m *Model) timelineContent() ([]string, map[model.EventID]timelineCardRange) {
@@ -38,7 +42,20 @@ func (m *Model) timelineContent() ([]string, map[model.EventID]timelineCardRange
 			m.timelineState.inspectionErrors[event.ID],
 		)
 		lines = append(lines, card...)
-		ranges[event.ID] = timelineCardRange{start: start, end: len(lines)}
+		offsets := make([]int, len(card))
+		position := 0
+		for row, line := range card {
+			offsets[row] = position
+			if row == 0 {
+				continue
+			} // the selection/disclosure header is presentation
+			for _, r := range line {
+				if !unicode.IsSpace(r) {
+					position++
+				}
+			}
+		}
+		ranges[event.ID] = timelineCardRange{start: start, end: len(lines), offsets: offsets}
 		lines = append(lines, "")
 	}
 	if m.timelineState.loading && len(m.timelineState.page.Events) > 0 {

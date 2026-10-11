@@ -78,7 +78,15 @@ representative collection of real sessions.
   indexing diagnostics, projection status and actions, and search. The TUI
   presents ordinary sessions as a conversation with distinct user and
   assistant messages, while technical activity stays compact until expanded;
-  search results retain standalone event-detail navigation.
+  search results open session timelines and retain the previous reading context.
+- Timeline text scrolling is separate from event navigation. Returning from
+  temporary screens, rewrapping, and refreshing preserves available reading
+  context; refresh explains changed or removed anchor evidence. Canceled reads
+  release retry guards without canceling application-owned background work.
+- The [initial 10,000-event TUI baseline](benchmarks/tui-timeline-initial.md)
+  records reproduced correctness defects and pre-optimization costs. Bounded
+  retention and responsiveness acceptance under real indexing contention
+  remain follow-up work.
 - The web interface is server-rendered and remains functional for its main
   operations without JavaScript. Embedded htmx provides bounded partial
   updates when available.

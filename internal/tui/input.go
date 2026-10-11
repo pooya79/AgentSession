@@ -104,6 +104,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "f":
 		if m.screen == timelineScreen {
+			m.pushNavigation()
 			m.screen = findingsScreen
 			m.findingsState.evidenceCursor = 0
 			m.detailState.viewport.GotoTop()
@@ -112,6 +113,9 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	case "esc":
 		return m.back()
 	case "/":
+		if m.screen != searchScreen {
+			m.pushNavigation()
+		}
 		m.screen = searchScreen
 		m.searchState.editing = true
 		m.searchState.err = nil
@@ -128,6 +132,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case "x":
 		if m.screen == timelineScreen {
+			m.pushNavigation()
 			m.screen = projectionsScreen
 			m.projectionsState.cursor = 0
 			m.projectionsState.confirmAll = false
@@ -187,11 +192,28 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return m.nextPage()
 	case "up", "k":
-		m.move(-1)
+		if m.screen == timelineScreen {
+			m.moveScroll(-1)
+		} else {
+			m.move(-1)
+		}
 		return m, m.prefetchTimelineIfNeeded()
 	case "down", "j":
-		m.move(1)
+		if m.screen == timelineScreen {
+			m.moveScroll(1)
+		} else {
+			m.move(1)
+		}
 		return m, m.prefetchTimelineIfNeeded()
+	case "[", "]":
+		if m.screen == timelineScreen {
+			delta := 1
+			if key == "[" {
+				delta = -1
+			}
+			m.move(delta)
+			return m, m.prefetchTimelineIfNeeded()
+		}
 	case "home", "g":
 		m.moveToBoundary(false)
 		return m, m.prefetchTimelineIfNeeded()
@@ -201,7 +223,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	case "pgup":
 		if m.screen == timelineScreen {
 			m.syncViewports()
-			m.timelineState.viewport.ScrollUp(m.pageStep())
+			m.timelineState.viewport.PageUp()
 		} else if m.screen == detailScreen || m.screen == findingsScreen || m.screen == indexingScreen {
 			m.moveScroll(-m.pageStep())
 		} else {
@@ -210,7 +232,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	case "pgdown":
 		if m.screen == timelineScreen {
 			m.syncViewports()
-			m.timelineState.viewport.ScrollDown(m.pageStep())
+			m.timelineState.viewport.PageDown()
 			return m, m.prefetchTimelineIfNeeded()
 		} else if m.screen == detailScreen || m.screen == findingsScreen || m.screen == indexingScreen {
 			m.moveScroll(m.pageStep())

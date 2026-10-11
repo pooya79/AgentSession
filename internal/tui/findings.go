@@ -9,10 +9,12 @@ import (
 )
 
 type findingsState struct {
-	page           app.FindingsPage
-	err            error
-	loading        bool
-	evidenceCursor int
+	sessionID         model.SessionID
+	refreshIncomplete bool
+	page              app.FindingsPage
+	err               error
+	loading           bool
+	evidenceCursor    int
 }
 type findingsLoadedMsg struct {
 	generation uint64
@@ -22,10 +24,14 @@ type findingsLoadedMsg struct {
 
 func (m *Model) loadFindings() tea.Cmd {
 	ctx := m.replaceRequest()
+	if m.findingsState.sessionID != m.sessionsState.selected {
+		m.findingsState = findingsState{sessionID: m.sessionsState.selected}
+	}
+	m.findingsState.refreshIncomplete = m.findingsState.page.State == app.EvidenceComplete
 	m.findingsState.loading = true
 	m.findingsState.err = nil
-	// Clear previously usable conclusions while a fresh snapshot is requested.
-	m.findingsState.page = app.FindingsPage{State: app.EvidenceUnavailable}
+	// Retain usable assessments with an explicit previous-snapshot label while
+	// refreshing, so cancellation or failure does not discard evidence.
 	generation, session, services := m.requestGeneration, m.sessionsState.selected, m.services
 	return m.startSpinner(func() tea.Msg {
 		page, err := services.SessionFindings(ctx, session)
@@ -34,12 +40,21 @@ func (m *Model) loadFindings() tea.Cmd {
 }
 func (m Model) findingsContentLines() []string {
 	lines := []string{"Rule assessments · session " + string(m.sessionsState.selected)}
-	if m.findingsState.loading {
-		return append(lines, "Loading assessments…")
-	}
 	page := m.findingsState.page
-	if m.findingsState.err != nil || page.State != app.EvidenceComplete {
+	if m.findingsState.loading {
+		lines = append(lines, "Loading assessments…")
+		if page.State != app.EvidenceComplete {
+			return lines
+		}
+	}
+	if m.findingsState.err != nil {
+		lines = append(lines, "Could not refresh assessments: "+safeInline(m.findingsState.err.Error()), "Press r to retry.")
+	}
+	if page.State != app.EvidenceComplete {
 		return append(lines, fmt.Sprintf("Assessments unavailable · %s · stale: %t", page.Status, page.Stale), "Use x from the timeline for projection readiness, retry and rebuild.")
+	}
+	if m.findingsState.refreshIncomplete {
+		lines = append(lines, "Previous snapshot · freshness has not been confirmed.")
 	}
 	for _, f := range page.Assessments {
 		lines = append(lines, "", fmt.Sprintf("%s · %s · version %s", f.RuleID, f.State, f.RuleVersion), "Assessment "+string(f.ID), f.Explanation)
@@ -79,11 +94,12 @@ func (m *Model) openFindingEvidence() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	id := refs[clamp(m.findingsState.evidenceCursor, 0, len(refs)-1)]
+	m.pushNavigation()
 	m.screen = timelineScreen
 	m.resetTimelineState()
-	m.timelineState.loading = true
 	m.timelineState.selected = id
 	ctx := m.replaceRequest()
+	m.timelineState.loading = true
 	generation, services, session := m.requestGeneration, m.services, m.sessionsState.selected
 	return m, m.startSpinner(func() tea.Msg {
 		page, err := services.Timeline(ctx, app.TimelineRequest{SessionID: session, FocusedEvent: id, Limit: pageSize, IncludePayloads: true})

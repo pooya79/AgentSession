@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"reflect"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/pooya79/AgentSession/internal/app"
 	"github.com/pooya79/AgentSession/internal/model"
@@ -8,12 +10,113 @@ import (
 
 const timelinePrefetchThreshold = 5
 
+type timelineReadingAnchor struct {
+	eventID    model.EventID
+	position   int
+	header     bool
+	occurrence int
+}
+
+func (m *Model) captureTimelineAnchor() {
+	top := m.timelineState.viewport.YOffset()
+	for id, card := range m.timelineState.cachedRanges {
+		if top >= card.start && top <= card.end && len(card.offsets) > 0 {
+			row := min(top-card.start, len(card.offsets)-1)
+			first := row
+			for first > 1 && card.offsets[first-1] == card.offsets[row] {
+				first--
+			}
+			m.timelineState.anchor = timelineReadingAnchor{eventID: id, position: card.offsets[row], header: row == 0, occurrence: row - first}
+			return
+		}
+	}
+}
+
+func (m *Model) restoreTimelineAnchor(ranges map[model.EventID]timelineCardRange) {
+	anchor := m.timelineState.anchor
+	card, ok := ranges[anchor.eventID]
+	if !ok {
+		return
+	}
+	row := 0
+	if !anchor.header {
+		for i := 1; i < len(card.offsets); i++ {
+			if card.offsets[i] > anchor.position {
+				break
+			}
+			if row == 0 || card.offsets[i] != card.offsets[row] {
+				row = i
+			}
+		}
+		for range anchor.occurrence {
+			if row+1 >= len(card.offsets) || card.offsets[row+1] != card.offsets[row] {
+				break
+			}
+			row++
+		}
+	}
+	m.timelineState.viewport.SetYOffset(card.start + row)
+}
+
+// reconcileTimelineAnchor compares retained evidence when a refresh replaces
+// it. Identity alone cannot promise the same position after a reimport.
+func (m *Model) reconcileTimelineAnchor(previous app.TimelinePage, inspections map[model.EventID]app.UnknownEvidenceInspection) {
+	anchor := m.timelineState.anchor
+	if anchor.eventID == "" {
+		return
+	}
+	found := false
+	for _, event := range m.timelineState.page.Events {
+		if event.ID == anchor.eventID {
+			found = true
+			break
+		}
+	}
+	switch {
+	case !found:
+		m.timelineState.notice = "Reading anchor removed; showing nearby available evidence."
+		sequence := int64(0)
+		for _, event := range previous.Events {
+			if event.ID == anchor.eventID {
+				sequence = event.Sequence
+				break
+			}
+		}
+		anchor = timelineReadingAnchor{}
+		for _, event := range m.timelineState.page.Events {
+			anchor = timelineReadingAnchor{eventID: event.ID, header: true}
+			if event.Sequence >= sequence {
+				break
+			}
+		}
+	case !reflect.DeepEqual(previous.Payloads[anchor.eventID], m.timelineState.page.Payloads[anchor.eventID]) ||
+		!reflect.DeepEqual(m.timelineState.inspections[anchor.eventID], inspections[anchor.eventID]):
+		m.timelineState.notice = "Reading anchor changed; showing the updated event from its start."
+		anchor = timelineReadingAnchor{eventID: anchor.eventID, header: true}
+	}
+	m.timelineState.anchor = anchor
+	for id := range m.timelineState.disclosureAnchors {
+		if !reflect.DeepEqual(previous.Payloads[id], m.timelineState.page.Payloads[id]) ||
+			!reflect.DeepEqual(m.timelineState.inspections[id], inspections[id]) {
+			delete(m.timelineState.disclosureAnchors, id)
+		}
+	}
+	// Raw inspections are revalidated by the shared bounded/redacted service
+	// before this replacement is published. Failed reads retain the old snapshot.
+	if inspections == nil {
+		inspections = make(map[model.EventID]app.UnknownEvidenceInspection)
+	}
+	m.timelineState.inspections = inspections
+	m.timelineState.inspectionErrors = make(map[model.EventID]error)
+}
+
 func (m *Model) resetTimelineState() {
 	timelineViewport := m.timelineState.viewport
 	timelineViewport.GotoTop()
 	m.timelineState = timelineState{
 		requestedCursors:  make(map[string]bool),
 		expanded:          make(map[model.EventID]bool),
+		disclosureAnchors: make(map[model.EventID]timelineReadingAnchor),
 		inspections:       make(map[model.EventID]app.UnknownEvidenceInspection),
 		inspectionErrors:  make(map[model.EventID]error),
 		inspectionLoading: make(map[model.EventID]bool),
@@ -23,15 +126,21 @@ func (m *Model) resetTimelineState() {
 }
 
 func (m *Model) invalidateTimelineRender() {
+	m.captureTimelineAnchor()
 	m.timelineState.renderRevision++
 	m.timelineState.cachedLines = nil
 	m.timelineState.cachedRanges = nil
 }
 
 func (m *Model) appendTimelinePage(next app.TimelinePage) {
-	seen := make(map[model.EventID]bool, len(m.timelineState.page.Events))
+	m.timelineState.page = mergeTimelinePage(m.timelineState.page, next)
+	m.invalidateTimelineRender()
+}
+
+func mergeTimelinePage(current, next app.TimelinePage) app.TimelinePage {
+	seen := make(map[model.EventID]bool, len(current.Events))
 	var lastSequence int64 = -1
-	for _, event := range m.timelineState.page.Events {
+	for _, event := range current.Events {
 		seen[event.ID] = true
 		if event.Sequence > lastSequence {
 			lastSequence = event.Sequence
@@ -41,23 +150,23 @@ func (m *Model) appendTimelinePage(next app.TimelinePage) {
 		if seen[event.ID] || event.Sequence <= lastSequence {
 			continue
 		}
-		m.timelineState.page.Events = append(m.timelineState.page.Events, event)
+		current.Events = append(current.Events, event)
 		seen[event.ID] = true
 		lastSequence = event.Sequence
 	}
-	if m.timelineState.page.Payloads == nil {
-		m.timelineState.page.Payloads = make(map[model.EventID]model.NormalizedData)
+	if current.Payloads == nil {
+		current.Payloads = make(map[model.EventID]model.NormalizedData)
 	}
 	for eventID, payload := range next.Payloads {
 		if seen[eventID] {
-			m.timelineState.page.Payloads[eventID] = payload
+			current.Payloads[eventID] = payload
 		}
 	}
-	m.timelineState.page.NextCursor = next.NextCursor
-	m.timelineState.page.State = next.State
-	m.timelineState.page.Diagnostics = next.Diagnostics
-	m.timelineState.page.Interpretation = next.Interpretation
-	m.invalidateTimelineRender()
+	current.NextCursor = next.NextCursor
+	current.State = next.State
+	current.Diagnostics = next.Diagnostics
+	current.Interpretation = next.Interpretation
+	return current
 }
 
 func (m *Model) prefetchTimelineIfNeeded() tea.Cmd {
@@ -83,9 +192,21 @@ func (m *Model) prefetchTimelineIfNeeded() tea.Cmd {
 	))
 }
 
-// clearSupersededInspections releases retry guards for inspection reads
-// canceled whenever the shared evidence request is replaced.
-func (m *Model) clearSupersededInspections() {
+// clearSupersededReads releases guards for all reads canceled when the shared
+// evidence request is replaced.
+func (m *Model) clearSupersededReads() {
+	// The evidence reads share one cancellation generation. Release every
+	// guard owned by that generation, retaining all previously usable data.
+	if m.timelineState.loading {
+		delete(m.timelineState.requestedCursors, m.timelineState.pendingCursor)
+		m.timelineState.loading = false
+		m.timelineState.pendingCursor = ""
+		m.invalidateTimelineRender()
+	}
+	m.sessionsState.loading = false
+	m.sessionsState.overviewLoading = false
+	m.searchState.loading = false
+	m.detailState.loading = false
 	m.findingsState.loading = false
 	changed := false
 	for eventID, loading := range m.timelineState.inspectionLoading {
@@ -100,7 +221,7 @@ func (m *Model) clearSupersededInspections() {
 	m.detailState.inspectionLoading = false
 }
 
-func (m *Model) anchorTimelineSelection(ranges map[model.EventID]timelineCardRange) {
+func (m *Model) revealTimelineSelection(ranges map[model.EventID]timelineCardRange) {
 	if m.screen != timelineScreen || m.timelineState.selected == "" {
 		return
 	}
@@ -108,18 +229,5 @@ func (m *Model) anchorTimelineSelection(ranges map[model.EventID]timelineCardRan
 	if !ok {
 		return
 	}
-	top := m.timelineState.viewport.YOffset()
-	height := max(1, m.timelineState.viewport.Height())
-	switch {
-	case card.start < top:
-		m.timelineState.viewport.SetYOffset(card.start)
-	case card.end-card.start >= height && card.start >= top+height:
-		m.timelineState.viewport.SetYOffset(card.start)
-	case card.end-card.start >= height:
-		// Keep the selected card's header anchored while expanded evidence
-		// extends below the viewport.
-		return
-	case card.end > top+height:
-		m.timelineState.viewport.SetYOffset(max(card.start, card.end-height))
-	}
+	m.timelineState.viewport.SetYOffset(card.start)
 }

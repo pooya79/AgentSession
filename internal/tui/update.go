@@ -65,6 +65,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.findingsState.err = visibleError(msg.err)
 		if msg.err == nil {
 			m.findingsState.page = msg.page
+			m.findingsState.refreshIncomplete = false
 		}
 		m.syncViewports()
 		return m, nil
@@ -81,7 +82,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			selected := m.timelineState.selected
 			if msg.cursor == "" {
+				m.invalidateTimelineRender()
+				previous := m.timelineState.page
 				m.timelineState.page = msg.page
+				m.reconcileTimelineAnchor(previous, msg.inspections)
 				m.timelineState.requestedCursors = map[string]bool{"": true}
 			} else {
 				m.appendTimelinePage(msg.page)
@@ -101,6 +105,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.invalidateTimelineRender()
 		m.syncViewports()
+		if m.timelineState.anchor.eventID == "" {
+			m.revealTimelineSelection(m.timelineState.cachedRanges)
+		}
 		return m, nil
 	case detailLoadedMsg:
 		if msg.generation != m.requestGeneration {

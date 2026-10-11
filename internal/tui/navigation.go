@@ -7,6 +7,31 @@ import (
 	"github.com/pooya79/AgentSession/internal/model"
 )
 
+// navigationContext retains a reading context while a temporary screen or a
+// supporting-evidence timeline is open. Requests are canceled before saving;
+// their late responses cannot modify the saved context.
+type navigationContext struct {
+	screen   screen
+	session  model.SessionID
+	timeline timelineState
+	detail   detailState
+	findings findingsState
+	search   searchState
+}
+
+func (m *Model) pushNavigation() {
+	m.cancelRequest()
+	m.captureTimelineAnchor()
+	m.navigation = append(m.navigation, navigationContext{
+		screen: m.screen, session: m.sessionsState.selected,
+		timeline: m.timelineState, detail: m.detailState,
+		findings: m.findingsState, search: m.searchState,
+	})
+	if m.screen == projectionsScreen {
+		m.stopProjectionObservation()
+	}
+}
+
 func (m *Model) runSearch(cursor string) tea.Cmd {
 	ctx := m.replaceRequest()
 	m.searchState.loading = true
@@ -43,6 +68,33 @@ func (m Model) rebuildAllAvailable() bool {
 // back performs screen-specific cleanup before restoring the parent screen.
 // Returning to sessions always refreshes committed imports.
 func (m *Model) back() (tea.Model, tea.Cmd) {
+	if len(m.navigation) > 0 {
+		m.cancelRequest()
+		m.stopProjectionObservation()
+		last := len(m.navigation) - 1
+		previous := m.navigation[last]
+		m.navigation[last] = navigationContext{} // release payload references
+		m.navigation = m.navigation[:last]
+		m.screen, m.sessionsState.selected = previous.screen, previous.session
+		m.timelineState, m.detailState = previous.timeline, previous.detail
+		m.findingsState, m.searchState = previous.findings, previous.search
+		m.syncViewports()
+		switch m.screen {
+		case sessionsScreen:
+			return m, tea.Batch(m.reloadSessions(), m.observeNow())
+		case projectionsScreen:
+			return m, m.observeProjectionsNow()
+		case timelineScreen:
+			if len(m.timelineState.page.Events) == 0 {
+				return m, m.reloadTimeline()
+			}
+		case findingsScreen:
+			if m.findingsState.page.State != app.EvidenceComplete {
+				return m, m.loadFindings()
+			}
+		}
+		return m, nil
+	}
 	switch m.screen {
 	case searchScreen:
 		m.cancelRequest()
@@ -60,6 +112,9 @@ func (m *Model) back() (tea.Model, tea.Cmd) {
 		m.cancelRequest()
 		m.findingsState = findingsState{}
 		m.screen = timelineScreen
+		if len(m.timelineState.page.Events) == 0 {
+			return m, m.reloadTimeline()
+		}
 	case detailScreen:
 		m.cancelRequest()
 		m.screen = timelineScreen
@@ -132,6 +187,7 @@ func (m *Model) move(delta int) {
 			m.timelineState.selected = m.timelineState.page.Events[m.timelineState.cursor].ID
 			m.invalidateTimelineRender()
 			m.syncViewports()
+			m.revealTimelineSelection(m.timelineState.cachedRanges)
 		}
 	case projectionsScreen:
 		if len(m.projectionsState.status.Projections) > 0 {
@@ -174,6 +230,7 @@ func (m *Model) moveToBoundary(last bool) {
 		m.timelineState.selected = m.timelineState.page.Events[m.timelineState.cursor].ID
 		m.invalidateTimelineRender()
 		m.syncViewports()
+		m.revealTimelineSelection(m.timelineState.cachedRanges)
 	case projectionsScreen:
 		if len(m.projectionsState.status.Projections) == 0 {
 			return
@@ -204,6 +261,9 @@ func (m *Model) moveToBoundary(last bool) {
 func (m *Model) moveScroll(delta int) {
 	m.syncViewports()
 	target := &m.detailState.viewport
+	if m.screen == timelineScreen {
+		target = &m.timelineState.viewport
+	}
 	if m.screen == indexingScreen {
 		target = &m.indexingState.viewport
 	}
@@ -274,7 +334,9 @@ func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 		if m.searchState.loading || len(m.searchState.page.Results) == 0 {
 			return m, nil
 		}
-		return m.openSessionTimeline(m.searchState.page.Results[m.searchState.cursor].SessionID)
+		session := m.searchState.page.Results[m.searchState.cursor].SessionID
+		m.pushNavigation()
+		return m.openSessionTimeline(session)
 	case sessionsScreen:
 		if m.sessionsState.loading || len(m.sessionsState.page.Sessions) == 0 {
 			return m, nil
@@ -287,8 +349,18 @@ func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 		event := m.timelineState.page.Events[m.timelineState.cursor]
 		if timelinePayloadTruncatable(m.timelineState.page.Payloads[event.ID]) ||
 			m.timelineState.inspections[event.ID].EventID != "" {
+			m.captureTimelineAnchor()
+			wasExpanded := m.timelineState.expanded[event.ID]
+			if wasExpanded && m.timelineState.anchor.eventID == event.ID {
+				m.timelineState.disclosureAnchors[event.ID] = m.timelineState.anchor
+			}
 			m.timelineState.expanded[event.ID] = !m.timelineState.expanded[event.ID]
 			m.invalidateTimelineRender()
+			if wasExpanded && m.timelineState.anchor.eventID == event.ID {
+				m.timelineState.anchor = timelineReadingAnchor{eventID: event.ID, header: true}
+			} else if saved, ok := m.timelineState.disclosureAnchors[event.ID]; !wasExpanded && ok {
+				m.timelineState.anchor = saved
+			}
 			m.syncViewports()
 		}
 		return m, m.prefetchTimelineIfNeeded()
@@ -300,8 +372,8 @@ func (m *Model) openSessionTimeline(sessionID model.SessionID) (tea.Model, tea.C
 	m.sessionsState.selected = sessionID
 	m.screen = timelineScreen
 	m.resetTimelineState()
-	m.timelineState.loading = true
 	m.stopObservation()
 	ctx := m.replaceRequest()
+	m.timelineState.loading = true
 	return m, m.startSpinner(loadTimeline(ctx, m.services, m.requestGeneration, sessionID, ""))
 }

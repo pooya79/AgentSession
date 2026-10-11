@@ -39,7 +39,7 @@ func (m Model) helpLine(width int) string {
 		case sessionsScreen:
 			return "↑↓ move · Enter open · i index · r rescan · ? help · q quit"
 		case timelineScreen:
-			return "↑↓ cards · Enter expand · f assessments · x projections · Esc back · ? help"
+			return "↑↓ scroll · [/] events · Enter details · f rules · Esc back · ? help"
 		case projectionsScreen:
 			return "↑↓ select · t retry · b rebuild · Esc back · ? help"
 		case searchScreen:
@@ -64,7 +64,7 @@ func (m Model) helpLine(width int) string {
 	case indexingScreen:
 		return "↑/↓ or j/k scroll · g/G top/bottom · PgUp/PgDn scroll · Esc sessions · r rescan · ? help · q quit"
 	case timelineScreen:
-		return "↑/↓ or j/k cards · PgUp/PgDn scroll · Enter expand · u inspect Unknown · f assessments · x projections · Esc sessions · ? help"
+		return "↑↓ j/k scroll · PgUp/PgDn · [/] events · Enter details · u raw · f rules · x projections · Esc back · ? help"
 	case projectionsScreen:
 		return "↑/↓ select · r refresh · t retry implemented · b rebuild selected · a rebuild all when available · Esc timeline · ? help"
 	default:
