@@ -205,7 +205,7 @@ func (s *ImportStore) RecordDiagnostics(ctx context.Context, sessionID model.Ses
 		return nil, errors.New("sqlite import store: read record diagnostics: session ID is required")
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT d.raw_record_id, d.ordinal, d.code, d.severity, d.message, d.interpretation_reason,
+		SELECT d.raw_record_id, d.ordinal, d.code, d.severity, d.message, d.interpretation_reason, d.interpretation_boundary,
 		       d.event_ids_json, d.raw_record_ids_json
 		FROM record_diagnostics d
 		JOIN raw_records r ON r.id = d.raw_record_id
@@ -223,7 +223,7 @@ func (s *ImportStore) RecordDiagnostics(ctx context.Context, sessionID model.Ses
 		var eventIDs, rawRecordIDs string
 		if err := rows.Scan(
 			&diagnostic.RawRecordID, &diagnostic.Ordinal, &diagnostic.Diagnostic.Code,
-			&diagnostic.Diagnostic.Severity, &diagnostic.Diagnostic.Message, &diagnostic.Diagnostic.InterpretationReason, &eventIDs, &rawRecordIDs,
+			&diagnostic.Diagnostic.Severity, &diagnostic.Diagnostic.Message, &diagnostic.Diagnostic.InterpretationReason, &diagnostic.Diagnostic.InterpretationBoundary, &eventIDs, &rawRecordIDs,
 		); err != nil {
 			return nil, fmt.Errorf("sqlite import store: scan record diagnostic for session %q: %w", sessionID, err)
 		}

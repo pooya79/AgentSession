@@ -251,7 +251,7 @@ func canonicalSourceDigest(ctx context.Context, tx *sql.Tx, sourceID model.Sourc
 		`SELECT e.id, e.session_id, e.sequence, e.timestamp, e.kind, e.summary, e.searchable_text, e.data_json, e.message_role, e.raw_record_id, e.raw_source_id, e.raw_record_sequence, e.raw_byte_offset, e.raw_byte_length, e.raw_content_hash, e.retention_policy_version, e.payload_storage FROM events e JOIN sessions s ON s.id = e.session_id WHERE s.source_id = ? ORDER BY e.id`,
 		`SELECT p.event_id, p.retention_policy_version, p.storage_encoding, p.original_size, p.content FROM event_payloads p JOIN events e ON e.id = p.event_id JOIN sessions s ON s.id = e.session_id WHERE s.source_id = ? ORDER BY p.event_id`,
 		`SELECT d.session_id, d.position, d.code, d.severity, d.message, d.event_ids_json, d.raw_record_ids_json FROM session_diagnostics d JOIN sessions s ON s.id = d.session_id WHERE s.source_id = ? ORDER BY d.session_id, d.position`,
-		`SELECT d.session_id, d.raw_record_id, d.ordinal, d.code, d.severity, d.message, d.interpretation_reason, d.event_ids_json, d.raw_record_ids_json FROM record_diagnostics d JOIN sessions s ON s.id = d.session_id WHERE s.source_id = ? ORDER BY d.session_id, d.raw_record_id, d.ordinal`,
+		`SELECT d.session_id, d.raw_record_id, d.ordinal, d.code, d.severity, d.message, d.interpretation_reason, d.interpretation_boundary, d.event_ids_json, d.raw_record_ids_json FROM record_diagnostics d JOIN sessions s ON s.id = d.session_id WHERE s.source_id = ? ORDER BY d.session_id, d.raw_record_id, d.ordinal`,
 		`SELECT source_id, record_sequence, state_version, cursor, fingerprint FROM import_checkpoints WHERE source_id = ? ORDER BY source_id`,
 	}
 	for tableIndex, query := range queries {

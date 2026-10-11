@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -39,6 +40,8 @@ type logicalRecord struct {
 	timeCreated         any
 	timestamp           *time.Time
 	timestampDiagnostic *model.Diagnostic
+	sourceSequence      *int64
+	sequenceDiagnostics []model.Diagnostic
 	raw                 []byte
 }
 
@@ -61,6 +64,17 @@ func (p *prepared) eachRecord(ctx context.Context, accept func(logicalRecord) er
 }
 
 func (p *prepared) eachFlat(ctx context.Context, table, where string, args []any, order string, accept func(logicalRecord) error) error {
+	var remaining, markerCount, markerDistinct int64
+	var marker sql.NullInt64
+	if table == "event" && p.selected.durableIncomplete {
+		if err := p.tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM event WHERE aggregate_id=?`, p.meta.nativeID).Scan(&remaining); err != nil {
+			return fmt.Errorf("read OpenCode durable row count: %w", err)
+		}
+		if err := p.tx.QueryRowContext(ctx, `SELECT COUNT(*), COUNT(DISTINCT seq), MIN(seq) FROM event_sequence WHERE aggregate_id=?`, p.meta.nativeID).Scan(&markerCount, &markerDistinct, &marker); err != nil {
+			return fmt.Errorf("read OpenCode durable sequence marker: %w", err)
+		}
+	}
+	var previous *int64
 	rows, err := p.tx.QueryContext(ctx, `SELECT * FROM `+table+` WHERE `+where+` ORDER BY `+order, args...)
 	if err != nil {
 		return err
@@ -81,6 +95,33 @@ func (p *prepared) eachFlat(ctx context.Context, table, where string, args []any
 		record, err := makeRecord(table, columns, values, "", "")
 		if err != nil {
 			return err
+		}
+		if table == "event" && p.selected.durableIncomplete {
+			gap := func(boundary model.InterpretationBoundary) {
+				record.sequenceDiagnostics = append(record.sequenceDiagnostics, model.Diagnostic{
+					Code: "opencode.generation.durable.gap", Severity: model.SeverityWarning,
+					Message:              "The recorded source sequence leaves a possible gap in command or change evidence.",
+					InterpretationReason: model.InterpretationIncompleteSourceSequence, InterpretationBoundary: boundary,
+				})
+			}
+			current := record.sourceSequence
+			switch {
+			case current == nil || *current < 0 || (previous != nil && *current <= *previous):
+				gap(model.InterpretationUnlocated)
+			case previous == nil && *current > 1:
+				gap("")
+			case previous != nil && *previous < math.MaxInt64 && *current > *previous+1:
+				gap("")
+			}
+			remaining--
+			if remaining == 0 {
+				if markerCount != 1 || markerDistinct != 1 || !marker.Valid || current == nil || marker.Int64 < *current {
+					gap(model.InterpretationUnlocated)
+				} else if *current < math.MaxInt64 && marker.Int64 > *current+1 {
+					gap(model.InterpretationAfterRecord)
+				}
+			}
+			previous = current
 		}
 		if err := accept(record); err != nil {
 			return err
@@ -235,6 +276,9 @@ func makeRecord(table string, names []string, values []any, keyPrefix, messageID
 			record.timeCreated = values[i]
 		case "seq":
 			seq = values[i]
+			if value, ok := values[i].(int64); ok {
+				record.sourceSequence = &value
+			}
 		}
 	}
 	timestampValue := record.timeCreated

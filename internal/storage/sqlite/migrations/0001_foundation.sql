@@ -93,7 +93,9 @@ CREATE TABLE record_diagnostics (
     severity TEXT NOT NULL,
     message TEXT NOT NULL,
     interpretation_reason TEXT NOT NULL DEFAULT ''
-        CHECK (interpretation_reason IN ('', 'missing_discriminant', 'structurally_invalid_known_record')),
+        CHECK (interpretation_reason IN ('', 'missing_discriminant', 'structurally_invalid_known_record', 'incomplete_source_sequence')),
+    interpretation_boundary TEXT NOT NULL DEFAULT ''
+        CHECK (interpretation_boundary IN ('', 'after_record', 'unlocated')),
     event_ids_json TEXT NOT NULL,
     raw_record_ids_json TEXT NOT NULL,
     PRIMARY KEY (raw_record_id, ordinal)

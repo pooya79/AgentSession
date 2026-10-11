@@ -102,10 +102,11 @@ const commandGapsSQL = `
   (e.kind='command' AND (c.invocation_id='' OR c.phase NOT IN ('started','completed') OR c.oversized=1 OR ` + commandIdentityConflictSQL + ` OR (c.phase='started' AND (c.command_text='' OR c.directory='')) OR
    NOT EXISTS(SELECT 1 FROM command_evidence start JOIN events se ON se.id=start.event_id WHERE se.session_id=e.session_id AND start.invocation_id=c.invocation_id AND start.phase='started'))))
  UNION ALL
- SELECT CASE WHEN r.record_sequence IS NULL OR EXISTS(SELECT 1 FROM events e WHERE e.session_id=d.session_id AND e.raw_record_sequence IS NULL) THEN NULL
+ SELECT CASE WHEN d.interpretation_boundary='unlocated' OR r.record_sequence IS NULL OR EXISTS(SELECT 1 FROM events e WHERE e.session_id=d.session_id AND e.raw_record_sequence IS NULL) THEN NULL
+  WHEN d.interpretation_boundary='after_record' THEN COALESCE((SELECT MAX(e.sequence)+1 FROM events e WHERE e.session_id=d.session_id AND e.raw_record_id=d.raw_record_id),(SELECT MIN(e.sequence) FROM events e WHERE e.session_id=d.session_id AND e.raw_record_sequence>r.record_sequence),9223372036854775807)
   ELSE COALESCE((SELECT MIN(e.sequence) FROM events e WHERE e.session_id=d.session_id AND e.raw_record_sequence>=r.record_sequence),9223372036854775807) END, NULL AS event_id, NULL AS command, NULL AS directory, NULL AS invocation_start
  FROM record_diagnostics d JOIN raw_records r ON r.id=d.raw_record_id
- WHERE d.session_id=? AND d.interpretation_reason<>'' GROUP BY d.raw_record_id
+ WHERE d.session_id=? AND d.interpretation_reason<>'' GROUP BY d.raw_record_id,d.interpretation_boundary
 `
 const commandGapCountSQL = `SELECT COUNT(*), COUNT(event_id) FROM (` + commandGapsSQL + `)`
 const commandWalkSQL = `

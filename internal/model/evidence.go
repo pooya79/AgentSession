@@ -36,6 +36,9 @@ type Diagnostic struct {
 	// retained record could not be structurally interpreted. Other diagnostics
 	// leave it empty.
 	InterpretationReason InterpretationReason
+	// InterpretationBoundary positions an interpretation gap relative to its
+	// retained raw record. Empty means before the record's canonical events.
+	InterpretationBoundary InterpretationBoundary
 
 	// Evidence references are optional because a source-level diagnostic may
 	// be known before a canonical event can be produced.
@@ -53,11 +56,21 @@ const (
 	// InterpretationStructurallyInvalidKnownRecord identifies a complete record
 	// that claims a known shape but cannot be normalized as that shape.
 	InterpretationStructurallyInvalidKnownRecord InterpretationReason = "structurally_invalid_known_record"
+	// InterpretationIncompleteSourceSequence identifies missing source-order
+	// evidence without misclassifying valid records as unsupported events.
+	InterpretationIncompleteSourceSequence InterpretationReason = "incomplete_source_sequence"
+)
+
+type InterpretationBoundary string
+
+const (
+	InterpretationAfterRecord InterpretationBoundary = "after_record"
+	InterpretationUnlocated   InterpretationBoundary = "unlocated"
 )
 
 func (r InterpretationReason) valid() bool {
 	switch r {
-	case "", InterpretationMissingDiscriminant, InterpretationStructurallyInvalidKnownRecord:
+	case "", InterpretationMissingDiscriminant, InterpretationStructurallyInvalidKnownRecord, InterpretationIncompleteSourceSequence:
 		return true
 	default:
 		return false
@@ -105,6 +118,9 @@ func (d Diagnostic) Validate() error {
 	}
 	if !d.InterpretationReason.valid() {
 		return fmt.Errorf("unsupported interpretation reason %q", d.InterpretationReason)
+	}
+	if d.InterpretationBoundary != "" && (d.InterpretationReason == "" || (d.InterpretationBoundary != InterpretationAfterRecord && d.InterpretationBoundary != InterpretationUnlocated)) {
+		return fmt.Errorf("unsupported interpretation boundary %q", d.InterpretationBoundary)
 	}
 	if err := validateEvidenceIDs(d.EventIDs); err != nil {
 		return err

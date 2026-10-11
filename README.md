@@ -224,8 +224,8 @@ histories are never combined.
   and mutation confirmation are not currently recognized. Shell-only records
   lack the exit/directory evidence needed for definitive assessments.
 
-Incomplete durable sequences expose residual interpretation gaps, preserving
-uncertainty about missing recovery and verification. Durable tool attribution
+Incomplete durable sequences expose positioned interpretation diagnostics,
+preserving uncertainty about missing recovery and verification. Durable tool attribution
 keeps the most recent 256 invocation IDs/tool names (at most 512 bytes each),
 reconstructing them from the selected snapshot prefix on resume. Evicted,
 conflicting, or oversized attribution remains uncertain. Existing findings

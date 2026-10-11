@@ -161,6 +161,29 @@ record. The findings projection atomically publishes all three v1 assessments.
 Ordinary package-local Go changes are assessed now; move/module/workspace scope
 recognition remains uncertain as permitted by the staged implementation in #82.
 
+### Positioned interpretation gaps
+
+OpenCode durable sequences can omit rows even when the retained rows have valid,
+supported shapes. Such omissions are diagnostics, never synthetic Unknown
+events: ADR-015 reserves Unknown for valid unsupported timeline evidence.
+
+The canonical diagnostic contract carries the source-neutral reason
+`incomplete_source_sequence` and an optional interpretation boundary. The default
+boundary precedes the owning raw record's canonical events; `after_record`
+follows them, and `unlocated` means source order cannot locate the gap. These
+boundaries also apply to other interpretation reasons when a source establishes
+their position. Persist the boundary in the initial v1 record-diagnostics schema
+and include it in authoritative reconciliation fingerprints. Shared evidence
+readers interpret only that generic boundary, never OpenCode sequence fields.
+
+The adapter identifies skipped sequence ranges and missing tails inside its
+query-only snapshot. Tail uncertainty does not erase historical repetition or
+recorded recovery before the gap, but can limit absence of later recovery or
+verification. Ambiguous markers/order remain unlocated. Incomplete appends use
+staged reconciliation because the previous tail diagnostic can move; cursor v1
+also records the selected marker state so marker-only changes invalidate derived
+evidence. Normal complete-generation appends keep their existing incremental path.
+
 ### Product consequences
 
 - Findings can remain useful for sessions that are still receiving events.

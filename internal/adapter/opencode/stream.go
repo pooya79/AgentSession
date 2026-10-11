@@ -27,7 +27,7 @@ func (p *prepared) Import(ctx context.Context, resume *importer.ImportCheckpoint
 		var cursor cursorState
 		if resume.StateVersion != CursorVersion || json.Unmarshal(resume.Cursor, &cursor) != nil ||
 			cursor.Version != string(CursorVersion) || cursor.Format != string(p.selected.format) ||
-			cursor.EventConvention != p.selected.eventConvention {
+			cursor.EventConvention != p.selected.eventConvention || cursor.MarkerState != p.selected.markerState {
 			return importer.ErrSourceChanged
 		}
 		start = cursor.Count
@@ -60,6 +60,7 @@ func (p *prepared) stream(ctx context.Context, start int64, sink importer.Import
 		if err != nil {
 			return err
 		}
+		diagnostics = append(diagnostics, record.sequenceDiagnostics...)
 		switch record.table {
 		case "session":
 		default:

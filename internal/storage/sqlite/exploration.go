@@ -405,12 +405,12 @@ func (s *ImportStore) Diagnostics(ctx context.Context, sessionID model.SessionID
 	}
 	union := `
 		SELECT 0 AS source_order, position AS record_order, 0 AS item_order, '' AS tie_order,
-		       code, severity, message, '' AS interpretation_reason, event_ids_json, raw_record_ids_json
+		       code, severity, message, '' AS interpretation_reason, '' AS interpretation_boundary, event_ids_json, raw_record_ids_json
 		FROM session_diagnostics WHERE ` + where + `
 		UNION ALL
 		SELECT 1 AS source_order, COALESCE(r.record_sequence, r.byte_offset, 0) AS record_order,
 		       d.ordinal AS item_order, d.raw_record_id AS tie_order,
-		       d.code, d.severity, d.message, d.interpretation_reason, d.event_ids_json, d.raw_record_ids_json
+		       d.code, d.severity, d.message, d.interpretation_reason, d.interpretation_boundary, d.event_ids_json, d.raw_record_ids_json
 		FROM record_diagnostics d JOIN raw_records r ON r.id = d.raw_record_id WHERE ` + strings.ReplaceAll(where, "session_id", "d.session_id")
 	allArgs := append(append([]any(nil), args...), args...)
 	var total int64
@@ -421,7 +421,7 @@ func (s *ImportStore) Diagnostics(ctx context.Context, sessionID model.SessionID
 	if limit == 0 || total == 0 {
 		return page, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT code, severity, message, interpretation_reason, event_ids_json, raw_record_ids_json FROM (`+union+`) ORDER BY source_order, record_order, item_order, tie_order LIMIT ?`, append(allArgs, limit)...)
+	rows, err := s.db.QueryContext(ctx, `SELECT code, severity, message, interpretation_reason, interpretation_boundary, event_ids_json, raw_record_ids_json FROM (`+union+`) ORDER BY source_order, record_order, item_order, tie_order LIMIT ?`, append(allArgs, limit)...)
 	if err != nil {
 		return storagecontract.DiagnosticPage{}, fmt.Errorf("sqlite exploration: diagnostics for %q: %w", sessionID, err)
 	}
@@ -429,7 +429,7 @@ func (s *ImportStore) Diagnostics(ctx context.Context, sessionID model.SessionID
 	for rows.Next() {
 		var diagnostic model.Diagnostic
 		var eventIDs, rawRecordIDs string
-		if err := rows.Scan(&diagnostic.Code, &diagnostic.Severity, &diagnostic.Message, &diagnostic.InterpretationReason, &eventIDs, &rawRecordIDs); err != nil {
+		if err := rows.Scan(&diagnostic.Code, &diagnostic.Severity, &diagnostic.Message, &diagnostic.InterpretationReason, &diagnostic.InterpretationBoundary, &eventIDs, &rawRecordIDs); err != nil {
 			return storagecontract.DiagnosticPage{}, fmt.Errorf("sqlite exploration: scan diagnostic for %q: %w", sessionID, err)
 		}
 		if err := json.Unmarshal([]byte(eventIDs), &diagnostic.EventIDs); err != nil {

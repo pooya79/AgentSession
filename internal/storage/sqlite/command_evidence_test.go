@@ -234,3 +234,42 @@ func TestStoredUnresolvedVerification(t *testing.T) {
 		})
 	}
 }
+
+func TestInterpretationGapBoundariesRoundTripAndLimitRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		boundary model.InterpretationBoundary
+		state    model.FindingState
+	}{
+		{"before final result", "", model.FindingTriggered},
+		{"after final result", model.InterpretationAfterRecord, model.FindingInsufficientEvidence},
+		{"unlocated", model.InterpretationUnlocated, model.FindingInsufficientEvidence},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := openImportStore(t)
+			fail := 1
+			batch := commandBatch([]commandRecord{{invocation: "a", phase: model.CommandStarted, command: "go test ./...", dir: "/workspace"}, {invocation: "a", phase: model.CommandCompleted, exit: &fail}})
+			raw := batch.RawRecords[1].Ref.ID
+			batch.RecordDiagnostics = []model.RecordDiagnostic{{RawRecordID: raw, Diagnostic: model.Diagnostic{Code: "sequence-gap", Severity: model.SeverityWarning, Message: "Missing source-order evidence", InterpretationReason: model.InterpretationIncompleteSourceSequence, InterpretationBoundary: tc.boundary}}}
+			if err := store.CommitBatch(ctx, batch); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.CommitBatch(ctx, batch); err != nil {
+				t.Fatal(err)
+			}
+			diagnostics, err := store.RecordDiagnostics(ctx, batch.Session.ID)
+			if err != nil || len(diagnostics) != 1 || diagnostics[0].Diagnostic.InterpretationBoundary != tc.boundary {
+				t.Fatalf("diagnostics = %#v, %v", diagnostics, err)
+			}
+			page, err := store.Diagnostics(ctx, batch.Session.ID, nil, 10)
+			if err != nil || len(page.Diagnostics) != 1 || page.Diagnostics[0].InterpretationBoundary != tc.boundary {
+				t.Fatalf("diagnostic read = %#v, %v", page, err)
+			}
+			finding, err := analysis.AssessUnresolvedVerification(ctx, batch.Session.ID, store)
+			if err != nil || finding.State != tc.state {
+				t.Fatalf("assessment = %#v, %v", finding, err)
+			}
+		})
+	}
+}

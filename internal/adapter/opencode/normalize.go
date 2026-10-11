@@ -27,15 +27,7 @@ func (p *prepared) normalize(record logicalRecord, sessionID model.SessionID, se
 	case "session_message":
 		return normalizeSessionMessage(record, data, sessionID, sequence)
 	case "event":
-		events, diagnostics, err := p.normalizeDurableEvent(record, data, sessionID, sequence)
-		if err != nil || !p.selected.durableIncomplete {
-			return events, diagnostics, err
-		}
-		// A row in an incomplete/ambiguous sequence retains usable positive
-		// evidence, but cannot establish absence in the following interval.
-		// Keep that residual interpretation visible to source-neutral readers.
-		gap, err := unknownEvent(record, sessionID, sequence+int64(len(events)), uint64(len(events)), "sequence-incomplete", model.UnknownUnsupportedNestedVariant, "event:durable-sequence:incomplete")
-		return append(events, gap), diagnostics, err
+		return p.normalizeDurableEvent(record, data, sessionID, sequence)
 	default:
 		return nil, nil, nil
 	}

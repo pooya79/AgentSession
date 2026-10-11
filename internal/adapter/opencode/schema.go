@@ -3,6 +3,7 @@ package opencode
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"math"
 
 	"github.com/pooya79/AgentSession/internal/model"
@@ -25,6 +26,7 @@ type generationSelection struct {
 	format            model.Version
 	eventConvention   string
 	durableIncomplete bool
+	markerState       string
 }
 
 var generationColumns = map[generation]map[string][]string{
@@ -124,7 +126,12 @@ func selectGeneration(ctx context.Context, tx *sql.Tx, schema schemaInfo, sessio
 		}
 	}
 	if durableRows > 0 {
-		return generationSelection{generation: generationEvent, format: EventFormatVersion, eventConvention: "incomplete", durableIncomplete: true}, nil
+		var count, distinct int64
+		var marker sql.NullInt64
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COUNT(DISTINCT seq), MIN(seq) FROM event_sequence WHERE aggregate_id=?`, sessionID).Scan(&count, &distinct, &marker); err != nil {
+			return generationSelection{}, fmt.Errorf("read OpenCode durable marker state: %w", err)
+		}
+		return generationSelection{generation: generationEvent, format: EventFormatVersion, eventConvention: "incomplete", durableIncomplete: true, markerState: fmt.Sprintf("%d:%d:%t:%d", count, distinct, marker.Valid, marker.Int64)}, nil
 	}
 	if schema.events {
 		return generationSelection{generation: generationEvent, format: EventFormatVersion, eventConvention: "empty"}, nil

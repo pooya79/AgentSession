@@ -17,6 +17,7 @@ type cursorState struct {
 	EventConvention string `json:"event_sequence_convention,omitempty"`
 	Count           int64  `json:"count"`
 	LastKey         string `json:"last_key"`
+	MarkerState     string `json:"marker_state,omitempty"`
 }
 
 type fingerprintState struct {
@@ -37,6 +38,9 @@ func (p *prepared) Verify(ctx context.Context, state importer.SourceState) (impo
 		cursor.Format != string(p.selected.format) || cursor.EventConvention != p.selected.eventConvention ||
 		fingerprint.Version != fingerprintVersion || cursor.Count < 0 {
 		return importer.SourceReplaced, nil
+	}
+	if cursor.MarkerState != p.selected.markerState {
+		return importer.SourceMutated, nil
 	}
 	digest := sha256.New()
 	var count, total int64
@@ -69,6 +73,10 @@ func (p *prepared) Verify(ctx context.Context, state importer.SourceState) (impo
 	if total == cursor.Count {
 		return importer.SourceUnchanged, nil
 	}
+	if p.selected.durableIncomplete {
+		// Appending relocates a trailing gap diagnostic on a formerly final row.
+		return importer.SourceMutated, nil
+	}
 	return importer.SourceAppend, nil
 }
 
@@ -76,6 +84,7 @@ func (p *prepared) checkpoint(count int64, lastKey string, digest hash.Hash) (im
 	cursor, err := json.Marshal(cursorState{
 		Version: string(CursorVersion), Format: string(p.selected.format), EventConvention: p.selected.eventConvention,
 		Count: count, LastKey: lastKey,
+		MarkerState: p.selected.markerState,
 	})
 	if err != nil {
 		return importer.ImportCheckpoint{}, err

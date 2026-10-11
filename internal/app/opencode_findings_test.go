@@ -111,10 +111,27 @@ func TestOpenCodeFindingsReconciliationResumeAndOfflineRebuild(t *testing.T) {
 	// potential intervening recovery and verification rather than infer absence.
 	mutate(`DELETE FROM session_message WHERE session_id='durable'; DELETE FROM part WHERE session_id='durable'; DELETE FROM message WHERE session_id='durable'; UPDATE event_sequence SET seq=99 WHERE aggregate_id='durable'`)
 	for _, f := range read().Assessments {
-		if f.State != model.FindingInsufficientEvidence {
+		if f.RuleID == "repeated_command_failures" {
+			if f.State != model.FindingTriggered || f.Metadata["recovered"] != "1" {
+				t.Fatalf("missing tail erased established repetition: %#v", f)
+			}
+		} else if f.State != model.FindingInsufficientEvidence {
 			t.Fatalf("incomplete durable sequence inferred absence: %#v", f)
 		}
 	}
+	tailGap := read()
+	if again := read(); !reflect.DeepEqual(tailGap, again) {
+		t.Fatal("unchanged incomplete sequence is not idempotent")
+	}
+	mutate(`UPDATE event_sequence SET seq=1 WHERE aggregate_id='durable'`)
+	if f := rule(read(), "repeated_command_failures"); f.State != model.FindingInsufficientEvidence {
+		t.Fatalf("marker-only change retained located gap: %#v", f)
+	}
+	mutate(`UPDATE event_sequence SET seq=99 WHERE aggregate_id='durable'; INSERT INTO event VALUES ('tail-text','durable',15,'session.next.text.ended','{"text":"still receiving evidence"}',x'')`)
+	if f := rule(read(), "repeated_command_failures"); f.State != model.FindingTriggered || f.Metadata["uncertainties"] != "1" {
+		t.Fatalf("incomplete append retained stale tail diagnostic: %#v", f)
+	}
+	mutate(`DELETE FROM event WHERE id='tail-text'`)
 	mutate(`INSERT INTO session_message VALUES ('alternative-sequenced','durable','system',1,1,1,'{"text":"alternative history"}'); UPDATE event_sequence SET seq=14 WHERE aggregate_id='durable'`)
 	// A start imported separately from its result survives incremental resume.
 	mutate(`INSERT INTO event VALUES ('resume-start','durable',15,'session.next.tool.called','{"callID":"resume","tool":"bash","input":{"command":"go test ./...","workdir":"/workspace/example"}}',x''); UPDATE event_sequence SET seq=15 WHERE aggregate_id='durable'`)

@@ -50,7 +50,7 @@ examples, not a claim of validation against production databases.
 | Modern ApplyPatch | Successful `structured.applied` enumerates absolute `target` paths and `type=add/update/delete`; `files` previews alone do not confirm effects. An empty applied list is a no-op. Unknown/malformed entries make the entire result uncertain. |
 | Legacy tool snapshots / patch parts | Recognized Bash command intent and Edit/Write/ApplyPatch intent remain source-neutral evidence. Legacy metadata exits and mutation results are not interpreted in this slice; status, prose, and patch file lists alone cannot establish effects. |
 | Shell lifecycle / shell messages | Existing shell records preserve invocation/output linkage but supply neither a numeric exit nor an established directory; findings remain uncertain. |
-| Incomplete durable selection without fallback | Every retained durable row also retains an Unknown residual for its incomplete sequence context. Missing intervals may contain recovery or verification; positive completed checks remain usable. This does not change generation selection. |
+| Incomplete durable selection without fallback | Positioned diagnostics identify skipped ranges and missing tails. Ambiguous ordering/markers produce unlocated diagnostics. Missing intervals may contain recovery or verification; established earlier repetition and positive completed checks remain usable. This does not change generation selection. |
 
 Paths/bases require clean absolute POSIX paths; relative paths and unsupported
 Windows forms remain uncertain. Durable attribution retains 256 recent IDs/tool
@@ -61,3 +61,5 @@ Large command/output records are generated in runtime tests and round-trip intac
 the established bounded findings fields prevent oversized text from becoming a
 definitive conclusion. Both consumers exercise the same persisted assessments,
 evidence links and rebuilding controls through the shared service contract.
+
+Incomplete appends reconcile the selected generation to relocate prior tail diagnostics. Cursor v1 includes marker state, so marker-only changes also reconcile. Diagnostic boundaries persist in the initial v1 schema and are consumed without source-specific shared logic.
