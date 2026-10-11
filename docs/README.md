@@ -16,6 +16,9 @@ The root [README](../README.md) is the user-facing introduction and command
 reference. It should remain concise and link here for design and project-state
 detail.
 
+The [terminal design review for #88](design/tui-review-88.md) contains offline
+previews and the pending visual acceptance record for the proposed TUI design.
+
 ## Document roles
 
 ### Product contract

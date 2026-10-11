@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentSession — terminal review #88</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 24px; background: #f3f4f5; color: #202830; font: 16px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 23px; margin-bottom: 4px; }
+  p { max-width: 88ch; }
+  .controls { display: flex; flex-wrap: wrap; align-items: end; gap: 16px; margin: 20px 0; }
+  label { display: grid; gap: 4px; font-size: 14px; }
+  select, input, button { font: inherit; padding: 6px 10px; }
+  button { cursor: pointer; }
+  #edit { display: none; }
+  #edit.active { display: grid; }
+  #query { width: min(48ch, 85vw); }
+  .scroll { overflow-x: auto; padding: 3px; }
+  #terminal { --bg: #141b23; --fg: #dce4ec; --muted: #9baabb; --accent: #90d9d0; --focus: #254743; --warning: #efd18d; --error: #ffabad;
+    background: var(--bg); color: var(--fg); font: 14px/20px ui-monospace, 'DejaVu Sans Mono', Consolas, monospace;
+    width: max-content; padding: 12px; white-space: pre; outline: 2px solid transparent; }
+  #terminal:focus { outline-color: #087f8c; }
+  #terminal.light { --bg: #fafaf7; --fg: #25324a; --muted: #526176; --accent: #006c72; --focus: #dcebe7; --warning: #785200; --error: #a11a2b; }
+  #terminal.mono { --bg: #fff; --fg: #111; --muted: #111; --accent: #111; --focus: #fff; --warning: #111; --error: #111; }
+  .line { display: block; height: 20px; }
+  .title, .heading { font-weight: bold; }
+  .muted, .footer { color: var(--muted); }
+  .accent { color: var(--accent); }
+  .target { background: var(--focus); font-weight: bold; }
+  .warning { color: var(--warning); }
+  .error { color: var(--error); }
+  #state { font-variant-numeric: tabular-nums; }
+  a { color: #006c72; }
+</style>
+<h1>AgentSession terminal design</h1>
+<p>Review #88 · <strong>Proposed; awaiting product-owner review.</strong> Invented evidence only.
+  These fixed-cell previews explore reading and navigation; they do not run AgentSession.</p>
+<div class="controls">
+  <label>Example <select id="scene">
+    <option value="sessions">Sessions</option><option value="timeline">Timeline</option>
+    <option value="expanded">Expanded evidence</option><option value="inspect">Unwrapped inspection</option>
+    <option value="search">Search</option><option value="loading">Loading history</option>
+    <option value="history-error">History error</option><option value="import-error">Import error</option>
+    <option value="projection-error">Projection error</option><option value="unavailable">Unavailable evidence</option>
+    <option value="unknown">Unknown evidence</option><option value="empty">Empty sessions</option>
+  </select></label>
+  <label>Terminal size <select id="size"><option value="120,32">120×32 · wide</option>
+    <option value="80,24">80×24 · baseline</option><option value="54,18">54×18 · compact</option>
+    <option value="32,10">32×10 · insufficient</option></select></label>
+  <label>Presentation <select id="theme"><option value="dark">Dark</option>
+    <option value="light">Light</option><option value="mono">Color-free</option></select></label>
+  <button id="download" type="button">Download frame (.txt)</button>
+</div>
+<label id="edit">Search query · ordinary text editing; Enter shows illustrative results
+  <input id="query" value="timeout" autocomplete="off" spellcheck="false">
+</label>
+<p id="caption"></p>
+<div class="scroll"><div id="terminal" tabindex="0" role="region" aria-label="Terminal preview; focus to try keyboard controls"></div></div>
+<p id="state" aria-live="polite"></p>
+<p>Focus the terminal to try j/k, arrows, PgUp/PgDn, [ and ], Enter, d, w, /, ?, and Esc.
+  Mouse selection stays available. Use the Example selector for prepared states.
+  <a href="tui-review-88.md">Review route, complete controls, limitations, and acceptance record</a>.</p>
+<script>
+'use strict';
+// Throwaway offline review artifact. No imports, storage, services, or real logs.
+const $ = id => document.getElementById(id);
+const terminal = $('terminal');
+let scene = 'sessions', width = 120, height = 32, offset = 0, target = 104;
+let expanded = false, unwrapped = true, pan = 0, help = false, editing = false;
+let sessionSelection = 0, searchSelection = 0, searchHasResults = false;
+let returns = [], helpOffset = 0, notice = '', frame = [];
+const sessions = [
+  ['fixture-17', 'Fix request timeout', 'Partial evidence', 'Codex'],
+  ['fixture-18', 'Document local setup', 'Unknown', 'Claude Code'],
+  ['fixture-19', 'Inspect parser behavior', 'Unknown', 'OpenCode']
+];
+const descriptions = {
+  sessions: 'Wide terminals pair the focused list with a useful preview. Narrow terminals keep one main view.',
+  timeline: 'Scroll a long message independently of the action target. Event jumps and disclosure are separate actions.',
+  expanded: 'Recorded test failure remains unresolved after a successful build. This is evidence from the session.',
+  inspect: 'Unwrapped normalized output: pan horizontally with Left/Right. w restores wrapping; Esc returns to the timeline.',
+  search: 'Query editing uses a real input. Shortcut characters and paste remain text. Results are fixed examples, not a search engine.',
+  loading: 'Pending local history read; existing evidence stays readable. No progress percentage is invented.',
+  'history-error': 'AgentSession could not read more history. Loaded text and the action target remain usable; r illustrates retry.',
+  'import-error': 'An AgentSession import error is separate from recorded command failure. Navigation does not cancel application work.',
+  'projection-error': 'A derived projection failed; this is an AgentSession error, not proof that session work failed.',
+  unavailable: 'Absent result evidence is explicit. Neither completion nor success is inferred.',
+  unknown: 'Unknown content stays uninterpreted. Retained raw evidence requires an explicit bounded, redacted inspection.',
+  empty: 'An empty index is not a successful session. Discovery remains an explicit action.'
+};
+const row = (text = '', style = '') => ({text, style});
+function wrap(text, columns, indent = '') {
+  if (!text) return [''];
+  const result = [];
+  let rest = text;
+  while (rest.length > columns) {
+    let cut = rest.lastIndexOf(' ', columns);
+    if (cut < Math.floor(columns / 2)) cut = columns;
+    result.push(rest.slice(0, cut));
+    rest = indent + rest.slice(cut).replace(/^ /, '');
+  }
+  result.push(rest);
+  return result;
+}
+function prose(text, style = '', indent = '') { return wrap(text, width, indent).map(s => row(s, style)); }
+function timelineRows() {
+  let lines = [], anchors = {};
+  const event = (id, title, style = '') => {
+    anchors[id] = lines.length;
+    lines.push(...prose((target === id ? '> ' : '  ') + title, target === id ? 'target' : style));
+  };
+  event(101, '#101 USER');
+  lines.push(...prose('  Fix the request timeout without hiding errors. Keep the retry test readable.', '', '  '), row());
+  event(102, '#102 ASSISTANT');
+  lines.push(row('  Plan', 'heading'), row('  - Preserve the caller cancellation.'),
+    row('  - Bound each retry; keep the cause.'), row('  - Run the focused test after the edit.'), row());
+  lines.push(...prose('  Reading notes: the command output below contains a real recorded failure in this invented fixture. An assistant summary cannot establish recovery. Source order is retained even when timestamps tie.', '', '  '), row());
+  lines.push(row('  go', 'muted'), row('    func retry(ctx context.Context) error {'),
+    ...prose('        return request.WithTimeout(ctx, "https://example.invalid/api/very/long/path/for/terminal/wrapping", 3*time.Second)', '', '        '),
+    row('    }'), row());
+  const notes = [
+    'The caller owns cancellation. The retry helper must not replace its context with a background context.',
+    'A deadline applies to one attempt. Cancel the attempt context before waiting for the next retry.',
+    'The delay also needs to observe cancellation, so a caller does not wait for the full backoff interval.',
+    'Keep the original error as a wrapped cause. Callers still need to distinguish a deadline from other failures.',
+    'The focused test cancels while a request is pending. It checks the returned error, not just elapsed time.',
+    'Avoid depending on a remote endpoint for this test. A controlled local handler can wait for cancellation.',
+    'The first recorded run below fails. Its output shows a request completing after caller cancellation.',
+    'That failure is evidence of a verification problem. It does not explain every possible cause on its own.',
+    'The later build checks compilation. It cannot establish that the cancellation test now passes.',
+    'A successful rerun would need to match the failed command and its known working directory.',
+    'The unsupported record limits interpretation. Retain the record without inventing its meaning.',
+    'Read the command evidence before accepting the final claim. No successful test rerun is recorded here.'
+  ];
+  notes.forEach((text, i) => { lines.push(...prose('  ' + (i + 1) + '. ' + text, '', '     '), row()); });
+  lines.push(row('  End of long assistant message.', 'muted'), row());
+  event(103, '#103 CHANGE  + internal/client/retry.go');
+  lines.push(row('  + 1 recorded file change; Enter expands', 'muted'), row());
+  event(104, '#104 COMMAND  ' + (expanded ? '-' : '+') + ' go test ./internal/client');
+  lines.push(...prose('  RECORDED FAILURE | exit 1 | TestRetryTimeout', 'error', '  '));
+  if (expanded) lines.push(row('  Working directory: /fixture/project'), row('  stdout / stderr', 'muted'),
+    row('    --- FAIL: TestRetryTimeout (0.03s)'), row('        retry_test.go:42:'),
+    ...prose('            expected deadline exceeded; got request completed after caller cancellation', '', '            '),
+    row('    FAIL example.invalid/project/internal/client'), row('  Unresolved: no later successful run of this test.', 'warning'));
+  lines.push(row());
+  event(105, '#105 COMMAND  + go build ./cmd/client');
+  lines.push(row('  RECORDED SUCCESS | exit 0 | Build only', 'accent'), ...prose('  Does not resolve the failed test at #104.', 'warning', '  '), row());
+  event(106, '#106 ASSISTANT');
+  lines.push(...prose('  "Everything should be fixed now."', '', '  '), ...prose('  Recorded claim; test recovery is not established.', 'warning', '  '), row());
+  event(107, '#107 UNKNOWN  + Unsupported record');
+  lines.push(...prose('  Interpretation unavailable; u inspects a redacted, bounded copy.', 'warning', '  '));
+  return {lines, anchors};
+}
+function selectedSession() { return sessions[sessionSelection]; }
+function sessionRows() {
+  const list = [row('[FOCUS] Sessions', 'heading'), row()];
+  sessions.forEach((s, i) => { list.push(row((i === sessionSelection ? '> ' : '  ') + s[1], i === sessionSelection ? 'target' : ''),
+    row('  ' + s[0] + ' | ' + s[3], 'muted'), row('  ' + s[2], i === 0 ? 'warning' : 'muted'), row()); });
+  if (width < 110) return list;
+  const s = selectedSession();
+  const preview = [row('PREVIEW / ' + s[0], 'heading'), row(), row(s[1]), row('Repository: /fixture/project', 'muted'),
+    row('Branch: fix/retry-timeout', 'muted'), row('Outcome: Unknown', 'warning'), row('Coverage: ' + s[2], 'warning'), row(),
+    row('First request', 'heading'), row('Fix request timeout without hiding errors.'), row(),
+    row('Latest recorded activity', 'heading'), row('Test failed; later build passed.'), row('No later successful run of the failed test.'), row(),
+    row('107 events | 1 unknown | 1 diagnostic', 'muted'), row('Enter opens timeline; nothing is executed.', 'muted')];
+  // The other sessions have sparse metadata; never fill gaps with success.
+  if (sessionSelection !== 0) preview.splice(4, preview.length - 4,
+    row('Outcome: Unknown', 'warning'), row('Coverage: unavailable', 'warning'), row(),
+    row('Preview evidence not available.'), row('Enter opens the shared illustrative timeline.', 'muted'));
+  return Array.from({length: Math.max(list.length, preview.length)}, (_, i) =>
+    row((list[i]?.text || '').padEnd(49) + ' | ' + (preview[i]?.text || ''), list[i]?.style || preview[i]?.style || ''));
+}
+const inspectionLines = ['Normalized evidence #104', 'Recorded command failure | exit 1', '',
+    '    --- FAIL: TestRetryTimeout (0.03s)',
+    '        retry_test.go:42: expected deadline exceeded; got request completed after caller cancellation; request_id=fixture-00017; attempt=3; timeout=3000ms',
+    '    FAIL example.invalid/project/internal/client', '', 'End of normalized command output.'];
+function inspectionRows() {
+  if (unwrapped) return inspectionLines.flatMap((s, i) => i >= 3 && i <= 5
+    ? [row(s.slice(pan, pan + width))]
+    : prose(s, s.startsWith('Recorded') ? 'error' : ''));
+  return inspectionLines.flatMap(s => prose(s, '', '        '));
+}
+function stateRows() {
+  const map = {
+    'import-error': ['AGENTSESSION IMPORT ERROR', 'Indexing /fixture/sessions/session.jsonl', 'Source changed during import; batch not committed.', 'Previously indexed evidence remains available.', '1 diagnostic | coverage: partial', '', 'r rescan | Esc leaves observation', 'Leaving this screen does not cancel import work.'],
+    'projection-error': ['AGENTSESSION PROJECTION ERROR', 'Search projection: failed', 'Search results may be incomplete.', 'Canonical evidence remains available to read.', 'Outcome: Unknown; projection state is separate.', '', 't retry | x projection controls | Esc timeline'],
+    unavailable: ['#108 COMMAND + go test ./internal/client', 'RESULT UNAVAILABLE', 'Invocation recorded; completion output absent.', 'Exit code: unknown', 'Outcome: Unknown', '', 'A pending run does not establish test recovery.', 'Earlier failure #104 remains unresolved.'],
+    unknown: ['#107 UNKNOWN + Unsupported record', 'INTERPRETATION UNAVAILABLE', 'Retained record has no normalized interpretation.', '', 'Raw evidence hidden.', 'u explicitly requests a bounded, redacted copy.', 'Inspection reports bytes, redactions, truncation.', '', 'No raw record is included in this demo.'],
+    empty: ['No indexed sessions', '', 'No session outcome can be assessed.', 'r rescan configured sources | i indexing', 'Sources and repositories remain read-only.']
+  };
+  return map[scene].flatMap((s, i) => prose(s, i === 0 ? 'heading' : /ERROR|UNAVAILABLE/.test(s) ? 'error' : ''));
+}
+function searchRows() {
+  return [row(editing ? '[FOCUS] QUERY EDITING' : '[FOCUS] SEARCH RESULTS', 'heading'),
+    ...prose('Query: ' + $('query').value.replace(/[^\x20-\x7e]/g, ch => '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0'))), row(),
+    ...(searchHasResults ? [row('2 illustrative matches (fixed fixture)', 'muted'), row(),
+      row((searchSelection === 0 ? '> ' : '  ') + 'fixture-17 / #104 COMMAND', searchSelection === 0 ? 'target' : ''),
+      row('  TestRetryTimeout | RECORDED FAILURE', 'error'), row(),
+      row((searchSelection === 1 ? '> ' : '  ') + 'fixture-17 / #102 ASSISTANT', searchSelection === 1 ? 'target' : ''),
+      ...prose('  "Bound each retry; keep the cause."', '', '  ')] : [row('Enter shows illustrative matches.', 'muted')]), row(),
+    ...prose('Search coverage: partial | projection pending', 'warning'),
+    ...prose('Missing matches do not prove absent activity.', 'muted')];
+}
+function helpRows() {
+  return ['[FOCUS] Help', '', 'Timeline: arrows, j/k scroll; PgUp/PgDn page', '[ and ] jump events; Enter toggles technical rows',
+    'd normalized detail; w wrap in detail; Esc back', '/ search; ? help; f assessments; x projections', 'u explicit redacted Unknown inspection; r retry',
+    'g/G top/bottom; q quit outside editing', '', 'List: arrows or j/k select; Enter opens', 'i indexing; r rescan; n/p pages',
+    'Assessments: [/] reference; Enter timeline', 'Projections: t retry; b rebuild; a rebuild all', '',
+    'Search: cursor editing and paste remain text.', 'Enter submits; Esc stops editing, then returns.', '',
+    'Mouse capture disabled; select text normally.', 'Esc restores prior reading position.', '',
+    'Preview scope: gallery scenes + reading controls.', 'Other feature keys are interaction notes only.'].flatMap(s => prose(s));
+}
+function render() {
+  [width, height] = $('size').value.split(',').map(Number);
+  terminal.className = $('theme').value;
+  $('edit').classList.toggle('active', scene === 'search' && editing);
+  $('caption').textContent = descriptions[scene];
+  let title = 'AgentSession / ' + (help ? 'Help' : scene === 'sessions' || scene === 'empty' ? 'Sessions' : scene === 'search' ? 'Search' : 'fixture-17');
+  let meta = scene === 'sessions' ? 'Local index | 3 sessions | read-only' : 'Source order | partial evidence | outcome: Unknown';
+  let content, status, keys;
+  const timeline = timelineRows();
+  const timelineScene = ['timeline', 'expanded', 'loading', 'history-error'].includes(scene);
+  if (help) { content = helpRows(); keys = 'j/k scroll | Esc return'; }
+  else if (scene === 'sessions') { content = sessionRows(); keys = 'j/k select | Enter open | / search | ? help'; }
+  else if (scene === 'search') { content = searchRows(); keys = editing ? 'Enter search | Esc results | shortcuts are text' : 'j/k select | Enter timeline | / edit | Esc back'; }
+  else if (scene === 'inspect') {
+    content = inspectionRows(); meta = (unwrapped ? 'UNWRAPPED' : 'WRAPPED') + ' | column ' + (pan + 1) + ' | normalized output';
+    keys = 'Left/Right pan | w wrap | Esc timeline';
+  } else if (timelineScene) { content = timeline.lines; keys = 'j/k scroll | [ ] events | Enter expand | ? help'; }
+  else { content = stateRows(); keys = 'r retry/refresh | Esc back | ? help'; }
+  if (width >= 80 && timelineScene && !help) keys = 'Arrows j/k scroll | PgUp/PgDn | [ ] events | Enter expand | Esc back | ? help';
+  if (width < 80) keys = scene === 'sessions' ? 'j/k select | Enter open | ? help' : 'j/k scroll | Esc back | ? help';
+  let banner = [];
+  if (scene === 'loading' && !help) banner = prose('LOADING earlier history | current evidence usable', 'warning');
+  if (scene === 'history-error' && !help) banner = prose('AGENTSESSION READ ERROR | r retry; loaded text kept', 'error');
+  const available = height - 4 - banner.length;
+  offset = Math.max(0, Math.min(offset, Math.max(0, content.length - available)));
+  const visible = content.slice(offset, offset + available);
+  const targetOnscreen = timelineScene && timeline.anchors[target] >= offset && timeline.anchors[target] < offset + available;
+  status = (timelineScene ? 'Target #' + target + (targetOnscreen ? ' visible' : ' off-screen') + ' | ' : '') +
+    'Rows ' + (offset + 1) + '-' + Math.min(content.length, offset + available) + '/' + content.length;
+  if (offset + available < content.length) status += ' | more below';
+  if (width < 80 && timelineScene) status = '#' + target + (targetOnscreen ? ' visible' : ' off-screen') + ' | ' +
+    (offset + 1) + '-' + Math.min(content.length, offset + available) + '/' + content.length +
+    (offset + available < content.length ? ' | more below' : '');
+  frame = [row(title, 'title'), row(meta, 'muted'), ...banner, ...visible];
+  while (frame.length < height - 2) frame.push(row());
+  frame.push(row(notice || status, 'muted'), row(keys, 'footer'));
+  if (width < 40 || height < 12) {
+    const message = ['AgentSession', '', 'Terminal too small.', 'Current: ' + width + 'x' + height, 'Resize to at least 40x12.', '', 'q quit | resize to continue'];
+    frame = Array.from({length: height}, (_, i) => row(message[i] || '', i === 2 ? 'warning' : ''));
+  }
+  terminal.replaceChildren(...frame.map(({text, style}) => {
+    const span = document.createElement('span'); span.className = 'line ' + style;
+    // Text only: fixture content cannot become markup or terminal controls.
+    span.textContent = text.slice(0, width).padEnd(width); return span;
+  }));
+  $('state').textContent = width + ' columns × ' + height + ' rows | scene: ' + scene + ' | action target: #' + target +
+    ' | disclosure: ' + (expanded ? 'expanded' : 'collapsed') + ' | mouse capture: disabled';
+}
+function chooseScene(value) {
+  scene = value; offset = 0; pan = 0; help = false; notice = ''; editing = scene === 'search';
+  if (scene === 'expanded' || scene === 'inspect') expanded = true;
+  if (scene === 'timeline') expanded = false;
+  $('scene').value = scene;
+  if (['expanded', 'loading', 'history-error'].includes(scene)) offset = timelineRows().anchors[104];
+  render(); if (editing) $('query').focus();
+}
+function remember() { returns.push({scene, offset, target, expanded}); }
+function back() {
+  if (returns.length) { ({scene, offset, target, expanded} = returns.pop()); $('scene').value = scene; }
+  else { scene = scene === 'inspect' ? 'expanded' : scene === 'sessions' ? 'sessions' : 'timeline'; offset = 0; $('scene').value = scene; }
+  render(); terminal.focus();
+}
+$('scene').addEventListener('change', e => { returns = []; chooseScene(e.target.value); });
+$('size').addEventListener('change', () => { offset = 0; render(); });
+$('theme').addEventListener('change', render);
+$('query').addEventListener('input', render);
+$('query').addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); editing = false;
+    if (e.key === 'Enter') searchHasResults = true;
+    render(); terminal.focus(); }
+  // All other keys and paste use ordinary browser input behavior.
+});
+terminal.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey || width < 40 || height < 12) return;
+  const key = e.key;
+  const handled = ['j','k','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','PageUp','PageDown','[',']','Enter','Escape','d','w','/','?','r','g','G','q'];
+  if (!handled.includes(key)) return;
+  e.preventDefault(); notice = '';
+  if (key === '?') { help = !help; if (help) { helpOffset = offset; offset = 0; } else offset = helpOffset; }
+  else if (key === 'Escape') { if (help) { help = false; offset = helpOffset; } else { back(); return; } }
+  else if (key === '/' && !help) { if (scene !== 'search') remember(); chooseScene('search'); return; }
+  else if (key === 'q') notice = 'Preview only: q would quit outside text entry.';
+  else if ((key === 'r') && ['loading','history-error'].includes(scene)) { scene = 'timeline'; $('scene').value = scene; notice = 'Retry illustration: prepared evidence restored.'; }
+  else if (key === 'w' && scene === 'inspect' && !help) { unwrapped = !unwrapped; pan = 0; }
+  else if (['ArrowLeft','ArrowRight'].includes(key) && scene === 'inspect' && unwrapped && !help) pan = Math.max(0, Math.min(Math.max(...inspectionLines.map(s => s.length)) - width, pan + (key === 'ArrowRight' ? 8 : -8)));
+  else if (key === 'd' && ['timeline','expanded'].includes(scene) && !help && target === 104) { remember(); scene = 'inspect'; $('scene').value = scene; offset = 0; }
+  else if (key === 'Enter' && !help) {
+    if (scene === 'sessions' || scene === 'search') {
+      const fromSearch = scene === 'search'; remember(); target = fromSearch && searchSelection === 1 ? 102 : 104;
+      scene = 'timeline'; $('scene').value = scene; offset = fromSearch ? timelineRows().anchors[target] : 0;
+    }
+    else if (['timeline','expanded','loading','history-error'].includes(scene)) {
+      if (target === 104) { expanded = !expanded; offset = timelineRows().anchors[target]; }
+      else notice = 'Disclosure interaction demonstrated at #104.';
+    }
+  } else if (['[',']'].includes(key) && !help && ['timeline','expanded','loading','history-error'].includes(scene)) {
+    target = Math.max(101, Math.min(107, target + (key === ']' ? 1 : -1))); offset = timelineRows().anchors[target];
+  } else if (key === 'g') offset = 0;
+  else if (key === 'G') offset = 100000;
+  else if (['j','k','ArrowUp','ArrowDown','PageUp','PageDown'].includes(key)) {
+    const delta = ['k','ArrowUp','PageUp'].includes(key) ? -1 : 1;
+    if (scene === 'sessions' && !help) sessionSelection = Math.max(0, Math.min(2, sessionSelection + delta));
+    else if (scene === 'search' && !help) searchSelection = Math.max(0, Math.min(1, searchSelection + delta));
+    else offset += delta * (key.startsWith('Page') ? height - 4 : 1);
+  }
+  render();
+});
+$('download').addEventListener('click', () => {
+  const plain = [...terminal.children].map(x => x.textContent).join('\n') + '\n';
+  const url = URL.createObjectURL(new Blob([plain], {type: 'text/plain'}));
+  const link = document.createElement('a'); link.href = url; link.download = 'agentsession-' + scene + '-' + width + 'x' + height + '.txt'; link.click();
+  URL.revokeObjectURL(url);
+});
+render();
+</script>
+</html>
