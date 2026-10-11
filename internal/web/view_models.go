@@ -36,6 +36,8 @@ type searchView struct {
 // timelineView combines canonical timeline evidence with separately fallible
 // projections.
 type timelineView struct {
+	Findings       app.FindingsPage
+	FindingsErr    error
 	CSRF           string
 	Notice         string
 	SessionID      model.SessionID

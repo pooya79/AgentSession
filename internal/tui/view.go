@@ -39,7 +39,7 @@ func (m Model) View() tea.View {
 			body = strings.Split(snapshot.indexingState.viewport.View(), "\n")
 		case timelineScreen:
 			body = snapshot.timelineLines()
-		case detailScreen:
+		case detailScreen, findingsScreen:
 			body = strings.Split(snapshot.detailState.viewport.View(), "\n")
 		case projectionsScreen:
 			body = snapshot.projectionLines()
@@ -59,6 +59,8 @@ func (m Model) View() tea.View {
 
 func (m Model) screenLabel() string {
 	switch m.screen {
+	case findingsScreen:
+		return "Assessments"
 	case sessionsScreen:
 		return "Sessions"
 	case indexingScreen:

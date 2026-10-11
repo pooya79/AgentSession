@@ -47,12 +47,13 @@ func (h *handler) timeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound)
 		return
 	}
+	findings, findingsErr := h.services.SessionFindings(r.Context(), sessionID)
 	projections, projectionErr := h.services.ProjectionStatus(r.Context(), sessionID)
 	diagnostics := append([]model.Diagnostic(nil), page.Diagnostics.Diagnostics...)
 	refs := h.resolveDiagnostics(r.Context(), sessionID, diagnostics)
 	render(w, r, http.StatusOK, timelinePage(timelineView{
 		CSRF: h.csrf, Notice: notice, SessionID: sessionID, Page: page,
-		Projection: projections, ProjectionErr: projectionErr, DiagnosticRefs: refs,
+		Projection: projections, ProjectionErr: projectionErr, Findings: findings, FindingsErr: findingsErr, DiagnosticRefs: refs,
 	}))
 }
 

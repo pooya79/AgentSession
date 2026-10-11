@@ -32,6 +32,7 @@ templ timelinePage(view timelineView) {
 					</div>
 				}
 			</section>
+			@ruleAssessments(view.SessionID, view.Findings, view.FindingsErr != nil)
 			<section aria-labelledby="events-title">
 				<h2 id="events-title">Conversation and activity</h2>
 				@timelineEvidenceState(view.Page, view.DiagnosticRefs)

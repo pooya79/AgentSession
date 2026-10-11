@@ -54,10 +54,22 @@ type ToolResultData struct {
 
 func (ToolResultData) eventKind() EventKind { return EventKindToolResult }
 
+// CommandPhase distinguishes explicit invocation and completion evidence.
+// Empty means the source does not establish the relationship.
+type CommandPhase string
+
+const (
+	CommandStarted   CommandPhase = "started"
+	CommandCompleted CommandPhase = "completed"
+)
+
 // CommandData describes a command execution. ExitCode is nil when no exit
 // status was recorded. Output preserves recorded textual output order and
 // makes no claim that stdout and stderr were separately available.
 type CommandData struct {
+	// InvocationID links records within the session, independently of event IDs.
+	InvocationID     string
+	Phase            CommandPhase
 	Command          string
 	WorkingDirectory string
 	ExitCode         *int
@@ -238,7 +250,11 @@ func validateNormalizedData(data NormalizedData) error {
 		if strings.TrimSpace(value.OriginalKind) == "" {
 			return fmt.Errorf("unknown original kind is required")
 		}
-	case ToolCallData, ToolResultData, CommandData, PatchData, ErrorData:
+	case CommandData:
+		if value.Phase != "" && value.Phase != CommandStarted && value.Phase != CommandCompleted {
+			return fmt.Errorf("unsupported command phase %q", value.Phase)
+		}
+	case ToolCallData, ToolResultData, PatchData, ErrorData:
 		// Empty fields represent incomplete evidence and remain valid.
 	default:
 		return fmt.Errorf("unsupported normalized data type %T", data)

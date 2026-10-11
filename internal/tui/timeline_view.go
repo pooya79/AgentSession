@@ -10,7 +10,7 @@ import (
 // timelineHeaderLines is shared by viewport sizing and timeline rendering so
 // optional diagnostics and continuation failures reserve exactly their rows.
 func (m Model) timelineHeaderLines() []string {
-	lines := []string{"Timeline · session " + string(m.sessionsState.selected)}
+	lines := []string{"Timeline · session " + string(m.sessionsState.selected), "Rule assessments: press f to inspect; x for projection readiness."}
 	for _, session := range m.sessionsState.page.Sessions {
 		if session.ID == m.sessionsState.selected {
 			lines = append(lines, fmt.Sprintf("Canonical evidence: %s · projections: %d usable, %d pending, %d running, %d failed, %d stale",

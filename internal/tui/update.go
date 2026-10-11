@@ -54,6 +54,20 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.sessionsState.overview = msg.overview
 		}
 		return m, nil
+	case findingsLoadedMsg:
+		if msg.generation != m.requestGeneration {
+			return m, nil
+		}
+		m.findingsState.loading = false
+		if m.screen != findingsScreen {
+			return m, nil
+		}
+		m.findingsState.err = visibleError(msg.err)
+		if msg.err == nil {
+			m.findingsState.page = msg.page
+		}
+		m.syncViewports()
+		return m, nil
 	case timelineLoadedMsg:
 		if msg.generation != m.requestGeneration {
 			return m, nil

@@ -24,6 +24,7 @@ const (
 	detailScreen
 	projectionsScreen
 	searchScreen
+	findingsScreen
 )
 
 // Model is the sessions-first AgentSession terminal interface.
@@ -55,6 +56,7 @@ type Model struct {
 	indexingState
 	projectionsState
 	searchState
+	findingsState
 
 	theme         theme
 	helpOpen      bool
@@ -130,7 +132,7 @@ func (m Model) Init() tea.Cmd {
 // busy reports whether any visible request or application-owned workflow needs
 // spinner animation.
 func (m Model) busy() bool {
-	return m.sessionsState.loading || m.sessionsState.overviewLoading || m.timelineState.loading || m.detailState.loading || m.detailState.inspectionLoading ||
+	return m.findingsState.loading || m.sessionsState.loading || m.sessionsState.overviewLoading || m.timelineState.loading || m.detailState.loading || m.detailState.inspectionLoading ||
 		m.projectionsState.loading || m.projectionsState.status.Active || m.indexingState.status.Active || m.searchState.loading
 }
 

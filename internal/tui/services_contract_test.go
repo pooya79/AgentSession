@@ -46,3 +46,7 @@ func TestSharedServiceContract(t *testing.T) {
 	fixture := apptest.NewFixture(t)
 	apptest.RunConsumerContract(t, contractConsumer{services: fixture.Services})
 }
+
+func (c contractConsumer) SessionFindings(ctx context.Context, id model.SessionID) (app.FindingsPage, error) {
+	return c.services.SessionFindings(ctx, id)
+}

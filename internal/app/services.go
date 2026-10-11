@@ -6,4 +6,5 @@ type Services interface {
 	Ingestion
 	Projections
 	Searcher
+	Assessor
 }

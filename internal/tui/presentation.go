@@ -20,7 +20,11 @@ func (m *Model) syncViewports() {
 
 	m.detailState.viewport.SetWidth(width)
 	m.detailState.viewport.SetHeight(height)
-	m.detailState.viewport.SetContentLines(sanitizeLines(m.detailContentLines()))
+	if m.screen == findingsScreen {
+		m.detailState.viewport.SetContentLines(sanitizeLines(m.findingsContentLines()))
+	} else {
+		m.detailState.viewport.SetContentLines(sanitizeLines(m.detailContentLines()))
+	}
 
 	m.indexingState.viewport.SetWidth(width)
 	m.indexingState.viewport.SetHeight(height)
@@ -133,6 +137,8 @@ func (m Model) helpLines() []string {
 		"",
 		"Actions",
 		"  r            refresh current evidence; rescan from overview screens",
+		"  f            inspect rule assessments from the timeline",
+		"  [ / ]        select assessment evidence; Enter opens timeline context",
 		"  i            inspect indexing details from sessions",
 		"  /            open search or edit the current search query",
 		"  x            inspect projection lifecycle from a timeline",

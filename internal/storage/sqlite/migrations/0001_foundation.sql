@@ -248,3 +248,24 @@ CREATE TRIGGER search_documents_update AFTER UPDATE ON search_documents BEGIN
     INSERT INTO search_documents_fts(rowid, summary, content)
     VALUES (new.rowid, new.summary, new.content);
 END;
+
+-- Small canonical evidence for analysis; output and raw records stay separate.
+CREATE TABLE command_evidence (
+    event_id TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+    invocation_id TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    command_text TEXT NOT NULL,
+    directory TEXT NOT NULL,
+    exit_code INTEGER,
+    oversized INTEGER NOT NULL CHECK (oversized IN (0, 1))
+) STRICT;
+CREATE INDEX command_evidence_invocation ON command_evidence(invocation_id, phase);
+
+CREATE TABLE findings (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    projection_version TEXT NOT NULL,
+    canonical_revision INTEGER NOT NULL,
+    assessment_json TEXT NOT NULL CHECK (length(CAST(assessment_json AS BLOB)) <= 16384),
+    PRIMARY KEY (session_id, id)
+) STRICT;

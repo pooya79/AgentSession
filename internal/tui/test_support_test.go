@@ -12,7 +12,9 @@ import (
 )
 
 type servicesStub struct {
-	mu sync.Mutex
+	mu          sync.Mutex
+	findings    app.FindingsPage
+	findingsErr error
 
 	start               app.ImportAllStart
 	startErr            error
@@ -152,4 +154,8 @@ func updateModel(t *testing.T, current Model, msg tea.Msg) (Model, tea.Cmd) {
 		t.Fatalf("updated model type = %T, want Model", updated)
 	}
 	return result, cmd
+}
+
+func (s *servicesStub) SessionFindings(context.Context, model.SessionID) (app.FindingsPage, error) {
+	return s.findings, s.findingsErr
 }

@@ -56,6 +56,10 @@ func (m *Model) back() (tea.Model, tea.Cmd) {
 		m.screen = sessionsScreen
 		m.resetTimelineState()
 		return m, tea.Batch(m.reloadSessions(), m.observeNow())
+	case findingsScreen:
+		m.cancelRequest()
+		m.findingsState = findingsState{}
+		m.screen = timelineScreen
 	case detailScreen:
 		m.cancelRequest()
 		m.screen = timelineScreen
@@ -89,6 +93,8 @@ func (m *Model) refresh() (tea.Model, tea.Cmd) {
 		return m, tea.Batch(load, startImportAll(m.services, m.observeGeneration))
 	case timelineScreen:
 		return m, m.reloadTimeline()
+	case findingsScreen:
+		return m, m.loadFindings()
 	case projectionsScreen:
 		return m, m.observeProjectionsNow()
 	case detailScreen:
@@ -131,7 +137,7 @@ func (m *Model) move(delta int) {
 		if len(m.projectionsState.status.Projections) > 0 {
 			m.projectionsState.cursor = clamp(m.projectionsState.cursor+delta, 0, len(m.projectionsState.status.Projections)-1)
 		}
-	case detailScreen, indexingScreen:
+	case detailScreen, findingsScreen, indexingScreen:
 		m.moveScroll(delta)
 	}
 }
@@ -176,7 +182,7 @@ func (m *Model) moveToBoundary(last bool) {
 		if last {
 			m.projectionsState.cursor = len(m.projectionsState.status.Projections) - 1
 		}
-	case detailScreen:
+	case detailScreen, findingsScreen:
 		m.syncViewports()
 		if last {
 			m.detailState.viewport.GotoBottom()

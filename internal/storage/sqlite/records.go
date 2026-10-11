@@ -213,6 +213,9 @@ func persistEvent(ctx context.Context, tx *sql.Tx, event model.Event) (bool, err
 		return false, fmt.Errorf("inspect event insert: %w", err)
 	}
 	if rows == 1 {
+		if err := persistCommandEvidence(ctx, tx, event); err != nil {
+			return false, fmt.Errorf("persist command evidence: %w", err)
+		}
 		if stored.Payload != nil {
 			if err := persistEventPayload(ctx, tx, event.ID, *stored.Payload); err != nil {
 				return false, err

@@ -121,3 +121,17 @@ type SessionReader interface {
 type SessionDeleter interface {
 	DeleteSession(context.Context, model.SessionID) (bool, error)
 }
+
+// FindingsSnapshot contains only output usable for the current canonical
+// revision. Lifecycle state remains visible when assessments are unavailable.
+type FindingsSnapshot struct {
+	Found       bool
+	Usable      bool
+	Status      string
+	Stale       bool
+	Assessments []model.Finding
+}
+
+type FindingsReader interface {
+	SessionFindings(context.Context, model.SessionID) (FindingsSnapshot, error)
+}

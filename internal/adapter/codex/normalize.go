@@ -261,12 +261,26 @@ func normalizeEventMessage(raw json.RawMessage, ordinalHistory bool, sessionID s
 			kind: model.EventKindSummary, summary: "Codex reasoning summary", searchable: text,
 			data: model.SummaryData{Category: model.SummaryCategoryReasoning, Text: text}, native: native,
 		})
-	case "exec_command_end":
+	case "exec_command_begin", "exec_command_end":
 		command, commandOK := stringSliceTextStrict(payload["command"])
+		if _, present := payload["command"]; !present {
+			commandOK = true
+		}
 		cwd, cwdOK := optionalStringField(payload, "cwd")
-		exit, exitOK := intField(payload, "exit_code")
-		if !commandOK || !cwdOK || !exitOK {
+		if !commandOK || !cwdOK {
 			return invalidKnown()
+		}
+		phase, summary := model.CommandStarted, "Command started"
+		var exitCode *int
+		if typeName == "exec_command_end" {
+			phase, summary = model.CommandCompleted, "Command completed"
+			if raw, present := payload["exit_code"]; present && !isNull(raw) {
+				exit, ok := intField(payload, "exit_code")
+				if !ok {
+					return invalidKnown()
+				}
+				exitCode = &exit
+			}
 		}
 		output, _ := optionalStringField(payload, "aggregated_output")
 		if output == "" {
@@ -278,9 +292,10 @@ func normalizeEventMessage(raw json.RawMessage, ordinalHistory bool, sessionID s
 			output = stdout + stderr
 		}
 		return handledNested(typeName, eventDraft{
-			kind: model.EventKindCommand, summary: "Command completed", searchable: command + "\n" + output,
-			data:   model.CommandData{Command: command, WorkingDirectory: cwd, ExitCode: &exit, Output: output},
-			native: native,
+			kind: model.EventKindCommand, summary: summary, searchable: command + "\n" + output,
+			data: model.CommandData{InvocationID: callID, Phase: phase, Command: command, WorkingDirectory: cwd, ExitCode: exitCode, Output: output},
+			// Retain every linked result, including contradictions. A call ID
+			// identifies an invocation, not a unique completion record.
 		})
 	case "patch_apply_end":
 		stdout, stdoutOK := stringField(payload, "stdout")
@@ -449,7 +464,7 @@ func normalizeEventMessage(raw json.RawMessage, ordinalHistory bool, sessionID s
 			data: model.ToolResultData{CallID: callID, ToolName: typeName, Output: output, IsError: &isError}, native: native,
 		})
 	case "raw_response_item", "raw_response_completed", "item_started", "item_completed",
-		"exec_command_begin", "exec_command_output_delta", "terminal_interaction",
+		"exec_command_output_delta", "terminal_interaction",
 		"patch_apply_begin", "patch_apply_updated", "web_search_begin",
 		"mcp_startup_update", "mcp_startup_complete", "task_started", "turn_started",
 		"task_complete", "turn_complete", "agent_message_content_delta", "plan_delta",
@@ -743,10 +758,29 @@ func optionalTextBlocks(raw json.RawMessage, expectedType, textKey string) (stri
 }
 
 func stringSliceTextStrict(raw json.RawMessage) (string, bool) {
-	var values []string
-	if json.Unmarshal(raw, &values) != nil {
+	var arguments []json.RawMessage
+	if isNull(raw) || json.Unmarshal(raw, &arguments) != nil {
 		return "", false
 	}
+	values := make([]string, len(arguments))
+	for i, argument := range arguments {
+		if isNull(argument) || json.Unmarshal(argument, &values[i]) != nil {
+			return "", false
+		}
+	}
+	for i, value := range values {
+		safe := value != ""
+		for _, r := range value {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || strings.ContainsRune("_@%+=:,./-", r)) {
+				safe = false
+				break
+			}
+		}
+		if !safe {
+			values[i] = "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+		}
+	}
+	// Shell quoting preserves recorded argument boundaries without execution.
 	return strings.Join(values, " "), true
 }
 

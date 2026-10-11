@@ -68,6 +68,42 @@ go run ./cmd/agentsession import \
 
 Run `go run ./cmd/agentsession --help` for all commands and options.
 
+## Repeated command failures
+
+Session detail shows an explained rule assessment in the web interface. In the
+terminal timeline, press `f` to inspect it, `[` / `]` to select supporting
+evidence, and Enter to open that event's timeline context. Press `x` from the
+terminal timeline for projection readiness and retry/rebuild controls; the web
+session page exposes the same controls. Refresh after a rebuild completes.
+
+The initial rule uses explicit Codex `exec_command_begin` / `exec_command_end`
+records linked by call ID. Codex argument arrays are rendered with deterministic
+shell quoting to retain argument boundaries; no command is executed. It requires
+two distinct failed invocations with the
+same recorded command text (trimmed only at the ends) and an established matching
+working directory, without intervening success or relevant uncertainty. Other
+commands do not interrupt a sequence. Later success shows recovery while keeping
+the historical assessment. Generic tool success and assistant claims are not
+process exit evidence. Other source command forms may remain insufficient.
+
+Assessments report `triggered`, `not_triggered`, `not_applicable`, or
+`insufficient_evidence` for the currently imported record in source order.
+Pending, running, failed, and stale projections are unavailable conclusions,
+not a negative assessment. Unknown or malformed records and commands with
+missing/contradictory evidence limit affected sequences; they do not discard
+independently established repetition. Overlapping failed invocations can establish
+repetition; a successful invocation counts as recovery only when it starts after
+that sequence's repeated failures completed. Sequences retain independent recovery
+evidence, including when invocations overlap. No severity grade or session outcome is assigned. The
+verification rules described in ADR-021 are not implemented yet.
+
+All invocations are evaluated. At most 12 representative event links are shown,
+with totals and an omission notice. Command text over 16 KiB, directories over
+4 KiB, and invocation IDs over 512 bytes are retained in canonical evidence but
+excluded from identity matching and reported as uncertainty. Findings contain
+counts and fixed explanations, without copying commands or output prose into
+metadata. Rebuilds use stored evidence and work after source files disappear.
+
 ## Development
 
 Common tasks are available through the Makefile:

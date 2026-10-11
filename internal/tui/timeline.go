@@ -86,6 +86,7 @@ func (m *Model) prefetchTimelineIfNeeded() tea.Cmd {
 // clearSupersededInspections releases retry guards for inspection reads
 // canceled whenever the shared evidence request is replaced.
 func (m *Model) clearSupersededInspections() {
+	m.findingsState.loading = false
 	changed := false
 	for eventID, loading := range m.timelineState.inspectionLoading {
 		if loading {

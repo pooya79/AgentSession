@@ -8,6 +8,7 @@ import (
 	"github.com/pooya79/AgentSession/internal/adapter/claude"
 	"github.com/pooya79/AgentSession/internal/adapter/codex"
 	"github.com/pooya79/AgentSession/internal/adapter/opencode"
+	"github.com/pooya79/AgentSession/internal/analysis"
 	"github.com/pooya79/AgentSession/internal/discovery"
 	"github.com/pooya79/AgentSession/internal/importer"
 	"github.com/pooya79/AgentSession/internal/model"
@@ -84,11 +85,19 @@ func OpenRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("open runtime: %w", err)
 	}
+	findingsBuilder, err := analysis.NewBuilder(store)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("open runtime: %w", err)
+	}
 	registrations := make([]projection.Registration, 0, len(projection.Kinds()))
 	for _, definition := range projection.DefaultDefinitions() {
 		registration := projection.Registration{Definition: definition}
 		if definition.Kind == projection.KindSearch {
 			registration.Builder = searchBuilder
+		}
+		if definition.Kind == projection.KindFindings {
+			registration.Builder = findingsBuilder
 		}
 		registrations = append(registrations, registration)
 	}
@@ -133,8 +142,14 @@ func OpenRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("open runtime: %w", err)
 	}
+	assessor, err := NewAssessor(store)
+	if err != nil {
+		_ = manager.Shutdown(context.Background())
+		_ = db.Close()
+		return nil, err
+	}
 	runtime := &Runtime{
-		paths: paths, db: db, discoverer: discoverer, store: store, imports: manager, explorer: explorer, searcher: searcher,
+		paths: paths, db: db, discoverer: discoverer, store: store, imports: manager, explorer: explorer, searcher: searcher, assessor: assessor,
 		projections: NewProjectionService(projectionManager), catalog: make(map[model.SourceID]discovery.Source),
 		databaseLock: databaseLock,
 	}

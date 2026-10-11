@@ -142,14 +142,20 @@ distinct agents, and sessions with evidence issues.
 ### Projection lifecycle
 
 The application durably models lifecycle state for search, Git correlation,
-findings, outcomes, and aggregates. Only search currently has an implemented
-builder. The remaining projection kinds are reported as unavailable in the
-current build rather than treated as ready.
+findings, outcomes, and aggregates. Search and repeated-command findings have
+implemented builders. The remaining projection kinds are reported as unavailable rather than treated as ready.
+
+Session detail exposes one assessment for repeated command failures through the
+shared application service in both interfaces. Explicit linked Codex command
+starts and completions establish invocations and exit results; unknown or
+contradictory evidence limits conclusions. Results are rebuilt from stored
+canonical evidence, published atomically for a current claim, and served only
+for the current revision/version. See the [rule and evidence limits](../README.md#repeated-command-failures).
 
 ## Not yet implemented
 
 - Repository and Git correlation.
-- Deterministic analysis findings.
+- Unresolved-verification and missing-verification rule assessments.
 - Session outcome classification.
 - Cross-session aggregate projections and a dedicated statistics experience.
 - Aggregate token, tool, command, model, provider, or time-series reporting.
@@ -205,7 +211,8 @@ databases remains necessary.
 - Normalized usage events exist, but users cannot yet explore meaningful usage
   or activity patterns across sessions.
 - Projection infrastructure is substantially ahead of the user-facing
-  findings, outcomes, correlations, and aggregates it is intended to support.
+  verification assessments, outcomes, correlations, and aggregates it is intended
+  to support.
 - The product contract calls for useful cross-session insight, while the
   current dashboard offers only a small set of operational totals.
 - The core promise of being easier and faster than raw-record inspection has

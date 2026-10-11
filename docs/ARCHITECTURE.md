@@ -109,16 +109,24 @@ atomically persist event batch, session updates, and checkpoint
 update implemented projections
       |
       v
-serve canonical evidence and search
+serve canonical evidence, search, and repeated-command assessments
       |
-      +---- planned ----> Git correlation, analysis, aggregates
+      +---- planned ----> Git correlation, verification rules, outcomes, aggregates
 ```
 
 An import is incremental and idempotent. Canonical event batches, retained raw
 records, their record diagnostics, session updates, and the corresponding
 checkpoint share the import transaction. Rebuildable projections run after
-commit. Search is the currently implemented projection; repository and Git
-correlation, findings, outcomes, and aggregates are registered but planned.
+commit. Search and repeated-command findings are implemented projections; repository
+and Git correlation, verification rules, outcomes, and aggregates remain planned.
+Canonical command evidence keeps bounded invocation/result identity fields beside
+events, independently of potentially detached output. The analysis reader streams
+all linked invocations in command identity/source order, aggregating every result
+before evaluation. Missing identity fields, contradictory results, oversized
+fields, and relevant interpretation gaps preserve uncertainty. The findings
+builder stages its complete bounded result in memory and publishes in a transaction
+guarded by the active claim token, version, and canonical revision. Readers gate
+output on current lifecycle usability; rebuilding never opens a source file.
 Failure in any projection is recorded and retried without invalidating
 otherwise durable imported evidence.
 
@@ -385,7 +393,7 @@ Authoritative data
 Rebuildable projections
 - FTS indexes (implemented)
 - repository and Git correlations (planned)
-- findings (planned)
+- repeated-command findings (implemented; verification rules planned)
 - outcomes (planned)
 - statistics and aggregates (planned)
 ```
@@ -396,7 +404,7 @@ Each authoritative batch advances a session's monotonic canonical revision and,
 inside that same transaction, marks all registered projections pending for the
 new revision. Idempotent retries that do not change canonical evidence preserve
 the revision and any ready projection state. The five fixed projection kinds are search, Git correlation,
-findings, outcomes, and aggregates. Only search currently has a builder. Each
+findings, outcomes, and aggregates. Search and findings have builders. Each
 kind has an opaque target algorithm version
 and per-session status of pending, running, failed, or ready. A ready projection
 is usable only when its ready version and revision equal the current target.
@@ -414,8 +422,8 @@ safe summaries, never raw error strings or canonical payloads.
 Storage details remain behind small, consumer-owned use-case interfaces rather
 than one interface per table. Current examples include an `ImportStore` that
 atomically commits a batch and exploration readers that list sessions and
-timelines and fetch event details. Future analysis storage should follow the
-same boundary. Application code depends on these interfaces, not concrete
+timelines and fetch event details. Analysis consumes bounded command-evidence
+readers and publishes complete assessments through the same interface boundary. Application code depends on these interfaces, not concrete
 SQLite types. Schema changes use ordered embedded migrations. Import batches
 use transactions, foreign keys are enabled, and tests use isolated temporary
 databases.
@@ -471,10 +479,11 @@ Current services:
 - read a session timeline and event details;
 - inspect retained Unknown evidence explicitly;
 - search across imported sessions;
+- inspect repeated-command assessments and supporting events;
 - initiate imports and observe progress; and
 - inspect and operate projection lifecycle state.
 
-Planned services may add repository evidence, deterministic findings and
+Planned services may add repository evidence, verification assessments,
 outcomes, aggregates, and local redacted exports.
 
 Services return canonical view data rather than UI-specific components. Presentation concerns stay in `tui` and `web`.
@@ -509,7 +518,7 @@ cmd/agentsession
        +--------+-------------------+              |
        |        |          |        |              |
        v        v          v        v              |
-   importer   search   analysis*  export*          |
+   importer   search   analysis   export*          |
        |                   |                       |
        +-------------------+                       |
                 |                                  |
@@ -522,7 +531,7 @@ cmd/agentsession
 
 `*` Planned capability.
 
-Presentation calls application services; importer and future analysis operate
+Presentation calls application services; importer and analysis operate
 on domain types. Adapters implement source-format interfaces, and SQLite
 implements storage and query interfaces. A future controlled Git CLI wrapper
 will implement consumer-owned Git evidence interfaces. Application and domain
@@ -560,6 +569,7 @@ internal/
   storage/
     sqlite/              SQLite repositories and embedded migrations
   search/                query parsing and filter validation
+  analysis/              deterministic evidence-backed rule assessments
   redaction/             secret detection and removal
   sanitization/          output-context safety transformations
   tui/                   Bubble Tea presentation
@@ -567,7 +577,7 @@ internal/
 docs/decisions/           architecture decision records
 ```
 
-Planned capabilities may introduce cohesive `analysis`, `git`, and `export`
+Planned capabilities may introduce cohesive `git` and `export`
 packages when working code requires those boundaries. Fixtures remain beside
 the capability they test, and migrations remain owned by SQLite storage.
 Directories should not be introduced as empty placeholders. A capability

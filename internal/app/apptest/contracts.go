@@ -16,6 +16,7 @@ import (
 
 // Consumer is the exploration portion every presentation integration exposes.
 type Consumer interface {
+	SessionFindings(context.Context, model.SessionID) (app.FindingsPage, error)
 	// LibraryOverview exposes exact committed library counts.
 	LibraryOverview(context.Context) (app.LibraryOverview, error)
 	// ListSessions exposes bounded canonical session pages.
@@ -48,7 +49,7 @@ func NewFixture(t *testing.T) Fixture {
 	t.Helper()
 	root := t.TempDir()
 	_, filename, _, _ := runtime.Caller(0)
-	sourceFixture := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "adapter", "codex", "testdata", "ordinal.jsonl"))
+	sourceFixture := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "adapter", "codex", "testdata", "explicit_commands.jsonl"))
 	contents, err := os.ReadFile(sourceFixture)
 	if err != nil {
 		t.Fatalf("read contract fixture: %v", err)
@@ -105,6 +106,29 @@ func RunConsumerContract(t *testing.T, consumer Consumer) {
 		if err != nil || len(next.Events) != 1 || next.Events[0].Sequence <= timeline.Events[0].Sequence {
 			t.Fatalf("Timeline(next) = (%#v, %v), want later source sequence", next, err)
 		}
+	}
+	findings, err := consumer.SessionFindings(ctx, sessionID)
+	if err != nil || findings.State != app.EvidenceComplete || len(findings.Assessments) != 1 || findings.Assessments[0].State != model.FindingTriggered {
+		t.Fatalf("SessionFindings() = %#v, %v", findings, err)
+	}
+	for _, f := range findings.Assessments {
+		locations, err := consumer.EventLocations(ctx, f.EventIDs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range f.EventIDs {
+			if locations[id].SessionID != sessionID {
+				t.Fatal("foreign evidence")
+			}
+		}
+	}
+	if _, err := consumer.SessionFindings(ctx, "bad\nidentifier"); !errors.Is(err, app.ErrInvalidRequest) {
+		t.Fatalf("invalid findings identifier = %v", err)
+	}
+	canceledFindings, cancelFindings := context.WithCancel(ctx)
+	cancelFindings()
+	if _, err := consumer.SessionFindings(canceledFindings, sessionID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled findings = %v", err)
 	}
 	eventID := timeline.Events[0].ID
 	withoutPayload, err := consumer.EventDetail(ctx, app.EventDetailRequest{SessionID: sessionID, EventID: eventID})

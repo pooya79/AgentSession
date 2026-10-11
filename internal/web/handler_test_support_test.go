@@ -14,6 +14,7 @@ import (
 )
 
 type servicesStub struct {
+	findings           func(context.Context, model.SessionID) (app.FindingsPage, error)
 	discover           func(context.Context) (app.SourceDiscovery, error)
 	start              func(context.Context, model.SourceID) (app.ImportStart, error)
 	startAll           func(context.Context) (app.ImportAllStart, error)
@@ -138,4 +139,11 @@ func extractCSRF(t *testing.T, body string) string {
 
 func validEventID(fill string) model.EventID {
 	return model.EventID("evt_" + strings.Repeat(fill, 64))
+}
+
+func (s servicesStub) SessionFindings(ctx context.Context, id model.SessionID) (app.FindingsPage, error) {
+	if s.findings != nil {
+		return s.findings(ctx, id)
+	}
+	return app.FindingsPage{State: app.EvidenceUnavailable}, nil
 }

@@ -143,7 +143,7 @@ func TestRuntimeImportsAllAdaptersIdempotently(t *testing.T) {
 			}
 			for _, state := range states {
 				want := projection.StatusPending
-				if state.Kind == projection.KindSearch {
+				if state.Kind == projection.KindSearch || state.Kind == projection.KindFindings {
 					want = projection.StatusReady
 				}
 				if state.Status != want {

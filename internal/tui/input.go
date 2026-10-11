@@ -86,7 +86,29 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.screen == findingsScreen {
+		switch key {
+		case "[", "]":
+			delta := 1
+			if key == "[" {
+				delta = -1
+			}
+			m.findingsState.evidenceCursor = clamp(m.findingsState.evidenceCursor+delta, 0, max(0, len(m.findingReferences())-1))
+			m.syncViewports()
+			m.detailState.viewport.GotoBottom()
+			return m, nil
+		case "enter":
+			return m.openFindingEvidence()
+		}
+	}
 	switch key {
+	case "f":
+		if m.screen == timelineScreen {
+			m.screen = findingsScreen
+			m.findingsState.evidenceCursor = 0
+			m.detailState.viewport.GotoTop()
+			return m, m.loadFindings()
+		}
 	case "esc":
 		return m.back()
 	case "/":
@@ -180,7 +202,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		if m.screen == timelineScreen {
 			m.syncViewports()
 			m.timelineState.viewport.ScrollUp(m.pageStep())
-		} else if m.screen == detailScreen || m.screen == indexingScreen {
+		} else if m.screen == detailScreen || m.screen == findingsScreen || m.screen == indexingScreen {
 			m.moveScroll(-m.pageStep())
 		} else {
 			return m.previousPage()
@@ -190,7 +212,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 			m.syncViewports()
 			m.timelineState.viewport.ScrollDown(m.pageStep())
 			return m, m.prefetchTimelineIfNeeded()
-		} else if m.screen == detailScreen || m.screen == indexingScreen {
+		} else if m.screen == detailScreen || m.screen == findingsScreen || m.screen == indexingScreen {
 			m.moveScroll(m.pageStep())
 		} else {
 			return m.nextPage()

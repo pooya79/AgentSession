@@ -1,0 +1,36 @@
+package web
+
+import (
+	"github.com/pooya79/AgentSession/internal/app"
+	"github.com/pooya79/AgentSession/internal/model"
+)
+
+templ ruleAssessments(session model.SessionID, page app.FindingsPage, failed bool) {
+	<section aria-labelledby="assessments-title">
+		<h2 id="assessments-title">Rule assessments</h2>
+		if failed || page.State != app.EvidenceComplete {
+			<p class="notice warning">
+				Assessments unavailable · { page.Status }
+				if page.Stale {
+					<span>· stale</span>
+				}
+				<span>. Use projection readiness controls to retry or rebuild.</span>
+			</p>
+		} else {
+			for _, assessment := range page.Assessments {
+				<details open?={ assessment.State == model.FindingTriggered }>
+					<summary>{ assessment.RuleID } · { string(assessment.State) }</summary>
+					<p class="metadata">Rule version { string(assessment.RuleVersion) } · assessment { string(assessment.ID) }</p>
+					<p>{ assessment.Explanation }</p>
+					<p class="metadata">Invocations: { assessment.Metadata["invocations"] } · failures: { assessment.Metadata["failures"] } · sequences: { assessment.Metadata["sequences"] } · recovered: { assessment.Metadata["recovered"] } · uncertainties: { assessment.Metadata["uncertainties"] } · omitted references: { assessment.Metadata["omitted_references"] }</p>
+					<ul>
+						for _, id := range assessment.EventIDs {
+							<li><a href={ templ.URL(focusedTimelineURL(session, id)) }>Supporting event { string(id) }</a></li>
+						}
+					</ul>
+				</details>
+			}
+			<p class="muted">Only repeated command failures is implemented. Other rules have not been assessed. No severity grade or session outcome is assigned.</p>
+		}
+	</section>
+}

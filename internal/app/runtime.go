@@ -28,6 +28,7 @@ type Runtime struct {
 	importAll    *importAllCoordinator
 	explorer     Explorer
 	searcher     Searcher
+	assessor     Assessor
 	projections  *ProjectionService
 	databaseLock *databaseLock
 

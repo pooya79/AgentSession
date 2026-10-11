@@ -1,0 +1,8 @@
+{"type":"session_meta","payload":{"id":"explicit-commands","cwd":"/workspace"}}
+{"timestamp":"2026-07-22T10:00:09Z","type":"event_msg","payload":{"type":"exec_command_begin","call_id":"a","command":["sh","-c","false"],"cwd":"/workspace"}}
+{"timestamp":"2026-07-22T10:00:01Z","type":"event_msg","payload":{"type":"exec_command_end","call_id":"a","command":["sh","-c","false"],"cwd":"/workspace","exit_code":1,"aggregated_output":"sanitized failure"}}
+{"type":"event_msg","payload":{"type":"exec_command_end","call_id":"a","command":["sh","-c","false"],"cwd":"/workspace","exit_code":1}}
+{"type":"event_msg","payload":{"type":"exec_command_begin","call_id":"b","command":["sh","-c","false"],"cwd":"/workspace"}}
+{"type":"event_msg","payload":{"type":"exec_command_end","call_id":"b","command":["sh","-c","false"],"cwd":"/workspace","exit_code":1}}
+{"type":"event_msg","payload":{"type":"exec_command_begin","call_id":"pending","command":["pwd"]}}
+{"type":"event_msg","payload":{"type":"exec_command_end","call_id":"pending","command":["pwd"]}}

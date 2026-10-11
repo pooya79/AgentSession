@@ -7,6 +7,7 @@ The retained JSONL bytes are the authoritative evidence in every test.
 
 | Fixture | CLI / format | Top-level type | Nested `payload.type` | Provenance | Expected classification |
 | --- | --- | --- | --- | --- | --- |
+| `explicit_commands.jsonl` | explicit event messages | `session_meta`, `event_msg` | `exec_command_begin`, `exec_command_end` | sanitized wire-shaped starts/results; synthetic duplicate and missing-field cases | linked Command events, raw retention, source order independent of timestamps |
 | `legacy.jsonl` | 0.42.0 / legacy | `session_meta`, `event_msg`, `response_item` | message and function call variants | sanitized baseline | messages, tool call/result, metadata |
 | `ordinal.jsonl` | 0.133.0 / ordinal | `session_meta`, `event_msg`, `response_item` | message, lifecycle, token count | sanitized baseline | durable messages, usage, projections retained as metadata |
 | `current_0.145.0.jsonl` | 0.145.0 / ordinal | `session_meta`, `response_item`, `event_msg` | reasoning, function/custom/local-shell, web search, MCP, dynamic tool, collaboration, plan/lifecycle | observed 0.145.0 structure | Summary, ToolCall, ToolResult, Patch, metadata |
