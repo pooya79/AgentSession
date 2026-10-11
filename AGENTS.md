@@ -92,3 +92,17 @@ Before declaring work complete:
 3. Check that errors and partial evidence are represented honestly rather than collapsed into success.
 4. Verify both interfaces use shared services when the change is user-visible in both.
 5. Report what changed, which checks ran, and any remaining limitations.
+
+## Agent skills
+
+### Issue tracker
+
+Track work in GitHub Issues for `pooya79/AgentSession`. Before reading or publishing tickets, read `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five default triage labels. Before triaging, read `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use a single-context layout with root `GLOSSARY.md` and ADRs in `docs/decisions/`. Before exploring domain terms or recording decisions, read `docs/agents/domain.md`.
