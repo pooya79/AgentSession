@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted; web-specific limitation superseded by ADR-020
+Accepted; web-specific limitation superseded by ADR-020; accumulating TUI
+presentation-memory policy superseded by ADR-022
 
 ## Context
 
@@ -44,3 +45,11 @@ timeline.
   redacted Unknown-event action.
 - Timeline summary callers remain compatible and do not pay payload decoding
   costs.
+
+## Relations
+
+[ADR-022](022-bounded-tui-timeline-retention.md) replaces this record's
+accumulating TUI presentation-memory policy with bounded retention and local
+reloads. The original decision above remains intact as historical context;
+ADR-022 establishes the intended TUI retention policy without claiming that
+implementation is complete.

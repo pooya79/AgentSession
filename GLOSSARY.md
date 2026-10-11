@@ -4,6 +4,11 @@ AgentSession explores recorded coding-agent sessions and the evidence they conta
 
 ## Language
 
+**Session timeline**:
+The recorded activity of one coding-agent session, arranged in preserved source
+order. It includes messages and technical activity; timestamps do not override
+that order.
+
 **Rule**:
 A specific question about recorded session evidence, answered using fixed,
 deterministic criteria.
