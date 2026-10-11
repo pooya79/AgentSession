@@ -1,0 +1,12 @@
+{"type":"session_meta","payload":{"id":"command-forms","cwd":"/workspace/sanitized"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"argv","name":"shell","arguments":"{\"command\":[\"go\",\"test\",\"./...\"]}"}}
+{"type":"event_msg","payload":{"type":"exec_command_end","call_id":"argv","command":["go","test","./..."],"cwd":"/workspace/sanitized","exit_code":1}}
+{"type":"turn_context","payload":{"cwd":"/workspace/next"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"text","name":"shell_command","arguments":"{\"command\":\"go test ./...\",\"workdir\":\"sub\"}"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"text","output":[{"type":"input_text","text":"Exit code: 0\nWall time: 0.1 seconds\nOutput:"},{"type":"input_text","text":"ok sanitized"}]}}
+{"type":"response_item","payload":{"type":"local_shell_call","call_id":"local","status":"completed","action":{"type":"exec","command":["printf","%s","a b"],"working_directory":"/workspace/local"}}}
+{"type":"event_msg","payload":{"type":"exec_command_end","call_id":"local","command":["printf","%s","a b"],"cwd":"/workspace/local","exit_code":0}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"container","name":"container.exec","arguments":"{\"command\":[\"go\",\"vet\",\"./...\"],\"workdir\":\"/workspace/container\"}"}}
+{"type":"event_msg","payload":{"type":"exec_command_end","call_id":"container","command":["go","vet","./..."],"cwd":"/workspace/container","exit_code":1}}
+{"type":"response_item","payload":{"type":"custom_tool_call","call_id":"custom","name":"unestablished_shell","input":"go test ./..."}}
+{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"custom","output":"ok","is_error":false}}

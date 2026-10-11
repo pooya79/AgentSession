@@ -1,0 +1,12 @@
+{"type":"session_meta","payload":{"id":"streamed-commands","cwd":"/workspace/sanitized","cli_version":"0.145.0"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"first","name":"exec_command","arguments":"{\"cmd\":\"go test ./...\",\"yield_time_ms\":1000}"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"first","output":"Chunk ID: a00001\nWall time: 1.0000 seconds\nProcess running with session ID 41\nOutput:\nchecking"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"poll-first","name":"write_stdin","arguments":"{\"session_id\":41,\"chars\":\"\"}"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"poll-first","output":"Chunk ID: a00002\nWall time: 0.1000 seconds\nProcess exited with code 1\nOutput:\nFAIL sanitized"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"poll-first","output":"Chunk ID: a00002\nWall time: 0.1000 seconds\nProcess exited with code 1\nOutput:\nFAIL sanitized"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"retry","name":"exec_command","arguments":"{\"cmd\":\"go test ./...\"}"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"retry","output":"Chunk ID: a00003\nWall time: 0.1000 seconds\nProcess exited with code 1\nOutput:\nFAIL sanitized"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"recovery","name":"exec_command","arguments":"{\"cmd\":\"go test ./...\"}"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"recovery","output":"Chunk ID: a00004\nWall time: 0.1000 seconds\nProcess exited with code 0\nOutput:\nok sanitized"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"pending","name":"exec_command","arguments":"{\"cmd\":\"go test ./...\"}"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"pending","output":"Chunk ID: a00005\nWall time: 1.0000 seconds\nProcess running with session ID 42\nOutput:\n"}}

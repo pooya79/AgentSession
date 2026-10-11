@@ -1,0 +1,16 @@
+{"type":"response_item","payload":{"type":"function_call","call_id":"early","name":"exec_command","arguments":"{\"cmd\":\"go test ./...\"}"}}
+{"type":"session_meta","payload":{"id":"uncertain-commands","cwd":"/workspace/later","cli_version":"0.145.0"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"early","output":"ok","is_error":false}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"cancelled","name":"exec_command","arguments":"{\"cmd\":\"go test ./...\"}"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"cancelled","output":"aborted by user","is_error":true}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"body","name":"exec_command","arguments":"{\"cmd\":\"go test ./...\"}"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"body","output":"Wall time: 1.0000 seconds\nProcess running with session ID 51\nOutput:\nProcess exited with code 0"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"conflict","name":"exec_command","arguments":"{\"cmd\":\"go test ./...\"}"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"conflict","output":"Wall time: 0.1000 seconds\nProcess exited with code 1\nOutput:\nFAIL"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"conflict","output":"Wall time: 0.1000 seconds\nProcess exited with code 0\nOutput:\nok"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"orphan","name":"write_stdin","arguments":"{\"session_id\":999}"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"orphan","output":"Wall time: 0.1000 seconds\nProcess exited with code 0\nOutput:\nok"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"remote","name":"exec_command","arguments":"{\"cmd\":\"go test ./...\",\"environment_id\":\"remote\"}"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"bad","name":"exec_command","arguments":"{\"cmd\":[]}"}}
+{"type":"event_msg","payload":{"type":"future_command_result","call_id":"body","exit_code":0}}
+{"type":"event_msg",BROKEN}

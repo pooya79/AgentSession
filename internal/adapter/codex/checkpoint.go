@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -89,6 +90,31 @@ func (p *prepared) consumePrefix(ctx context.Context, target int64) error {
 		}
 	}
 	p.offset = target
+	// Reconstruct adapter-owned linkage from the already verified, streamed
+	// prefix. No unbounded checkpoint state or live directory is needed.
+	if _, err := p.spool.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("rewind command context: %w", err)
+	}
+	p.commands = commandContext{}
+	reader := bufio.NewReaderSize(p.spool, readBuffer)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		line, complete, err := readLine(reader)
+		if complete {
+			var record wireRecord
+			if json.Unmarshal(trimLineEnding(line), &record) == nil {
+				p.commands.normalize(record)
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("restore command context: %w", err)
+		}
+	}
 	return nil
 }
 

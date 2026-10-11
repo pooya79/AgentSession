@@ -28,6 +28,7 @@ type prepared struct {
 	format       model.Version
 	startedAt    *time.Time
 	diagnostics  []model.Diagnostic
+	commands     commandContext
 
 	offset   int64
 	seq      int64
@@ -62,6 +63,7 @@ func (p *prepared) Reconcile(ctx context.Context, sink importer.ImportSink) erro
 	p.offset = 0
 	p.seq = 0
 	p.eventSeq = 0
+	p.commands = commandContext{}
 	p.digest = sha256.New()
 	return p.stream(ctx, sink, true)
 }

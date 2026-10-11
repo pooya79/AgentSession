@@ -76,15 +76,27 @@ evidence, and Enter to open that event's timeline context. Press `x` from the
 terminal timeline for projection readiness and retry/rebuild controls; the web
 session page exposes the same controls. Refresh after a rebuild completes.
 
-The initial rule uses explicit Codex `exec_command_begin` / `exec_command_end`
-records linked by call ID. Codex argument arrays are rendered with deterministic
-shell quoting to retain argument boundaries; no command is executed. It requires
+The initial rule uses supported Codex shell calls and explicit
+`exec_command_begin` / `exec_command_end` records linked by call ID. Supported
+`exec_command` yields and `write_stdin` polls remain one invocation, including
+when completion arrives in a later import. Shell/function calls and historical
+local-shell actions establish starts; only explicit process exits or recognized
+tool result envelopes establish completion. Argument arrays preserve boundaries
+with shell quoting. A three-argument POSIX shell wrapper matches a script-text
+request only when its call ID and exact script match that recorded request.
+Standalone wrappers retain their shell and flags. No command is executed. The rule requires
 two distinct failed invocations with the
 same recorded command text (trimmed only at the ends) and an established matching
 working directory, without intervening success or relevant uncertainty. Other
 commands do not interrupt a sequence. Later success shows recovery while keeping
 the historical assessment. Generic tool success and assistant claims are not
-process exit evidence. Other source command forms may remain insufficient.
+process exit evidence. Yielded results and responses without exits remain
+inspectable context summaries alongside the pending start. Unsupported custom
+tools, arbitrary output prose, ambiguous process reuse, and unlinked polls
+remain uncertain. Directories come only from recorded invocation or preceding
+session/turn context, without assuming a repository or module root. See the
+[Codex evidence inventory](internal/adapter/codex/testdata/README.md) for exact
+forms and limits.
 
 Assessments report `triggered`, `not_triggered`, `not_applicable`, or
 `insufficient_evidence` for the currently imported record in source order.

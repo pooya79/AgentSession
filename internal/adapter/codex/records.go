@@ -48,6 +48,7 @@ func (p *prepared) envelope(line []byte, offset, sequence, eventSequence int64, 
 }
 
 func (p *prepared) normalize(record wireRecord, ref model.RawRecordRef, eventSequence int64, sessionID model.SessionID) ([]model.Event, []model.Diagnostic, error) {
+	result, commandRecord := p.commands.normalize(record)
 	if record.Type == "session_meta" {
 		if _, ok := objectValue(record.Payload); !ok {
 			result := invalidKnown()
@@ -62,7 +63,9 @@ func (p *prepared) normalize(record wireRecord, ref model.RawRecordRef, eventSeq
 			InterpretationReason: model.InterpretationMissingDiscriminant,
 		}}, nil
 	}
-	result := normalizeRecord(record, p.ordinal, string(sessionID))
+	if !commandRecord {
+		result = normalizeRecord(record, p.ordinal, string(sessionID))
+	}
 	if !result.handled {
 		label := record.Type
 		reason := model.UnknownUnsupportedRecordKind

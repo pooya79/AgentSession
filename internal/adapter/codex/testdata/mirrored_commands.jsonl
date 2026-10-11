@@ -1,0 +1,8 @@
+{"type":"session_meta","payload":{"id":"mirrors","cwd":"/workspace"}}
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"a","arguments":"{\"cmd\":\"go test ./...\"}"}}
+{"type":"event_msg","payload":{"type":"exec_command_begin","call_id":"a","process_id":"41","command":["/bin/bash","-lc","go test ./..."],"cwd":"/workspace"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"a","output":"Wall time: 1.0000 seconds\nProcess running with session ID 41\nOutput:\n"}}
+{"type":"response_item","payload":{"type":"function_call","name":"write_stdin","call_id":"poll","arguments":"{\"session_id\":41}"}}
+{"type":"event_msg","payload":{"type":"exec_command_begin","call_id":"poll","process_id":"41","source":"unified_exec_interaction","interaction_input":"","command":["/bin/bash","-lc","go test ./..."],"cwd":"/workspace"}}
+{"type":"event_msg","payload":{"type":"exec_command_end","call_id":"poll","process_id":"41","source":"unified_exec_interaction","interaction_input":"","command":["/bin/bash","-lc","go test ./..."],"cwd":"/workspace","exit_code":1}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"poll","output":"Wall time: 0.1000 seconds\nProcess exited with code 1\nOutput:\nFAIL"}}

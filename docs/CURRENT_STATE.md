@@ -174,6 +174,15 @@ defers incomplete trailing input, preserves unknown and malformed evidence, and
 normalizes supported messages, commands, tool activity, file evidence, usage,
 errors, and summaries where present.
 
+Supported command evidence includes `exec_command` starts, yielded responses,
+linked `write_stdin` completion, shell function calls, historical local-shell
+actions, and explicit command events. Polls and duplicate results retain one
+invocation; explicit contradictory results remain unknown. Recorded context
+establishes directories only for subsequent calls. Unsupported custom command
+grammars, missing exits, and unlinked polls limit analysis. The
+[fixture inventory](../internal/adapter/codex/testdata/README.md) documents the
+supported envelopes and bounded correlation policy.
+
 Coverage of future Codex record shapes is intentionally incomplete and should
 degrade to Unknown evidence or diagnostics instead of speculative
 normalization.

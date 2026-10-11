@@ -18,7 +18,7 @@ func TestCurrentFixtureInventoryNormalizesDurableShapes(t *testing.T) {
 		model.EventKindToolResult,
 		model.EventKindPatch,
 		model.EventKindToolResult,
-		model.EventKindToolCall,
+		model.EventKindCommand,
 		model.EventKindToolCall,
 		model.EventKindToolCall,
 		model.EventKindToolResult,

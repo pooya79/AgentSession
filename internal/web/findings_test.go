@@ -8,8 +8,42 @@ import (
 	"testing"
 
 	"github.com/pooya79/AgentSession/internal/app"
+	"github.com/pooya79/AgentSession/internal/app/apptest"
 	"github.com/pooya79/AgentSession/internal/model"
 )
+
+func TestImportedStreamedAssessmentAndEvidenceNavigation(t *testing.T) {
+	fixture := apptest.NewFixture(t)
+	ctx := context.Background()
+	sessions, err := fixture.Services.ListSessions(ctx, app.ListSessionsRequest{})
+	if err != nil || len(sessions.Sessions) != 1 {
+		t.Fatalf("sessions = %#v, %v", sessions, err)
+	}
+	session := sessions.Sessions[0].ID
+	page, err := fixture.Services.SessionFindings(ctx, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(fixture.Services)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, sessionURL(session), nil))
+	for _, want := range []string{"triggered", "Invocations: 4", "failures: 2", "recovered: 1", "uncertainties: 1", "Missing, conflicting, unsupported, or oversized evidence"} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("missing %q in imported assessment", want)
+		}
+	}
+	for _, id := range page.Assessments[0].EventIDs {
+		url := focusedTimelineURL(session, id)
+		if !strings.Contains(w.Body.String(), url) {
+			t.Fatalf("missing evidence link %s", id)
+		}
+		focused := httptest.NewRecorder()
+		h.ServeHTTP(focused, httptest.NewRequest(http.MethodGet, url, nil))
+		if focused.Code != http.StatusOK || !strings.Contains(focused.Body.String(), string(id)) {
+			t.Fatalf("evidence navigation %s: status %d", id, focused.Code)
+		}
+	}
+}
 
 func TestAssessmentRenderingAndEvidenceContext(t *testing.T) {
 	id := model.EventID("evt_" + strings.Repeat("a", 64))

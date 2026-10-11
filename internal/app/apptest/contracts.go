@@ -49,7 +49,7 @@ func NewFixture(t *testing.T) Fixture {
 	t.Helper()
 	root := t.TempDir()
 	_, filename, _, _ := runtime.Caller(0)
-	sourceFixture := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "adapter", "codex", "testdata", "explicit_commands.jsonl"))
+	sourceFixture := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "adapter", "codex", "testdata", "streamed_commands.jsonl"))
 	contents, err := os.ReadFile(sourceFixture)
 	if err != nil {
 		t.Fatalf("read contract fixture: %v", err)
@@ -111,6 +111,10 @@ func RunConsumerContract(t *testing.T, consumer Consumer) {
 	if err != nil || findings.State != app.EvidenceComplete || len(findings.Assessments) != 1 || findings.Assessments[0].State != model.FindingTriggered {
 		t.Fatalf("SessionFindings() = %#v, %v", findings, err)
 	}
+	f := findings.Assessments[0]
+	if f.Metadata["invocations"] != "4" || f.Metadata["failures"] != "2" || f.Metadata["recovered"] != "1" || f.Metadata["uncertainties"] != "1" {
+		t.Fatalf("streamed repetition, recovery and pending evidence = %#v", f)
+	}
 	for _, f := range findings.Assessments {
 		locations, err := consumer.EventLocations(ctx, f.EventIDs)
 		if err != nil {
@@ -119,6 +123,10 @@ func RunConsumerContract(t *testing.T, consumer Consumer) {
 		for _, id := range f.EventIDs {
 			if locations[id].SessionID != sessionID {
 				t.Fatal("foreign evidence")
+			}
+			focused, err := consumer.Timeline(ctx, app.TimelineRequest{SessionID: sessionID, FocusedEvent: id, Limit: 1})
+			if err != nil || focused.FocusedEvent != id {
+				t.Fatalf("focused evidence = %#v, %v", focused, err)
 			}
 		}
 	}
