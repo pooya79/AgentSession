@@ -65,3 +65,8 @@ func TestClaudeEvidenceServiceContract(t *testing.T) {
 	fixture := apptest.NewClaudeFixture(t, "ordinary_tools.jsonl")
 	apptest.RunClaudeEvidenceContract(t, contractConsumer{services: fixture.Services})
 }
+
+func TestOpenCodeEvidenceServiceContract(t *testing.T) {
+	fixture := apptest.NewOpenCodeFixture(t, "findings_evidence_v1.sql")
+	apptest.RunOpenCodeEvidenceContract(t, contractConsumer{services: fixture.Services})
+}

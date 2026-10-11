@@ -226,6 +226,16 @@ The adapter operates against a query-only snapshot and retains selected rows
 with their SQLite value types. Broader validation against production OpenCode
 databases remains necessary.
 
+Durable Bash lifecycle records with explicit absolute working directories and
+integer structured exits feed all three findings rules through the shared
+services and both interfaces. Modern structured Write/Edit/ApplyPatch application
+results can confirm ordinary changes. Completed sequenced snapshots preserve
+results but cannot supply an ordered start; legacy records and shell-only forms
+remain uncertain where process, directory, or mutation evidence is missing.
+Incomplete durable sequences preserve interpretation gaps rather than implying
+no recovery. Fixtures cover generation selection, resumed imports, duplicate and
+contradictory results, reconciliation, oversized evidence, and offline rebuilding.
+
 ## Known product gaps
 
 - A user can browse a long timeline, but the product does not yet help them

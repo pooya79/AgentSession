@@ -27,7 +27,15 @@ func (p *prepared) normalize(record logicalRecord, sessionID model.SessionID, se
 	case "session_message":
 		return normalizeSessionMessage(record, data, sessionID, sequence)
 	case "event":
-		return normalizeDurableEvent(record, data, sessionID, sequence)
+		events, diagnostics, err := p.normalizeDurableEvent(record, data, sessionID, sequence)
+		if err != nil || !p.selected.durableIncomplete {
+			return events, diagnostics, err
+		}
+		// A row in an incomplete/ambiguous sequence retains usable positive
+		// evidence, but cannot establish absence in the following interval.
+		// Keep that residual interpretation visible to source-neutral readers.
+		gap, err := unknownEvent(record, sessionID, sequence+int64(len(events)), uint64(len(events)), "sequence-incomplete", model.UnknownUnsupportedNestedVariant, "event:durable-sequence:incomplete")
+		return append(events, gap), diagnostics, err
 	default:
 		return nil, nil, nil
 	}
@@ -140,6 +148,14 @@ func normalizeTool(record logicalRecord, data map[string]json.RawMessage, sessio
 	if err != nil {
 		return nil, nil, err
 	}
+	inputFields, _ := objectValue(state["input"])
+	call = withEvidence(call, evidenceCallData(callID, toolName, inputFields))
+	// A final snapshot supplies input and result, but no ordered start record.
+	// Do not turn content-array order or timestamps into sequential reruns.
+	if command, ok := call.Data.(model.CommandData); ok && status != "pending" && status != "running" {
+		command.Phase = ""
+		call = withEvidence(call, command)
+	}
 	events := []model.Event{call}
 	switch status {
 	case "pending", "running":
@@ -162,6 +178,11 @@ func normalizeTool(record logicalRecord, data map[string]json.RawMessage, sessio
 		if err != nil {
 			return nil, nil, err
 		}
+		var structured map[string]json.RawMessage
+		if allowAliases {
+			structured, _ = objectValue(state["structured"])
+		}
+		result = withEvidence(result, evidenceResultData(callID, toolName, output, structured, isError))
 		events = append(events, result)
 	default:
 		if status != "" {
@@ -300,7 +321,7 @@ func normalizeSessionMessage(record logicalRecord, data map[string]json.RawMessa
 		if output != "" {
 			searchable += "\n" + output
 		}
-		event, err := newEvent(record, sessionID, sequence, 0, "command", model.EventKindCommand, "OpenCode shell command", searchable, model.CommandData{Command: command, Output: output})
+		event, err := newEvent(record, sessionID, sequence, 0, "command", model.EventKindCommand, "OpenCode shell command", searchable, model.CommandData{InvocationID: callID, Command: command, Output: output})
 		return []model.Event{event}, diagnostics, err
 	case "assistant":
 		events, nestedDiagnostics, err := normalizeSessionAssistant(record, data, sessionID, sequence)
@@ -423,7 +444,7 @@ func normalizeAssistantEvidence(record logicalRecord, data map[string]json.RawMe
 	return events, diagnostics, nil
 }
 
-func normalizeDurableEvent(record logicalRecord, data map[string]json.RawMessage, sessionID model.SessionID, sequence int64) ([]model.Event, []model.Diagnostic, error) {
+func (p *prepared) normalizeDurableEvent(record logicalRecord, data map[string]json.RawMessage, sessionID model.SessionID, sequence int64) ([]model.Event, []model.Diagnostic, error) {
 	typeName := record.rowType
 	if record.rowTypePresent && !record.rowTypeValid {
 		return nil, []model.Diagnostic{invalidDiagnostic("opencode.event.type.missing", "The OpenCode durable event row has an invalid type discriminator.")}, nil
@@ -474,9 +495,9 @@ func normalizeDurableEvent(record logicalRecord, data map[string]json.RawMessage
 		event, err := newEvent(record, sessionID, sequence, 0, "result", model.EventKindToolResult, "OpenCode shell result", output, model.ToolResultData{CallID: callID, ToolName: "shell", Output: output})
 		return []model.Event{event}, diagnostics, err
 	case "session.next.tool.called":
-		return normalizeDurableToolCall(record, data, sessionID, sequence, diagnostics)
+		return p.normalizeDurableToolCall(record, data, sessionID, sequence, diagnostics)
 	case "session.next.tool.success", "session.next.tool.failed":
-		return normalizeDurableToolResult(record, data, sessionID, sequence, diagnostics, typeName == "session.next.tool.failed")
+		return p.normalizeDurableToolResult(record, data, sessionID, sequence, diagnostics, typeName == "session.next.tool.failed")
 	case "session.next.step.ended":
 		events, extra, err := normalizeSettlement(record, data, sessionID, sequence, durableCode(typeName), "event:"+typeName+":unmapped")
 		return events, append(diagnostics, extra...), err
@@ -507,20 +528,27 @@ func normalizeDurableEvent(record logicalRecord, data map[string]json.RawMessage
 	}
 }
 
-func normalizeDurableToolCall(record logicalRecord, data map[string]json.RawMessage, sessionID model.SessionID, sequence int64, diagnostics []model.Diagnostic) ([]model.Event, []model.Diagnostic, error) {
+func (p *prepared) normalizeDurableToolCall(record logicalRecord, data map[string]json.RawMessage, sessionID model.SessionID, sequence int64, diagnostics []model.Diagnostic) ([]model.Event, []model.Diagnostic, error) {
 	callID, cp, cv := firstString(data, "callID", "callId", "id")
 	toolName, tp, tv := firstString(data, "tool", "name")
 	input, inputOK := compactValue(data["input"])
 	if !cp || !cv || callID == "" || !tp || !tv || toolName == "" || !inputOK {
 		return nil, append(diagnostics, durableInvalid(record.rowType, "The OpenCode durable tool-call event has invalid required fields.")), nil
 	}
+	p.evidence.remember(callID, toolName, input)
 	event, err := newEvent(record, sessionID, sequence, 0, "call", model.EventKindToolCall, "OpenCode tool call", input, model.ToolCallData{CallID: callID, ToolName: toolName, Input: input})
+	inputFields, _ := objectValue(data["input"])
+	event = withEvidence(event, evidenceCallData(callID, toolName, inputFields))
 	return []model.Event{event}, diagnostics, err
 }
 
-func normalizeDurableToolResult(record logicalRecord, data map[string]json.RawMessage, sessionID model.SessionID, sequence int64, diagnostics []model.Diagnostic, failed bool) ([]model.Event, []model.Diagnostic, error) {
+func (p *prepared) normalizeDurableToolResult(record logicalRecord, data map[string]json.RawMessage, sessionID model.SessionID, sequence int64, diagnostics []model.Diagnostic, failed bool) ([]model.Event, []model.Diagnostic, error) {
 	callID, cp, cv := firstString(data, "callID", "callId", "id")
 	toolName, tp, tv := firstString(data, "tool", "name")
+	linkedTool := p.evidence.tool(callID)
+	if !tp {
+		toolName, tv = linkedTool, true
+	}
 	outputRaw := data["output"]
 	if len(outputRaw) == 0 {
 		outputRaw = data["content"]
@@ -531,10 +559,14 @@ func normalizeDurableToolResult(record logicalRecord, data map[string]json.RawMe
 			output, outputOK = errorData.Message, true
 		}
 	}
-	if !cp || !cv || callID == "" || !tp || !tv || toolName == "" || !outputOK {
+	if !cp || !cv || callID == "" || !tv || !outputOK {
 		return nil, append(diagnostics, durableInvalid(record.rowType, "The OpenCode durable tool-result event has invalid required fields.")), nil
 	}
 	event, err := newEvent(record, sessionID, sequence, 0, "result", model.EventKindToolResult, "OpenCode tool result", output, model.ToolResultData{CallID: callID, ToolName: toolName, Output: output, IsError: &failed})
+	if linkedTool != "" && linkedTool == toolName {
+		structured, _ := objectValue(data["structured"])
+		event = withEvidence(event, evidenceResultData(callID, toolName, output, structured, failed))
+	}
 	return []model.Event{event}, diagnostics, err
 }
 

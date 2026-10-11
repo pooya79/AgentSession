@@ -3,6 +3,7 @@ package apptest
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -54,6 +55,11 @@ func NewClaudeFixture(t *testing.T, name string) Fixture {
 	return newSourceFixture(t, name, discovery.SourceClaude)
 }
 
+// NewOpenCodeFixture imports a sanitized SQLite container through discovery.
+func NewOpenCodeFixture(t *testing.T, name string) Fixture {
+	return newSourceFixture(t, name, discovery.SourceOpenCode)
+}
+
 func newSourceFixture(t *testing.T, name string, kind discovery.SourceKind) Fixture {
 	t.Helper()
 	root := t.TempDir()
@@ -67,8 +73,21 @@ func newSourceFixture(t *testing.T, name string, kind discovery.SourceKind) Fixt
 	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o700); err != nil {
 		t.Fatalf("create contract source directory: %v", err)
 	}
-	if err := os.WriteFile(sourcePath, contents, 0o600); err != nil {
-		t.Fatalf("write contract fixture: %v", err)
+	if kind == discovery.SourceOpenCode {
+		sourcePath = filepath.Join(root, "sources", "contract.db")
+		db, err := sql.Open("sqlite", sourcePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, execErr := db.Exec(string(contents))
+		closeErr := db.Close()
+		if execErr != nil || closeErr != nil {
+			t.Fatalf("create SQLite fixture: %v, %v", execErr, closeErr)
+		}
+	} else {
+		if err := os.WriteFile(sourcePath, contents, 0o600); err != nil {
+			t.Fatalf("write contract fixture: %v", err)
+		}
 	}
 	inputs := discovery.Inputs{
 		FileSystem: discovery.OSFileSystem{}, HomeDir: root, WorkingDir: root, GOOS: "linux",
@@ -339,6 +358,61 @@ func RunClaudeEvidenceContract(t *testing.T, consumer Consumer) {
 			focused, err := consumer.Timeline(ctx, app.TimelineRequest{SessionID: "claude-findings", FocusedEvent: id, Limit: 1})
 			if err != nil || focused.FocusedEvent != id {
 				t.Fatalf("focused Claude event = %#v, %v", focused, err)
+			}
+		}
+	}
+}
+
+// RunOpenCodeEvidenceContract exercises the persisted assessments and evidence
+// navigation through the same service contract used by both interfaces.
+func RunOpenCodeEvidenceContract(t *testing.T, consumer Consumer) {
+	t.Helper()
+	ctx := context.Background()
+	sessions, err := consumer.ListSessions(ctx, app.ListSessionsRequest{Limit: 100})
+	if err != nil || len(sessions.Sessions) != 4 {
+		t.Fatalf("sessions = %#v, %v", sessions, err)
+	}
+	for _, session := range sessions.Sessions {
+		page, err := consumer.SessionFindings(ctx, session.ID)
+		if err != nil || page.State != app.EvidenceComplete || len(page.Assessments) != 3 {
+			t.Fatalf("findings = %#v, %v", page, err)
+		}
+		for _, f := range page.Assessments {
+			if f.RuleVersion != "1" || f.Explanation == "" || len(f.EventIDs) > 12 {
+				t.Fatalf("assessment = %#v", f)
+			}
+			if session.Title == "durable" {
+				if f.State != model.FindingTriggered {
+					t.Fatalf("durable = %#v", f)
+				}
+				switch f.RuleID {
+				case "repeated_command_failures":
+					if f.Metadata["invocations"] != "4" || f.Metadata["failures"] != "3" || f.Metadata["recovered"] != "1" {
+						t.Fatalf("repetition = %#v", f)
+					}
+				case "unresolved_failed_verification":
+					if f.Metadata["unresolved"] != "1" || f.Metadata["recovered"] != "2" {
+						t.Fatalf("verification = %#v", f)
+					}
+				case "missing_verification":
+					if f.Metadata["confirmed_changes"] != "3" || f.Metadata["verified_changes"] != "2" || f.Metadata["missing_changes"] != "1" {
+						t.Fatalf("changes = %#v", f)
+					}
+				default:
+					t.Fatalf("unexpected rule %s", f.RuleID)
+				}
+			} else if f.State != model.FindingInsufficientEvidence {
+				t.Fatalf("%s fabricated a definitive assessment: %#v", session.Title, f)
+			}
+			for _, id := range f.EventIDs {
+				detail, err := consumer.EventDetail(ctx, app.EventDetailRequest{SessionID: session.ID, EventID: id, IncludePayload: true})
+				if err != nil || detail.State != app.EvidenceComplete || detail.Event.SessionID != session.ID {
+					t.Fatalf("event = %#v, %v", detail, err)
+				}
+				focused, err := consumer.Timeline(ctx, app.TimelineRequest{SessionID: session.ID, FocusedEvent: id, Limit: 1})
+				if err != nil || focused.FocusedEvent != id {
+					t.Fatalf("focused evidence = %#v, %v", focused, err)
+				}
 			}
 		}
 	}

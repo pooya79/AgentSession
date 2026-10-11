@@ -202,6 +202,37 @@ unknown commands or interpretation gaps can prevent proof of omission; independe
 conclusive missing changes still trigger the assessment. Imports reassess the
 record, and offline rebuilds use stored canonical evidence.
 
+## OpenCode findings evidence
+
+Both interfaces use the same persisted assessments for supported OpenCode
+evidence. The adapter selects one storage generation per session; alternative
+histories are never combined.
+
+- Durable `bash` tool calls preserve invocation IDs, command text, and explicit
+  absolute `workdir` values. Linked successful tool results with an integer
+  `structured.exit` establish process completion, including nonzero exits.
+  A timeout, tool error, missing exit, or output assurance does not.
+- Modern sequenced and durable `write`, `edit`, and `apply_patch` results can
+  confirm ordinary changes through their structured application results.
+  Requested patches, patch previews, generic tool success, and `outputPaths`
+  do not confirm application. Absolute affected paths are required; relative
+  location resources cannot establish scope without a recorded base.
+- Completed sequenced tool snapshots retain explicit process results but lack
+  an ordered invocation start. They cannot establish sequential recovery or
+  verify a preceding change by inventing a start from array order or timestamps.
+- Legacy tool records retain command and patch intent. Legacy process results
+  and mutation confirmation are not currently recognized. Shell-only records
+  lack the exit/directory evidence needed for definitive assessments.
+
+Incomplete durable sequences expose residual interpretation gaps, preserving
+uncertainty about missing recovery and verification. Durable tool attribution
+keeps the most recent 256 invocation IDs/tool names (at most 512 bytes each),
+reconstructing them from the selected snapshot prefix on resume. Evicted,
+conflicting, or oversized attribution remains uncertain. Existing findings
+bounds, Go grammar, event navigation, and offline rebuilding apply unchanged.
+See the [OpenCode evidence inventory](internal/adapter/opencode/testdata/README.md)
+for synthetic fixture provenance and exact supported shapes.
+
 ## Claude findings evidence
 
 Both interfaces also assess supported ordinary Claude Bash/Edit/Write evidence.

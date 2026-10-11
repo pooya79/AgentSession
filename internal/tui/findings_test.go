@@ -168,3 +168,33 @@ func TestMissingVerificationRendering(t *testing.T) {
 		t.Fatal("triggered assessment must appear first")
 	}
 }
+
+func TestOpenCodeAssessmentRendering(t *testing.T) {
+	fixture := apptest.NewOpenCodeFixture(t, "findings_evidence_v1.sql")
+	sessions, err := fixture.Services.ListSessions(context.Background(), app.ListSessionsRequest{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, session := range sessions.Sessions {
+		if session.Title != "durable" {
+			continue
+		}
+		page, err := fixture.Services.SessionFindings(context.Background(), session.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := New(context.Background(), fixture.Services)
+		m.screen = findingsScreen
+		m.sessionsState.selected = session.ID
+		m.findingsState.page = page
+		m.width, m.height = 240, 120
+		view := m.View().Content
+		for _, want := range []string{"repeated_command_failures", "unresolved_failed_verification", "missing_verification", "recovered 1", "unresolved 1", "missing changes 1"} {
+			if !strings.Contains(view, want) {
+				t.Fatalf("missing %q in %s", want, view)
+			}
+		}
+		return
+	}
+	t.Fatal("durable session missing")
+}

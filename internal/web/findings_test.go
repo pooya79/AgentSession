@@ -96,3 +96,43 @@ func TestAssessmentRenderingAndEvidenceContext(t *testing.T) {
 		t.Fatal("stale assessment exposed")
 	}
 }
+
+func TestOpenCodeAssessmentRenderingAndNavigation(t *testing.T) {
+	fixture := apptest.NewOpenCodeFixture(t, "findings_evidence_v1.sql")
+	sessions, err := fixture.Services.ListSessions(context.Background(), app.ListSessionsRequest{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, session := range sessions.Sessions {
+		if session.Title != "durable" {
+			continue
+		}
+		page, err := fixture.Services.SessionFindings(context.Background(), session.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		handler := NewHandler(fixture.Services)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, sessionURL(session.ID), nil))
+		for _, want := range []string{"repeated_command_failures", "unresolved_failed_verification", "missing_verification", "recovered: 1", "unresolved: 1", "missing changes: 1"} {
+			if !strings.Contains(w.Body.String(), want) {
+				t.Fatalf("missing %q", want)
+			}
+		}
+		for _, f := range page.Assessments {
+			for _, id := range f.EventIDs {
+				url := focusedTimelineURL(session.ID, id)
+				if !strings.Contains(w.Body.String(), url) {
+					t.Fatalf("missing evidence link %s", id)
+				}
+				focused := httptest.NewRecorder()
+				handler.ServeHTTP(focused, httptest.NewRequest(http.MethodGet, url, nil))
+				if focused.Code != http.StatusOK || !strings.Contains(focused.Body.String(), string(id)) {
+					t.Fatalf("evidence navigation %s failed", id)
+				}
+			}
+		}
+		return
+	}
+	t.Fatal("durable session missing")
+}

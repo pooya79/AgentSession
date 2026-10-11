@@ -16,6 +16,7 @@ type prepared struct {
 	tx       *sql.Tx
 	meta     sessionMeta
 	selected generationSelection
+	evidence evidenceState
 }
 
 func (p *prepared) Close() error { return nil }
@@ -39,6 +40,7 @@ func (p *prepared) Reconcile(ctx context.Context, sink importer.ImportSink) erro
 }
 
 func (p *prepared) stream(ctx context.Context, start int64, sink importer.ImportSink) error {
+	p.evidence = evidenceState{}
 	session := p.session()
 	if err := sink.Begin(ctx, session); err != nil {
 		return err
