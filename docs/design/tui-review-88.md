@@ -1,6 +1,6 @@
 # Terminal design review (#88)
 
-Status: **Awaiting product-owner visual review. No design accepted yet.**
+Status: **Accepted by the product owner on 2026-10-11.**
 
 This is the review artifact for [#88](https://github.com/pooya79/AgentSession/issues/88),
 within [spec #86](https://github.com/pooya79/AgentSession/issues/86).
@@ -42,7 +42,7 @@ preview, not an ANSI emulator, performance benchmark, or completed TUI rollout.
 Use **Download frame (.txt)** for the exact visible, color-free terminal frame.
 The files contain plain printable ASCII and newlines; no terminal controls.
 
-## Proposed direction and breakpoints
+## Accepted direction and breakpoints
 
 - At 110 columns or wider: session list with preview. Opening a session gives
   its timeline the full main area. Metadata occupies two rows; contextual help
@@ -88,14 +88,15 @@ reading/search/disclosure/help/inspection controls are demonstrated here.
 
 | Review item | Product-owner verdict | Revisions |
 | --- | --- | --- |
-| Wide session list and preview | Pending | Pending review |
-| Long timeline, disclosure, wrapped/unwrapped inspection | Pending | Pending review |
-| Search editing and contextual controls | Pending | Pending review |
-| Baseline, compact, and insufficient sizes | Pending | Pending review |
-| Dark, light, and color-free readability | Pending | Pending review |
-| Loading/errors, partial and unavailable evidence | Pending | Pending review |
+| Wide session list and preview | Accepted | None requested |
+| Long timeline, disclosure, wrapped/unwrapped inspection | Accepted | None requested |
+| Search editing and contextual controls | Accepted | None requested |
+| Baseline, compact, and insufficient sizes | Accepted | None requested |
+| Dark, light, and color-free readability | Accepted | None requested |
+| Loading/errors, partial and unavailable evidence | Accepted | None requested |
 
-Record the product owner's accepted examples and requested revisions on #88,
-update this table to reflect that review, and resolve revisions before closing
-the ticket. Automated checks and the parent spec's prior approval do not replace
-this review. No acceptance or performance result is inferred from the demo.
+After the concrete previews and review notes were presented, the product owner
+instructed: "push and close issue #88". This records acceptance of the presented
+direction; no revisions were requested. Acceptance covers these review examples,
+not a completed production rollout or measured performance. Implementation and
+responsiveness validation remain work under the parent spec #86.
