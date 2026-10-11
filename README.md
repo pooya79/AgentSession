@@ -107,7 +107,7 @@ independently established repetition. Overlapping failed invocations can establi
 repetition; a successful invocation counts as recovery only when it starts after
 that sequence's repeated failures completed. Sequences retain independent recovery
 evidence, including when invocations overlap. No severity grade or session outcome is assigned.
-Missing verification after source changes has not been assessed yet.
+Missing verification after confirmed source changes is assessed separately below.
 
 All invocations are evaluated. At most 12 representative event links are shown,
 with totals and an omission notice. Command text over 16 KiB, directories over
@@ -163,7 +163,44 @@ ahead of remaining uncertainty; otherwise relevant uncertainty yields
 `insufficient_evidence`, assessed checks without an unresolved failure yield
 `not_triggered`, and an interpreted record with no applicable commands yields
 `not_applicable`. New imports reassess the record; rebuilds use stored evidence
-even after sources disappear. The missing-verification rule remains unimplemented.
+even after sources disappear.
+
+## Missing verification after changes
+
+Both session-detail interfaces expose `missing_verification` alongside the
+other two assessments. It assesses confirmed ordinary Go source changes against
+the recorded declared targets of the Go checks listed above. A completed relevant
+check counts even when it fails: missing verification can be `not_triggered`
+while unresolved failed verification is `triggered`. The check must start after
+the edit in source order; an earlier or still-running check does not verify it.
+Unknown or contradictory results leave uncertainty.
+
+Initial change confirmation uses Codex `patch_apply_end` records with explicit
+`success: true`, `status: completed`, and understood structured `changes`.
+Patch requests, begin/update events, tool-success prose, failed applications,
+and turn diffs do not confirm mutation. Empty change maps and explicitly empty
+updates are no-ops. Failed multi-file applications can have uncertain partial
+effects. Repeated completion records count once; contradictory linked results
+leave confirmation uncertain. Original request/result records remain retained.
+
+Ordinary `.go` files use recorded absolute POSIX paths or a preceding established
+patch working directory. A local target covers its directory; a recursive target
+also covers descendants. A build excludes `_test.go` changes. This establishes
+declared target relevance, without proving actual file participation,
+correctness, test coverage, or dependency coverage. No live repository is inspected
+and no recorded command is executed.
+
+Clearly documentation-only paths (`.md`, `.rst`, `.adoc`, `LICENSE`, `COPYING`)
+are exempt. Other languages, unfamiliar roles, moves, `go.mod`/`go.sum`, workspace
+configuration, traversal/Windows paths, unavailable bases, and Go files under
+`vendor`, `testdata`, or dot/underscore-prefixed components remain uncertain.
+Module and workspace boundaries are not inferred from working directories.
+Paths/bases over 4 KiB and change IDs over 512 bytes remain canonical evidence
+but cannot establish analysis identity. All affected paths are assessed, with
+counts, up to 12 representative event links, and an omission notice. Compatible
+unknown commands or interpretation gaps can prevent proof of omission; independent
+conclusive missing changes still trigger the assessment. Imports reassess the
+record, and offline rebuilds use stored canonical evidence.
 
 ## Development
 

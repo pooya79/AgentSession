@@ -1,0 +1,6 @@
+{"type":"session_meta","payload":{"id":"confirmed-changes","cwd":"/workspace"}}
+{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"edit","input":"*** Begin Patch\n*** Update File: internal/core/core.go\n@@\n-old\n+new\n*** End Patch"}}
+{"type":"event_msg","payload":{"type":"patch_apply_end","call_id":"edit","stdout":"Success","stderr":"","success":true,"status":"completed","changes":{"internal/core/core.go":{"type":"update","unified_diff":"@@ -1 +1 @@\n-old\n+new","move_path":null}}}}
+{"type":"event_msg","payload":{"type":"patch_apply_end","call_id":"noop","stdout":"","stderr":"","success":true,"status":"completed","changes":{}}}
+{"type":"event_msg","payload":{"type":"exec_command_begin","call_id":"check","command":["go","test","./internal/core"],"cwd":"/workspace"}}
+{"type":"event_msg","payload":{"type":"exec_command_end","call_id":"check","command":["go","test","./internal/core"],"cwd":"/workspace","exit_code":1,"aggregated_output":"FAIL","status":"completed"}}

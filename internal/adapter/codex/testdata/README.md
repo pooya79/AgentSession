@@ -101,3 +101,22 @@ v1 cursor or reading the complete log into memory. Reconciliation resets it.
 Tests resume after each streamed fixture record, defer partial tails, preserve
 large output/raw bytes, check duplicate IDs/order, and cover truncation,
 replacement, projection reassessment, and rebuilding after source removal.
+
+## Confirmed change evidence
+
+`changes.jsonl` models the structured Codex protocol
+[`PatchApplyEndEvent` and `FileChange`](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs):
+`call_id`, `success`, `status`, and the affected-path map with `add`, `delete`,
+or `update` variants (`content`, `unified_diff`, optional `move_path`). Only
+successful completed results with an understood map confirm effects. Empty maps
+or explicitly empty update diffs without moves are no-ops. Nonempty diffs without
+understood edit lines remain unknown; hunk content resembling file headers still
+counts as edit evidence. Missing maps/status, malformed entries,
+future variants and contradictory statuses stay uncertain. Failed applications
+never confirm mutation; recorded intended paths can leave partial effects unknown.
+Tests preserve both move paths, raw bytes, source order, large paths, stable IDs,
+and request context across incremental resume. Patch requests, begin/update
+events, generic responses and turn diffs are retained without claiming mutation.
+Generic responses linked to a patch request remain patch context; their prose
+cannot supply affected paths or confirmation. Invocation directories are bounded
+and reconstructed from the verified prefix. No filesystem inspection occurs.

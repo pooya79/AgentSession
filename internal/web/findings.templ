@@ -22,7 +22,12 @@ templ ruleAssessments(session model.SessionID, page app.FindingsPage, failed boo
 					<summary>{ assessment.RuleID } · { string(assessment.State) }</summary>
 					<p class="metadata">Rule version { string(assessment.RuleVersion) } · assessment { string(assessment.ID) }</p>
 					<p>{ assessment.Explanation }</p>
-					<p class="metadata">Invocations: { assessment.Metadata["invocations"] } · failures: { assessment.Metadata["failures"] } · recovered: { assessment.Metadata["recovered"] } · uncertainties: { assessment.Metadata["uncertainties"] } · omitted references: { assessment.Metadata["omitted_references"] }</p>
+					if assessment.Metadata["applicable_changes"] != "" {
+						<p class="metadata">Confirmed paths: { assessment.Metadata["confirmed_changes"] } · applicable changes: { assessment.Metadata["applicable_changes"] } · verified changes: { assessment.Metadata["verified_changes"] } · missing changes: { assessment.Metadata["missing_changes"] } · documentation exemptions: { assessment.Metadata["documentation_changes"] }</p>
+					} else {
+						<p class="metadata">Invocations: { assessment.Metadata["invocations"] } · failures: { assessment.Metadata["failures"] } · recovered: { assessment.Metadata["recovered"] }</p>
+					}
+					<p class="metadata">Uncertainties: { assessment.Metadata["uncertainties"] } · omitted references: { assessment.Metadata["omitted_references"] }</p>
 					if assessment.Metadata["sequences"] != "" {
 						<p class="metadata">Repeated failure sequences: { assessment.Metadata["sequences"] }</p>
 					}
@@ -36,7 +41,7 @@ templ ruleAssessments(session model.SessionID, page app.FindingsPage, failed boo
 					</ul>
 				</details>
 			}
-			<p class="muted">Missing verification has not been assessed. No severity grade or session outcome is assigned.</p>
+			<p class="muted">No severity grade or session outcome is assigned.</p>
 		}
 	</section>
 }

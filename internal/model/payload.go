@@ -115,7 +115,24 @@ func (FileMutationData) eventKind() EventKind { return EventKindFileMutation }
 type PatchData struct {
 	Text  string
 	Paths []string
+	// ChangeID links attempts and results within a session. Only ChangeConfirmed
+	// establishes mutation; an empty status carries uninterpreted patch context.
+	ChangeID         string
+	Status           ChangeStatus
+	WorkingDirectory string
+	Changes          []FileMutationData
 }
+
+// ChangeStatus preserves the distinction between intent, effect and uncertainty.
+type ChangeStatus string
+
+const (
+	ChangeRequested ChangeStatus = "requested"
+	ChangeConfirmed ChangeStatus = "confirmed"
+	ChangeFailed    ChangeStatus = "failed"
+	ChangeNoOp      ChangeStatus = "no_op"
+	ChangeUnknown   ChangeStatus = "unknown"
+)
 
 func (PatchData) eventKind() EventKind { return EventKindPatch }
 
@@ -254,7 +271,21 @@ func validateNormalizedData(data NormalizedData) error {
 		if value.Phase != "" && value.Phase != CommandStarted && value.Phase != CommandCompleted {
 			return fmt.Errorf("unsupported command phase %q", value.Phase)
 		}
-	case ToolCallData, ToolResultData, PatchData, ErrorData:
+	case PatchData:
+		switch value.Status {
+		case "", ChangeRequested, ChangeConfirmed, ChangeFailed, ChangeNoOp, ChangeUnknown:
+		default:
+			return fmt.Errorf("unsupported change status %q", value.Status)
+		}
+		if value.Status == ChangeConfirmed && len(value.Changes) == 0 {
+			return fmt.Errorf("confirmed patch requires affected changes")
+		}
+		for _, change := range value.Changes {
+			if err := validateNormalizedData(change); err != nil {
+				return err
+			}
+		}
+	case ToolCallData, ToolResultData, ErrorData:
 		// Empty fields represent incomplete evidence and remain valid.
 	default:
 		return fmt.Errorf("unsupported normalized data type %T", data)

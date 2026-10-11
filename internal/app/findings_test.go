@@ -49,7 +49,7 @@ func TestStreamedFindingsIncrementalRebuildAndReconciliation(t *testing.T) {
 			t.Fatal("import modified source")
 		}
 		page, err := runtime.SessionFindings(ctx, session)
-		if err != nil || page.State != EvidenceComplete || len(page.Assessments) != 2 {
+		if err != nil || page.State != EvidenceComplete || len(page.Assessments) != 3 {
 			t.Fatalf("findings = %#v, %v", page, err)
 		}
 		return page
@@ -163,7 +163,7 @@ func TestFindingsRebuildAfterSourceDisappears(t *testing.T) {
 	}
 	session := sessions.Sessions[0].ID
 	first, err := runtime.SessionFindings(ctx, session)
-	if err != nil || first.State != EvidenceComplete || len(first.Assessments) != 2 || first.Assessments[0].State != model.FindingTriggered {
+	if err != nil || first.State != EvidenceComplete || len(first.Assessments) != 3 || first.Assessments[0].State != model.FindingTriggered {
 		t.Fatalf("assessment=%#v, %v", first, err)
 	}
 	if first.Assessments[0].RuleID != "unresolved_failed_verification" || first.Assessments[0].Metadata["invocations"] != "8" || first.Assessments[0].Metadata["unresolved"] != "1" || first.Assessments[0].Metadata["recovered"] != "2" {
@@ -233,7 +233,7 @@ func TestExplicitVerificationIncrementalStates(t *testing.T) {
 				t.Fatal("import modified evidence")
 			}
 			page, err := runtime.SessionFindings(ctx, "go-verification")
-			if err != nil || page.State != EvidenceComplete || len(page.Assessments) != 2 {
+			if err != nil || page.State != EvidenceComplete || len(page.Assessments) != 3 {
 				t.Fatalf("findings = %#v, %v", page, err)
 			}
 			var f model.Finding

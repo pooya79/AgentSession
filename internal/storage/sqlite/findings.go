@@ -16,7 +16,7 @@ import (
 // PublishFindings replaces a complete bounded result only for an active claim.
 // Lifecycle completion is separate; until then this output cannot be served.
 func (s *ImportStore) PublishFindings(ctx context.Context, claim projection.Claim, findings []model.Finding) (err error) {
-	if claim.Kind != projection.KindFindings || len(findings) != 2 {
+	if claim.Kind != projection.KindFindings || len(findings) != 3 {
 		return errors.New("sqlite findings: invalid complete result")
 	}
 	encoded := make([][]byte, len(findings))
@@ -25,7 +25,7 @@ func (s *ImportStore) PublishFindings(ctx context.Context, claim projection.Clai
 		if err := f.Validate(); err != nil {
 			return fmt.Errorf("sqlite findings: invalid assessment: %w", err)
 		}
-		if f.SessionID != claim.SessionID || (f.RuleID != analysis.RepeatedCommandRule && f.RuleID != analysis.UnresolvedVerificationRule) || seen[f.RuleID] || f.RuleVersion != analysis.RuleVersion || len(f.EventIDs) > analysis.MaxEvidenceReferences {
+		if f.SessionID != claim.SessionID || (f.RuleID != analysis.RepeatedCommandRule && f.RuleID != analysis.UnresolvedVerificationRule && f.RuleID != analysis.MissingVerificationRule) || seen[f.RuleID] || f.RuleVersion != analysis.RuleVersion || len(f.EventIDs) > analysis.MaxEvidenceReferences {
 			return errors.New("sqlite findings: assessment identity or bound mismatch")
 		}
 		seen[f.RuleID] = true
@@ -92,7 +92,7 @@ func (s *ImportStore) SessionFindings(ctx context.Context, session model.Session
   CASE WHEN p.status='ready' AND p.ready_version=p.target_version AND p.ready_revision=p.target_revision AND p.target_revision=s.canonical_revision THEN f.assessment_json END
  FROM sessions s LEFT JOIN session_projection_states p ON p.session_id=s.id AND p.kind='findings'
  LEFT JOIN findings f ON f.session_id=s.id AND f.projection_version=p.target_version AND f.canonical_revision=s.canonical_revision
- WHERE s.id=? ORDER BY json_extract(f.assessment_json,'$.RuleID')`, session)
+ WHERE s.id=? ORDER BY CASE json_extract(f.assessment_json,'$.RuleID') WHEN 'repeated_command_failures' THEN 0 WHEN 'unresolved_failed_verification' THEN 1 ELSE 2 END`, session)
 	if err != nil {
 		return snapshot, fmt.Errorf("sqlite findings: read snapshot: %w", err)
 	}
@@ -113,14 +113,14 @@ func (s *ImportStore) SessionFindings(ctx context.Context, session model.Session
 			return snapshot, errors.New("sqlite findings: invalid stored assessment")
 		}
 		snapshot.Assessments = append(snapshot.Assessments, f)
-		if len(snapshot.Assessments) > 2 {
+		if len(snapshot.Assessments) > 3 {
 			return snapshot, errors.New("sqlite findings: oversized stored result")
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return snapshot, fmt.Errorf("sqlite findings: read snapshot: %w", err)
 	}
-	snapshot.Usable = len(snapshot.Assessments) == 2
+	snapshot.Usable = len(snapshot.Assessments) == 3
 	if !snapshot.Usable {
 		snapshot.Assessments = nil
 	}

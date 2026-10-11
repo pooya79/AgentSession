@@ -137,6 +137,32 @@ details within these boundaries.
 
 ## Consequences
 
+### Implemented canonical change contract
+
+`PatchData` retains text and path context and now also carries a source-neutral
+change ID, status, recorded working directory, and structured affected mutations
+(operation, path, and previous path). Status distinguishes requested, confirmed,
+failed, no-op, and unknown evidence; an empty status remains uninterpreted patch
+context. Only a confirmed status establishes mutation. This implements the
+minimal evidence extension authorized above rather than treating patch intent
+as a file change. Raw request/result records remain authoritative and ordered.
+
+Initial Codex confirmation requires a structured successful completed
+`patch_apply_end` with understood affected changes. Source parsing and no-op
+recognition stay in the adapter. Linked duplicates and contradictions are
+reconciled over stored source-neutral results before rule evaluation. Other
+adapters' unconfirmed mutation payloads remain uncertain for this rule.
+
+The initial v1 migration stores bounded canonical change-result fields and
+affected paths independently of arbitrary patch text. Rebuilds use these fields
+and existing explicit command/interpretation evidence. Oversized fields produce
+uncertainty without truncating the authoritative normalized payload or raw
+record. The findings projection atomically publishes all three v1 assessments.
+Ordinary package-local Go changes are assessed now; move/module/workspace scope
+recognition remains uncertain as permitted by the staged implementation in #82.
+
+### Product consequences
+
 - Findings can remain useful for sessions that are still receiving events.
 - Sources with weaker evidence may yield insufficient-evidence assessments.
 - This work includes focused adapter/model improvements rather than deriving

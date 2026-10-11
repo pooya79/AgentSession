@@ -108,7 +108,7 @@ func RunConsumerContract(t *testing.T, consumer Consumer) {
 		}
 	}
 	findings, err := consumer.SessionFindings(ctx, sessionID)
-	if err != nil || findings.State != app.EvidenceComplete || len(findings.Assessments) != 2 || findings.Assessments[0].State != model.FindingTriggered {
+	if err != nil || findings.State != app.EvidenceComplete || len(findings.Assessments) != 3 || findings.Assessments[0].State != model.FindingTriggered {
 		t.Fatalf("SessionFindings() = %#v, %v", findings, err)
 	}
 	f := findings.Assessments[0]
@@ -225,7 +225,7 @@ func RunVerificationContract(t *testing.T, consumer Consumer) {
 	t.Helper()
 	ctx := context.Background()
 	page, err := consumer.SessionFindings(ctx, "go-verification")
-	if err != nil || page.State != app.EvidenceComplete || len(page.Assessments) != 2 {
+	if err != nil || page.State != app.EvidenceComplete || len(page.Assessments) != 3 {
 		t.Fatalf("verification findings = %#v, %v", page, err)
 	}
 	f := page.Assessments[0]
@@ -251,5 +251,45 @@ func RunVerificationContract(t *testing.T, consumer Consumer) {
 				t.Fatalf("focused verification = %#v, %v", focused, err)
 			}
 		}
+	}
+}
+
+// RunChangeVerificationContract verifies the distinction between performing a
+// check and passing it, together with canonical payload and evidence navigation.
+func RunChangeVerificationContract(t *testing.T, consumer Consumer) {
+	t.Helper()
+	ctx := context.Background()
+	page, err := consumer.SessionFindings(ctx, "confirmed-changes")
+	if err != nil || page.State != app.EvidenceComplete || len(page.Assessments) != 3 {
+		t.Fatalf("change findings = %#v, %v", page, err)
+	}
+	if page.Assessments[0].RuleID != "unresolved_failed_verification" || page.Assessments[0].State != model.FindingTriggered {
+		t.Fatalf("failed check ordering = %#v", page)
+	}
+	var missing model.Finding
+	for _, f := range page.Assessments {
+		if f.RuleID == "missing_verification" {
+			missing = f
+		}
+	}
+	if missing.State != model.FindingNotTriggered || missing.Metadata["confirmed_changes"] != "1" || missing.Metadata["verified_changes"] != "1" || missing.Metadata["missing_changes"] != "0" {
+		t.Fatalf("verification performed = %#v", missing)
+	}
+	var confirmed bool
+	for _, id := range missing.EventIDs {
+		detail, err := consumer.EventDetail(ctx, app.EventDetailRequest{SessionID: "confirmed-changes", EventID: id, IncludePayload: true})
+		if err != nil || detail.State != app.EvidenceComplete {
+			t.Fatalf("change detail = %#v, %v", detail, err)
+		}
+		if p, ok := detail.Payload.(model.PatchData); ok && p.Status == model.ChangeConfirmed {
+			confirmed = true
+		}
+		focused, err := consumer.Timeline(ctx, app.TimelineRequest{SessionID: "confirmed-changes", FocusedEvent: id, Limit: 1})
+		if err != nil || focused.FocusedEvent != id {
+			t.Fatalf("focused change = %#v, %v", focused, err)
+		}
+	}
+	if !confirmed {
+		t.Fatal("assessment omitted confirmed change evidence")
 	}
 }

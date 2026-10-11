@@ -34,7 +34,7 @@ func TestImportedStreamedAssessmentAndEvidenceNavigation(t *testing.T) {
 	}
 	session := sessions.Sessions[0].ID
 	findings, err := fixture.Services.SessionFindings(ctx, session)
-	if err != nil || len(findings.Assessments) != 2 || len(findings.Assessments[0].EventIDs) == 0 {
+	if err != nil || len(findings.Assessments) != 3 || len(findings.Assessments[0].EventIDs) == 0 {
 		t.Fatalf("supporting evidence = %#v, %v", findings, err)
 	}
 	services := &findingsNavigationServices{Services: fixture.Services}
@@ -71,7 +71,7 @@ func TestImportedStreamedAssessmentAndEvidenceNavigation(t *testing.T) {
 	send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	send(tea.KeyPressMsg{Code: 'f', Text: "f"})
 	view := m.View().Content
-	for _, want := range []string{"triggered", "Invocations 4", "failures 2", "recovered 1", "uncertainties 1", "Missing, conflicting, unsupported, or oversized evidence", "unresolved_failed_verification", "unresolved 0", "tests 4", "static checks 0", "builds 0", "Missing verification has not been assessed."} {
+	for _, want := range []string{"triggered", "Invocations 4", "failures 2", "recovered 1", "uncertainties 1", "Missing, conflicting, unsupported, or oversized evidence", "unresolved_failed_verification", "unresolved 0", "tests 4", "static checks 0", "builds 0", "missing_verification"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing %q in imported assessment: %s", want, view)
 		}
@@ -144,5 +144,27 @@ func TestLeavingAssessmentReadDoesNotKeepSpinnerBusy(t *testing.T) {
 	}
 	if len(m.findingsState.page.Assessments) != 0 {
 		t.Fatal("obsolete response changed screen state")
+	}
+}
+
+func TestMissingVerificationRendering(t *testing.T) {
+	fixture := apptest.NewFixture(t, "changes.jsonl")
+	page, err := fixture.Services.SessionFindings(context.Background(), "confirmed-changes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(context.Background(), fixture.Services)
+	m.screen = findingsScreen
+	m.sessionsState.selected = "confirmed-changes"
+	m.findingsState.page = page
+	m.width, m.height = 240, 120
+	view := m.View().Content
+	for _, want := range []string{"missing_verification · not_triggered", "Confirmed paths 1", "applicable changes 1", "verified changes 1", "missing changes 0", "failed completed check counts as verification performed", "actual file participation"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("missing %q in change assessment: %s", want, view)
+		}
+	}
+	if strings.Index(view, "unresolved_failed_verification") > strings.Index(view, "missing_verification") {
+		t.Fatal("triggered assessment must appear first")
 	}
 }

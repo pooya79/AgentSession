@@ -19,6 +19,7 @@ const maxCommandLinkBytes = 512
 type commandLink struct {
 	invocation string
 	form       string
+	directory  string // patch invocation base, bounded by recorded context
 	scriptHash [32]byte
 	hasScript  bool
 }
@@ -69,6 +70,9 @@ func commandProgress(output string) normalizationResult {
 // normalize interprets only recorded Codex command forms. The ordinary
 // normalizer remains responsible for unrelated tools and unsupported forms.
 func (c *commandContext) normalize(record wireRecord) (normalizationResult, bool) {
+	if result, handled := c.normalizeChange(record); handled {
+		return result, true
+	}
 	item, ok := objectValue(record.Payload)
 	if !ok {
 		return normalizationResult{}, false

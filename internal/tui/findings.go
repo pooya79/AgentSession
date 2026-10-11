@@ -42,8 +42,13 @@ func (m Model) findingsContentLines() []string {
 		return append(lines, fmt.Sprintf("Assessments unavailable · %s · stale: %t", page.Status, page.Stale), "Use x from the timeline for projection readiness, retry and rebuild.")
 	}
 	for _, f := range page.Assessments {
-		lines = append(lines, "", fmt.Sprintf("%s · %s · version %s", f.RuleID, f.State, f.RuleVersion), "Assessment "+string(f.ID), f.Explanation,
-			fmt.Sprintf("Invocations %s · failures %s · recovered %s · uncertainties %s · omitted references %s", f.Metadata["invocations"], f.Metadata["failures"], f.Metadata["recovered"], f.Metadata["uncertainties"], f.Metadata["omitted_references"]))
+		lines = append(lines, "", fmt.Sprintf("%s · %s · version %s", f.RuleID, f.State, f.RuleVersion), "Assessment "+string(f.ID), f.Explanation)
+		if f.Metadata["applicable_changes"] != "" {
+			lines = append(lines, fmt.Sprintf("Confirmed paths %s · applicable changes %s · verified changes %s · missing changes %s · documentation exemptions %s", f.Metadata["confirmed_changes"], f.Metadata["applicable_changes"], f.Metadata["verified_changes"], f.Metadata["missing_changes"], f.Metadata["documentation_changes"]))
+		} else {
+			lines = append(lines, fmt.Sprintf("Invocations %s · failures %s · recovered %s", f.Metadata["invocations"], f.Metadata["failures"], f.Metadata["recovered"]))
+		}
+		lines = append(lines, fmt.Sprintf("uncertainties %s · omitted references %s", f.Metadata["uncertainties"], f.Metadata["omitted_references"]))
 		if f.Metadata["sequences"] != "" {
 			lines = append(lines, "Repeated failure sequences "+f.Metadata["sequences"])
 		}
@@ -51,7 +56,7 @@ func (m Model) findingsContentLines() []string {
 			lines = append(lines, fmt.Sprintf("Conclusively unresolved %s · tests %s · static checks %s · builds %s", f.Metadata["unresolved"], f.Metadata["tests"], f.Metadata["static_checks"], f.Metadata["builds"]))
 		}
 	}
-	lines = append(lines, "", "Missing verification has not been assessed.", "Supporting events · [ / ] select · Enter opens timeline context")
+	lines = append(lines, "", "No severity grade or session outcome is assigned.", "Supporting events · [ / ] select · Enter opens timeline context")
 	for i, id := range m.findingReferences() {
 		marker := " "
 		if i == m.findingsState.evidenceCursor {

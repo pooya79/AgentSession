@@ -27,7 +27,7 @@ func TestImportedStreamedAssessmentAndEvidenceNavigation(t *testing.T) {
 	h := NewHandler(fixture.Services)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, sessionURL(session), nil))
-	for _, want := range []string{"triggered", "Invocations: 4", "failures: 2", "recovered: 1", "uncertainties: 1", "Missing, conflicting, unsupported, or oversized evidence", "unresolved_failed_verification", "unresolved: 0", "tests: 4", "static checks: 0", "builds: 0", "Missing verification has not been assessed."} {
+	for _, want := range []string{"triggered", "Invocations: 4", "failures: 2", "recovered: 1", "Uncertainties: 1", "Missing, conflicting, unsupported, or oversized evidence", "unresolved_failed_verification", "unresolved: 0", "tests: 4", "static checks: 0", "builds: 0", "missing_verification"} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("missing %q in imported assessment", want)
 		}
@@ -46,6 +46,21 @@ func TestImportedStreamedAssessmentAndEvidenceNavigation(t *testing.T) {
 		if focused.Code != http.StatusOK || !strings.Contains(focused.Body.String(), string(id)) {
 			t.Fatalf("evidence navigation %s: status %d", id, focused.Code)
 		}
+	}
+}
+
+func TestMissingVerificationRendering(t *testing.T) {
+	fixture := apptest.NewFixture(t, "changes.jsonl")
+	w := httptest.NewRecorder()
+	NewHandler(fixture.Services).ServeHTTP(w, httptest.NewRequest(http.MethodGet, sessionURL("confirmed-changes"), nil))
+	body := w.Body.String()
+	for _, want := range []string{"missing_verification · not_triggered", "Confirmed paths: 1", "applicable changes: 1", "verified changes: 1", "missing changes: 0", "failed completed check counts as verification performed", "actual file participation"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q in change assessment", want)
+		}
+	}
+	if strings.Index(body, "unresolved_failed_verification") > strings.Index(body, "missing_verification") {
+		t.Fatal("triggered assessment must appear first")
 	}
 }
 

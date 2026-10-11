@@ -55,3 +55,8 @@ func TestVerificationServiceContract(t *testing.T) {
 	fixture := apptest.NewFixture(t, "go_verification.jsonl")
 	apptest.RunVerificationContract(t, contractConsumer{services: fixture.Services})
 }
+
+func TestChangeVerificationServiceContract(t *testing.T) {
+	fixture := apptest.NewFixture(t, "changes.jsonl")
+	apptest.RunChangeVerificationContract(t, contractConsumer{services: fixture.Services})
+}

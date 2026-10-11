@@ -145,8 +145,8 @@ The application durably models lifecycle state for search, Git correlation,
 findings, outcomes, and aggregates. Search and rule assessments have
 implemented builders. The remaining projection kinds are reported as unavailable rather than treated as ready.
 
-Session detail exposes assessments for repeated command failures and unresolved
-Go verification through the
+Session detail exposes assessments for repeated command failures, unresolved
+Go verification, and missing verification after confirmed Go changes through the
 shared application service in both interfaces. Explicit linked Codex command
 starts and completions establish invocations and exit results; unknown or
 contradictory evidence limits conclusions. Results are rebuilt from stored
@@ -156,11 +156,16 @@ documented standalone Go test/vet/build forms. Exact-identity recovery must star
 after failure completion in source order; compatible evidence gaps remain
 uncertain. See the [repetition limits](../README.md#repeated-command-failures) and
 [Go verification grammar and limits](../README.md#unresolved-go-verification).
+Missing verification uses structured completed Codex patch results, ordinary
+Go paths, and declared local/recursive check targets. A completed failed relevant
+check counts as performed verification while remaining independently unresolved.
+Requests, no-ops, unsupported roles, moves and unclear module/workspace scopes
+do not become conclusive missing changes. See the
+[change scope and limits](../README.md#missing-verification-after-changes).
 
 ## Not yet implemented
 
 - Repository and Git correlation.
-- Missing-verification rule assessments.
 - Session outcome classification.
 - Cross-session aggregate projections and a dedicated statistics experience.
 - Aggregate token, tool, command, model, provider, or time-series reporting.
@@ -225,7 +230,7 @@ databases remains necessary.
 - Normalized usage events exist, but users cannot yet explore meaningful usage
   or activity patterns across sessions.
 - Projection infrastructure is substantially ahead of the user-facing
-  verification assessments, outcomes, correlations, and aggregates it is intended
+  outcomes, correlations, and aggregates it is intended
   to support.
 - The product contract calls for useful cross-session insight, while the
   current dashboard offers only a small set of operational totals.

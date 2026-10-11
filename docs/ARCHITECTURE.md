@@ -109,9 +109,9 @@ atomically persist event batch, session updates, and checkpoint
 update implemented projections
       |
       v
-serve canonical evidence, search, and repeated-command assessments
+serve canonical evidence, search, and rule assessments
       |
-      +---- planned ----> Git correlation, verification rules, outcomes, aggregates
+      +---- planned ----> Git correlation, outcomes, aggregates
 ```
 
 An import is incremental and idempotent. Canonical event batches, retained raw
@@ -479,11 +479,11 @@ Current services:
 - read a session timeline and event details;
 - inspect retained Unknown evidence explicitly;
 - search across imported sessions;
-- inspect repeated-command assessments and supporting events;
+- inspect repeated-command, unresolved-verification and missing-verification assessments and supporting events;
 - initiate imports and observe progress; and
 - inspect and operate projection lifecycle state.
 
-Planned services may add repository evidence, verification assessments,
+Planned services may add repository evidence,
 outcomes, aggregates, and local redacted exports.
 
 Services return canonical view data rather than UI-specific components. Presentation concerns stay in `tui` and `web`.

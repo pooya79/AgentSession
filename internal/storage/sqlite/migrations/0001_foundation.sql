@@ -261,6 +261,24 @@ CREATE TABLE command_evidence (
 ) STRICT;
 CREATE INDEX command_evidence_invocation ON command_evidence(invocation_id, phase);
 
+-- Canonical change results and bounded affected paths; patches stay in payloads.
+CREATE TABLE change_evidence (
+    event_id TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+    change_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    directory TEXT NOT NULL,
+    signature TEXT NOT NULL
+) STRICT;
+CREATE INDEX change_evidence_identity ON change_evidence(change_id);
+CREATE TABLE change_paths (
+    event_id TEXT NOT NULL REFERENCES change_evidence(event_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    previous_path TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    PRIMARY KEY(event_id, ordinal)
+) STRICT;
+
 CREATE TABLE findings (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     id TEXT NOT NULL,

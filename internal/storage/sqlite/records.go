@@ -216,6 +216,9 @@ func persistEvent(ctx context.Context, tx *sql.Tx, event model.Event) (bool, err
 		if err := persistCommandEvidence(ctx, tx, event); err != nil {
 			return false, fmt.Errorf("persist command evidence: %w", err)
 		}
+		if err := persistChangeEvidence(ctx, tx, event); err != nil {
+			return false, fmt.Errorf("persist change evidence: %w", err)
+		}
 		if stored.Payload != nil {
 			if err := persistEventPayload(ctx, tx, event.ID, *stored.Payload); err != nil {
 				return false, err
