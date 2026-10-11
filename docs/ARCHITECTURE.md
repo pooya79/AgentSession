@@ -574,6 +574,29 @@ Directories should not be introduced as empty placeholders. A capability
 remains within its owning package until a demonstrated boundary justifies
 splitting it further.
 
+Within these packages, files group related implementation responsibilities:
+
+- Source adapters keep entry points in `adapter.go`, incremental verification
+  in `checkpoint.go`, record delivery in `stream.go`, and canonical record
+  assembly in `records.go`. Codex and Claude probing helpers live in
+  `inspection.go`; OpenCode owns schema selection, read-only snapshots, and
+  logical session enumeration in `schema.go`, `snapshot.go`, and `container.go`.
+- Application exploration groups session reads in `sessions.go`, timeline and
+  event reads in `timeline.go`, and retained Unknown evidence inspection in
+  `unknown_evidence.go`. Pagination and validation remain private application
+  helpers. `services.go` defines the combined presentation contract, and
+  `presentation.go` holds shared display labels and fallbacks.
+- Runtime construction, discovery, batch importing, service delegation, and
+  shutdown live in the corresponding `runtime_*.go` files.
+- Import orchestration stays in `coordinator.go`; `batch_sink.go` owns bounded
+  batch assembly, and `clone.go` owns evidence copies retained across calls.
+- TUI timeline state stays in `timeline.go`; card rendering and text formatting
+  live in `timeline_cards.go` and `timeline_formatting.go`.
+
+Tests follow these responsibilities, with shared fixtures and stubs in
+package-local `test_support_test.go` files where needed. These file divisions
+do not add package interfaces or change the ownership described above.
+
 ## Cross-cutting concerns
 
 ### Data ownership and privacy

@@ -42,14 +42,6 @@ type Ingestion interface {
 	ImportAllStatus(context.Context) (ImportAllStatus, error)
 }
 
-// Services is the complete, presentation-neutral boundary shared by TUI and web.
-type Services interface {
-	Explorer
-	Ingestion
-	Projections
-	Searcher
-}
-
 func (r *Runtime) DiscoverSources(ctx context.Context) (SourceDiscovery, error) {
 	result, err := r.Discover(ctx)
 	if err != nil {

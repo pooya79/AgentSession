@@ -1,138 +1,137 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/pooya79/AgentSession/internal/app"
 	"github.com/pooya79/AgentSession/internal/model"
 )
 
-func TestTimelineCardRendererCoversCanonicalKindsAndSanitizes(t *testing.T) {
-	trueValue := true
-	exit := 1
-	line := int64(3)
-	count := int64(0)
-	hostile := "safe\x1b]8;;https://attacker.invalid\x07link\x1b]8;;\x07\u202e"
-	tests := []struct {
-		name              string
-		kind              model.EventKind
-		payload           model.NormalizedData
-		inspection        app.UnknownEvidenceInspection
-		inspectionLoading bool
-		inspectionErr     error
-		want              []string
-	}{
-		{name: "message", kind: model.EventKindMessage, payload: model.MessageData{Role: model.MessageRoleAssistant, Text: hostile}, want: []string{"╭─ Assistant", "<U+202E>"}},
-		{name: "summary", kind: model.EventKindSummary, payload: model.SummaryData{Category: model.SummaryCategorySummary, Text: "recorded summary"}, want: []string{"Summary: recorded summary"}},
-		{name: "tool call valid json", kind: model.EventKindToolCall, payload: model.ToolCallData{ToolName: "read", CallID: "call", Input: `{"path":"x"}`}, want: []string{"Tool: read", `"path": "x"`}},
-		{name: "tool call invalid json", kind: model.EventKindToolCall, payload: model.ToolCallData{Input: "{invalid"}, want: []string{"Input: {invalid"}},
-		{name: "tool result", kind: model.EventKindToolResult, payload: model.ToolResultData{ToolName: "read", IsError: &trueValue, Output: "result"}, want: []string{"Error: true", "Output: result"}},
-		{name: "command", kind: model.EventKindCommand, payload: model.CommandData{Command: "go test", ExitCode: &exit, Output: "failed"}, want: []string{"Command: go test", "Exit status: 1"}},
-		{name: "patch", kind: model.EventKindPatch, payload: model.PatchData{Paths: []string{"a.go"}, Text: "-old\n+new"}, want: []string{"Paths: a.go", "-old", "+new"}},
-		{name: "file read", kind: model.EventKindFileRead, payload: model.FileReadData{Path: "a.go", StartLine: &line}, want: []string{"Path: a.go", "Lines: from 3"}},
-		{name: "file mutation", kind: model.EventKindFileMutation, payload: model.FileMutationData{Operation: model.FileMutationRename, Path: "b.go", PreviousPath: "a.go"}, want: []string{"Operation: rename", "Renamed from: a.go"}},
-		{name: "usage", kind: model.EventKindUsage, payload: model.UsageData{InputTokens: &count}, want: []string{"input 0", "output unreported"}},
-		{name: "error", kind: model.EventKindError, payload: model.ErrorData{Code: "E_TEST", Message: "broken"}, want: []string{"Code: E_TEST", "Error: broken"}},
-		{name: "unknown", kind: model.EventKindUnknown, payload: model.UnknownData{Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "future"}, want: []string{"Reason: unsupported_record_kind", "Press u"}},
-		{
-			name: "unknown inspection loading", kind: model.EventKindUnknown,
-			payload:           model.UnknownData{Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "future"},
-			inspectionLoading: true, want: []string{"Loading bounded, redacted retained evidence"},
-		},
-		{
-			name: "unknown inspection error", kind: model.EventKindUnknown,
-			payload:       model.UnknownData{Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "future"},
-			inspectionErr: errors.New("inspection unavailable"), want: []string{"Could not inspect retained evidence: inspection unavailable"},
-		},
-		{
-			name: "unknown inspection unavailable", kind: model.EventKindUnknown,
-			payload:    model.UnknownData{Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "future"},
-			inspection: app.UnknownEvidenceInspection{State: app.EvidenceUnavailable, EventID: "event"},
-			want:       []string{"Retained evidence for this event is unavailable"},
-		},
-		{
-			name: "unknown inspection not found", kind: model.EventKindUnknown,
-			payload:    model.UnknownData{Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "future"},
-			inspection: app.UnknownEvidenceInspection{State: app.EvidenceNotFound, EventID: "event"},
-			want:       []string{"retained evidence could not be located"},
-		},
-		{name: "missing payload", kind: model.EventKindUnknown, want: []string{"Details unavailable."}},
+func TestTimelineNearEndAppendsChunksSuppressesDuplicatesAndRetries(t *testing.T) {
+	services := &servicesStub{}
+	m := New(context.Background(), services)
+	m.screen = timelineScreen
+	m.sessionsState.selected = "session-1"
+	m.timelineState.page = app.TimelinePage{
+		State:      app.EvidenceComplete,
+		NextCursor: "next-50",
+		Payloads:   make(map[model.EventID]model.NormalizedData),
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			event := model.EventSummary{ID: "event", Sequence: 2, Kind: test.kind}
-			rendered := strings.Join(timelineCardLines(
-				event, test.payload, 80, true, true,
-				test.inspection, test.inspectionLoading, test.inspectionErr,
-			), "\n")
-			for _, want := range test.want {
-				if !strings.Contains(rendered, want) {
-					t.Errorf("rendered card %q does not contain %q", rendered, want)
-				}
-			}
-			if strings.Contains(rendered, "attacker.invalid") || strings.Contains(rendered, "\u202e") {
-				t.Errorf("rendered card contains terminal control content: %q", rendered)
-			}
-		})
+	for index := 0; index < 50; index++ {
+		event := testEvent("event-"+string(rune('A'+index)), int64(index))
+		m.timelineState.page.Events = append(m.timelineState.page.Events, event)
+		m.timelineState.page.Payloads[event.ID] = model.MessageData{Role: model.MessageRoleUser, Text: "message"}
+	}
+	m.timelineState.cursor = 44
+	m.timelineState.selected = m.timelineState.page.Events[44].ID
+	m.timelineState.inspectionLoading["superseded-inspection"] = true
+	services.timeline = app.TimelinePage{
+		State: app.EvidenceComplete,
+		Events: []model.EventSummary{
+			m.timelineState.page.Events[49],
+			testEvent("event-50", 50),
+			testEvent("event-51", 51),
+		},
+		Payloads: map[model.EventID]model.NormalizedData{
+			"event-50": model.SummaryData{Category: model.SummaryCategorySummary, Text: "next"},
+			"event-51": model.SummaryData{Category: model.SummaryCategorySummary, Text: "last"},
+		},
+	}
+
+	m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if cmd == nil || !m.timelineState.loading {
+		t.Fatal("near-end navigation did not request continuation")
+	}
+	if m.timelineState.inspectionLoading["superseded-inspection"] {
+		t.Fatal("prefetch left a canceled inspection pending")
+	}
+	msg := cmd().(timelineLoadedMsg)
+	if len(services.timelineCalls) != 1 || services.timelineCalls[0].Cursor != "next-50" ||
+		!services.timelineCalls[0].IncludePayloads {
+		t.Fatalf("continuation request = %#v", services.timelineCalls)
+	}
+	m, _ = updateModel(t, m, msg)
+	if len(m.timelineState.page.Events) != 52 || m.timelineState.page.Events[50].ID != "event-50" {
+		t.Fatalf("appended events = %#v", m.timelineState.page.Events[49:])
+	}
+
+	m.timelineState.page.NextCursor = "retry"
+	m.timelineState.cursor = len(m.timelineState.page.Events) - 1
+	m.timelineState.selected = m.timelineState.page.Events[m.timelineState.cursor].ID
+	services.timelineErr = errors.New("temporary failure")
+	m, cmd = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if cmd == nil {
+		t.Fatal("continuation failure setup did not request")
+	}
+	m, _ = updateModel(t, m, cmd().(timelineLoadedMsg))
+	if len(m.timelineState.page.Events) != 52 || m.timelineState.requestedCursors["retry"] {
+		t.Fatal("failed continuation discarded cards or remained duplicate-suppressed")
+	}
+	services.timelineErr = nil
+	m, cmd = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if cmd == nil {
+		t.Fatal("failed continuation was not retryable")
 	}
 }
 
-func TestTimelineActivitiesHideDetailsUntilExpanded(t *testing.T) {
-	event := model.EventSummary{ID: "event", Sequence: 1, Kind: model.EventKindSummary}
-	payload := model.SummaryData{Category: model.SummaryCategorySummary, Text: strings.Repeat("界", 120)}
-	collapsed := timelineCardLines(event, payload, 20, true, false, app.UnknownEvidenceInspection{}, false, nil)
-	expanded := timelineCardLines(event, payload, 20, true, true, app.UnknownEvidenceInspection{}, false, nil)
-	if len(collapsed) >= len(expanded) || strings.Contains(strings.Join(collapsed, "\n"), "界") ||
-		!strings.Contains(strings.Join(collapsed, "\n"), "Session summary") {
-		t.Fatalf("collapsed=%q\nexpanded=%q", collapsed, expanded)
+func TestTimelineUnknownInspectionStaysInline(t *testing.T) {
+	event := testEvent("event-unknown", 1)
+	event.Kind = model.EventKindUnknown
+	services := &servicesStub{inspection: app.UnknownEvidenceInspection{
+		State: app.EvidenceComplete, EventID: event.ID, Text: "redacted evidence", ReturnedSize: 17, OriginalSize: 17,
+	}}
+	m := New(context.Background(), services)
+	m.screen = timelineScreen
+	m.sessionsState.selected = "session-1"
+	m.timelineState.page = app.TimelinePage{
+		State:  app.EvidenceComplete,
+		Events: []model.EventSummary{event},
+		Payloads: map[model.EventID]model.NormalizedData{
+			event.ID: model.UnknownData{Reason: model.UnknownUnsupportedRecordKind, OriginalKind: "future"},
+		},
+	}
+	m.timelineState.selected = event.ID
+	m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: 'u', Text: "u"})
+	if cmd == nil || m.screen != timelineScreen {
+		t.Fatal("Unknown inspection did not remain on timeline")
+	}
+	m, _ = updateModel(t, m, cmd().(unknownEvidenceLoadedMsg))
+	lines, _ := m.timelineContent()
+	if got := strings.Join(lines, "\n"); !strings.Contains(got, "redacted evidence") {
+		t.Fatalf("inline inspection = %q", got)
 	}
 }
 
-func TestTimelineSummaryTitlesUseCanonicalCategory(t *testing.T) {
-	tests := []struct {
-		category model.SummaryCategory
-		want     string
-	}{
-		{model.SummaryCategoryReasoning, "Reasoning"},
-		{model.SummaryCategoryContext, "Conversation context"},
-		{model.SummaryCategoryPlan, "Plan update"},
-		{model.SummaryCategorySummary, "Session summary"},
-		{model.SummaryCategory("future"), "Recorded summary"},
-	}
-	for _, test := range tests {
-		payload := model.SummaryData{Category: test.category, Text: "text"}
-		if got := timelineActivityTitle(payload, "fallback"); got != "▸ "+test.want {
-			t.Errorf("timelineActivityTitle(%q) = %q, want %q", test.category, got, "▸ "+test.want)
-		}
-	}
-}
+func TestTimelineInspectionResponseRoutesByPendingEventAcrossScreens(t *testing.T) {
+	event := testEvent("event-unknown", 1)
+	event.Kind = model.EventKindUnknown
+	m := New(context.Background(), &servicesStub{})
+	m.screen = projectionsScreen
+	m.timelineState.inspectionLoading[event.ID] = true
 
-func TestTimelineMessagesUseConversationLayoutWithoutEventMetadata(t *testing.T) {
-	user := model.EventSummary{ID: "user", Sequence: 41, Kind: model.EventKindMessage}
-	assistant := model.EventSummary{ID: "assistant", Sequence: 42, Kind: model.EventKindMessage}
-	userLines := strings.Join(timelineCardLines(
-		user, model.MessageData{Role: model.MessageRoleUser, Text: "question\nsecond line"}, 60, true, false,
-		app.UnknownEvidenceInspection{}, false, nil,
-	), "\n")
-	assistantLines := strings.Join(timelineCardLines(
-		assistant, model.MessageData{Role: model.MessageRoleAssistant, Text: "answer"}, 60, false, false,
-		app.UnknownEvidenceInspection{}, false, nil,
-	), "\n")
-	if !strings.Contains(userLines, "╭─ You") || !strings.Contains(assistantLines, "╭─ Assistant") {
-		t.Fatalf("user=%q\nassistant=%q", userLines, assistantLines)
+	inspection := app.UnknownEvidenceInspection{
+		State: app.EvidenceComplete, EventID: event.ID, Text: "bounded evidence",
 	}
-	for _, line := range []string{"question", "second line", "answer"} {
-		if !strings.Contains("\n"+userLines+"\n"+assistantLines+"\n", "\n"+line+"\n") {
-			t.Fatalf("message line %q has a copy-hostile prefix:\nuser=%q\nassistant=%q", line, userLines, assistantLines)
-		}
+	m, _ = updateModel(t, m, unknownEvidenceLoadedMsg{
+		generation: m.requestGeneration,
+		eventID:    event.ID,
+		inspection: inspection,
+	})
+	if m.timelineState.inspectionLoading[event.ID] ||
+		m.timelineState.inspections[event.ID].Text != "bounded evidence" ||
+		!m.timelineState.expanded[event.ID] {
+		t.Fatalf("routed timeline inspection = loading %v, inspection %#v, expanded %v",
+			m.timelineState.inspectionLoading[event.ID],
+			m.timelineState.inspections[event.ID],
+			m.timelineState.expanded[event.ID],
+		)
 	}
-	for _, rendered := range []string{userLines, assistantLines} {
-		if strings.Contains(rendered, "│") || strings.Contains(rendered, "#41") ||
-			strings.Contains(rendered, "#42") || strings.Contains(rendered, "message ·") {
-			t.Fatalf("conversation exposed event-log metadata: %q", rendered)
-		}
+	if m.detailState.inspection.EventID != "" {
+		t.Fatalf("timeline response leaked into detail state: %#v", m.detailState.inspection)
 	}
 }
 
@@ -156,20 +155,5 @@ func TestTimelineViewportHeightTracksOptionalHeaderLines(t *testing.T) {
 	want := max(1, m.contentHeight()-len(m.timelineHeaderLines()))
 	if got := m.timelineState.viewport.Height(); got != want {
 		t.Fatalf("timeline viewport height = %d, want %d for %d header lines", got, want, len(m.timelineHeaderLines()))
-	}
-}
-
-func TestSelectedMessageHeaderKeepsFocusedStyle(t *testing.T) {
-	m := New(t.Context(), nil)
-	line := "> ╭─ You"
-	styled := m.styleLines([]string{"header", "status", line})
-	if got, want := styled[2], m.theme.focused.Render(line); got != want {
-		t.Fatalf("selected role header style = %q, want focused %q", got, want)
-	}
-
-	unselected := "  ╭─ Assistant"
-	styled = m.styleLines([]string{"header", "status", unselected, "footer"})
-	if got, want := styled[2], m.theme.info.Render(unselected); got != want {
-		t.Fatalf("unselected assistant style = %q, want role style %q", got, want)
 	}
 }

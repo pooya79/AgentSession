@@ -137,41 +137,6 @@ func TestSearchMapsSessionResultsAndBindsCursorToQuery(t *testing.T) {
 	}
 }
 
-func TestSearchResultDisplayFieldsNormalizeAndFallback(t *testing.T) {
-	t.Parallel()
-
-	result := SearchResult{
-		SessionID:        "session-a",
-		Title:            "  A\n session ",
-		Preview:          " ignored\tpreview ",
-		AgentName:        "  codex\ncli ",
-		BestMatchSummary: " matching\tcommand ",
-	}
-	if got := SearchResultDisplayTitle(result); got != "A session" {
-		t.Fatalf("display title = %q", got)
-	}
-	if got := SearchResultDisplayPreview(result); got != "ignored preview" {
-		t.Fatalf("display preview = %q", got)
-	}
-	if got := SearchResultAgentLabel(result); got != "codex cli" {
-		t.Fatalf("agent label = %q", got)
-	}
-	if got := SearchResultMatchSummary(result); got != "matching command" {
-		t.Fatalf("match summary = %q", got)
-	}
-
-	result.Title, result.Preview, result.AgentName, result.BestMatchSummary = " \n", "\t", "", ""
-	if got := SearchResultDisplayTitle(result); got != "session-a" {
-		t.Fatalf("fallback display title = %q", got)
-	}
-	if got := SearchResultAgentLabel(result); got != "AGENT UNREPORTED" {
-		t.Fatalf("fallback agent label = %q", got)
-	}
-	if got := SearchResultMatchSummary(result); got != "Matching evidence" {
-		t.Fatalf("fallback match summary = %q", got)
-	}
-}
-
 func testSearchCursor(t *testing.T, envelope searchCursorEnvelope) string {
 	t.Helper()
 	value, err := json.Marshal(envelope)
