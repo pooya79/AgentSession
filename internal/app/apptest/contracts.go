@@ -46,10 +46,19 @@ type Fixture struct {
 
 // NewFixture creates an isolated runtime backed by sanitized test session data.
 func NewFixture(t *testing.T, name string) Fixture {
+	return newSourceFixture(t, name, discovery.SourceCodex)
+}
+
+// NewClaudeFixture imports ordinary Claude evidence through the same runtime.
+func NewClaudeFixture(t *testing.T, name string) Fixture {
+	return newSourceFixture(t, name, discovery.SourceClaude)
+}
+
+func newSourceFixture(t *testing.T, name string, kind discovery.SourceKind) Fixture {
 	t.Helper()
 	root := t.TempDir()
 	_, filename, _, _ := runtime.Caller(0)
-	sourceFixture := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "adapter", "codex", "testdata", name))
+	sourceFixture := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "adapter", string(kind), "testdata", name))
 	contents, err := os.ReadFile(sourceFixture)
 	if err != nil {
 		t.Fatalf("read contract fixture: %v", err)
@@ -63,7 +72,7 @@ func NewFixture(t *testing.T, name string) Fixture {
 	}
 	inputs := discovery.Inputs{
 		FileSystem: discovery.OSFileSystem{}, HomeDir: root, WorkingDir: root, GOOS: "linux",
-		ExplicitPaths: []discovery.ConfiguredPath{{Kind: discovery.SourceCodex, Path: sourcePath}},
+		ExplicitPaths: []discovery.ConfiguredPath{{Kind: kind, Path: sourcePath}},
 	}
 	pathInputs := app.PathInputs{GOOS: "linux", HomeDir: root, WorkingDir: root}
 	runtimeService, err := app.OpenRuntime(context.Background(), app.RuntimeConfig{
@@ -291,5 +300,46 @@ func RunChangeVerificationContract(t *testing.T, consumer Consumer) {
 	}
 	if !confirmed {
 		t.Fatal("assessment omitted confirmed change evidence")
+	}
+}
+
+// RunClaudeEvidenceContract keeps source interpretation in the adapter while
+// both presentation consumers see identical uncertainty and event navigation.
+func RunClaudeEvidenceContract(t *testing.T, consumer Consumer) {
+	t.Helper()
+	ctx := context.Background()
+	page, err := consumer.SessionFindings(ctx, "claude-findings")
+	if err != nil || page.State != app.EvidenceComplete || len(page.Assessments) != 3 {
+		t.Fatalf("Claude findings = %#v, %v", page, err)
+	}
+	if page.Assessments[0].RuleID != "missing_verification" || page.Assessments[0].State != model.FindingTriggered {
+		t.Fatalf("triggered first = %#v", page)
+	}
+	for _, f := range page.Assessments {
+		if f.RuleVersion != "1" || f.Explanation == "" || len(f.EventIDs) > 12 {
+			t.Fatalf("assessment = %#v", f)
+		}
+		switch f.RuleID {
+		case "missing_verification":
+			if f.Metadata["confirmed_changes"] != "2" || f.Metadata["missing_changes"] != "1" || f.Metadata["verified_changes"] != "0" {
+				t.Fatalf("Claude changes = %#v", f)
+			}
+		case "repeated_command_failures", "unresolved_failed_verification":
+			if f.State != model.FindingInsufficientEvidence || f.Metadata["invocations"] != "3" || f.Metadata["failures"] != "0" {
+				t.Fatalf("prose fabricated a process exit = %#v", f)
+			}
+		default:
+			t.Fatalf("unexpected rule %s", f.RuleID)
+		}
+		for _, id := range f.EventIDs {
+			detail, err := consumer.EventDetail(ctx, app.EventDetailRequest{SessionID: "claude-findings", EventID: id, IncludePayload: true})
+			if err != nil || detail.State != app.EvidenceComplete || detail.Event.SessionID != "claude-findings" {
+				t.Fatalf("Claude event = %#v, %v", detail, err)
+			}
+			focused, err := consumer.Timeline(ctx, app.TimelineRequest{SessionID: "claude-findings", FocusedEvent: id, Limit: 1})
+			if err != nil || focused.FocusedEvent != id {
+				t.Fatalf("focused Claude event = %#v, %v", focused, err)
+			}
+		}
 	}
 }

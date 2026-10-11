@@ -15,21 +15,23 @@ import (
 // wireRecord retains source-shaped fields as raw JSON where presence, null,
 // and type validity affect normalization.
 type wireRecord struct {
-	Type        string          `json:"type"`
-	UUID        string          `json:"uuid"`
-	SessionID   string          `json:"sessionId"`
-	AgentID     string          `json:"agentId"`
-	Version     string          `json:"version"`
-	Timestamp   string          `json:"timestamp"`
-	IsSidechain bool            `json:"isSidechain"`
-	Message     json.RawMessage `json:"message"`
-	Content     json.RawMessage `json:"content"`
-	Error       json.RawMessage `json:"error"`
-	Data        json.RawMessage `json:"data"`
-	Attachment  json.RawMessage `json:"attachment"`
-	Subtype     json.RawMessage `json:"subtype"`
-	Operation   json.RawMessage `json:"operation"`
-	Summary     string          `json:"summary"`
+	CWD           string          `json:"cwd"`
+	ToolUseResult json.RawMessage `json:"toolUseResult"`
+	Type          string          `json:"type"`
+	UUID          string          `json:"uuid"`
+	SessionID     string          `json:"sessionId"`
+	AgentID       string          `json:"agentId"`
+	Version       string          `json:"version"`
+	Timestamp     string          `json:"timestamp"`
+	IsSidechain   bool            `json:"isSidechain"`
+	Message       json.RawMessage `json:"message"`
+	Content       json.RawMessage `json:"content"`
+	Error         json.RawMessage `json:"error"`
+	Data          json.RawMessage `json:"data"`
+	Attachment    json.RawMessage `json:"attachment"`
+	Subtype       json.RawMessage `json:"subtype"`
+	Operation     json.RawMessage `json:"operation"`
+	Summary       string          `json:"summary"`
 }
 
 // envelope retains one raw line and attaches normalized events plus bounded,
@@ -65,6 +67,7 @@ func (p *prepared) envelope(line []byte, offset, sequence int64, session model.S
 	}
 
 	drafts, diagnosticDrafts := normalizeRecord(record)
+	drafts = p.evidence.normalize(record, drafts)
 	var eventIDs []model.EventID
 	for ordinal, draft := range drafts {
 		eventID, err := claudeEventID(record.UUID, p.sessionID, uint64(ordinal), len(drafts), ref)

@@ -49,3 +49,65 @@ blocks:
 
 Malformed known shapes produce record diagnostics instead of Unknown events.
 Complete raw JSONL bytes remain the authoritative evidence.
+
+## Ordinary command and change evidence
+
+`ordinary_tools.jsonl` is a sanitized structural fixture for ordinary client
+`tool_use` / `tool_result` pairs, with invented IDs, Go files, command text and
+output. It combines reported persisted structures; its version is a fixture
+label, not a claim that every variant was captured in that release. Provenance:
+
+- Ordinary Bash request, record `cwd`, and `stdout`/`stderr`/`interrupted`/`isImage`
+  result envelope: [upstream reproduction](https://github.com/anthropics/claude-code/issues/49625)
+  (reported 2.1.112).
+- Edit `filePath`/`structuredPatch`/`originalFile` and string-valued error
+  alternatives: [upstream reproduction](https://github.com/anthropics/claude-code/issues/40858)
+  (reported 2.1.86–2.1.87). The sanitized before/after strings and hunks form a
+  self-contained worked example, rather than copying a user's source file.
+- Write `type: create`, `filePath`, `content`, `structuredPatch`, and null
+  `originalFile`: [upstream reproduction](https://github.com/anthropics/claude-code/issues/55162)
+  (reported 2.1.63). Update, no-op and malformed cases are controlled mutations
+  of the structural fixture in adapter tests, not independent capture claims.
+
+These forms do not borrow hosted `bash_code_execution_tool_result` or
+`text_editor_code_execution_tool_result` semantics. Hosted/custom tools remain
+uninterpreted evidence for findings.
+
+Ordinary Bash requests establish command starts by tool-use ID. Only understood
+foreground result envelopes establish completion; interruption, background
+results, missing metadata and ambiguous multi-result envelopes stay generic.
+The representative Bash envelopes contain **no numeric process exit**. Error
+flags, `FAIL`, `PASS`, and `Exit code 1` text cannot establish failure or recovery.
+Accordingly, repeated-failure and unresolved-verification assessments of these
+fixtures remain insufficient evidence, including after apparent successful
+reruns. No unobserved numeric exit field is invented or parsed.
+
+Edit/Write requests establish intent. A matching ordinary result can establish
+confirmation only through structured effect evidence. Paths and mutation fields
+must match the linked request. Edit/update confirmation validates the complete
+structured hunks against before/after contents, including line counts and order;
+empty consistent patches are no-ops. Terminal-newline discrepancies without
+represented newline markers remain unknown. Unrecognized structured effect fields,
+mixed hosted/client identities, mismatched named results and null error flags
+cannot establish confirmation. Write creation requires explicit `create`,
+null original content and a valid patch array (empty is permitted for creation).
+Failed, prose-only, user-modified, malformed, incomplete, mismatched and
+contradictory results remain uncertain. Linked duplicate effects count once in
+shared analysis. An unknown result is never proof that no partial edit occurred.
+
+Directories come from the invocation/result record's explicit absolute POSIX
+`cwd`, without carrying a directory across records or inspecting repositories.
+Missing or ambiguous bases remain unknown; absolute affected paths need no base.
+Relative paths additionally require established identical request/result bases.
+Request/result paths must match literally; relative-to-absolute aliases and
+unfamiliar variants are intentionally uncertain. Every record stays raw, ordered
+and inspectable, including unknown forms and large structured payloads.
+
+The adapter checkpoints the most recent 256 tool-use identities (IDs up to
+512 bytes), with hashes of request/effect fields rather than file contents.
+This bounds linkage memory and preserves pending calls across incremental imports.
+Results for evicted/oversized identities stay generic evidence and therefore
+limit analysis instead of silently establishing a conclusion. Reconciliation
+clears linkage and derives it from the replacement stream. Findings bounds,
+rule versions, privacy, stale/unavailable behavior and offline rebuilding remain
+those of the shared services; no source-specific rules or outcome grades apply.

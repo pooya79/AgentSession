@@ -13,8 +13,9 @@ import (
 )
 
 type cursorState struct {
-	Version string `json:"version"`
-	Offset  int64  `json:"offset"`
+	Version string         `json:"version"`
+	Offset  int64          `json:"offset"`
+	Calls   []evidenceCall `json:"calls,omitempty"`
 }
 
 type fingerprintState struct {
@@ -50,6 +51,10 @@ func (p *prepared) Verify(ctx context.Context, state importer.SourceState) (impo
 	if hex.EncodeToString(p.digest.Sum(nil)) != fingerprint.SHA256 {
 		return importer.SourceMutated, nil
 	}
+	if len(cursor.Calls) > maxEvidenceCalls {
+		return importer.SourceReplaced, nil
+	}
+	p.evidence.Calls = cursor.Calls
 	p.recordSeq = state.Checkpoint.RecordSequence + 1
 	p.eventSeq = 0
 	if state.LastEventSequence != nil {
@@ -97,7 +102,7 @@ func (p *prepared) consumePrefix(ctx context.Context, target int64) error {
 }
 
 func (p *prepared) checkpoint(sequence int64) (importer.ImportCheckpoint, error) {
-	cursor, err := json.Marshal(cursorState{Version: string(CursorVersion), Offset: p.offset})
+	cursor, err := json.Marshal(cursorState{Version: string(CursorVersion), Offset: p.offset, Calls: p.evidence.Calls})
 	if err != nil {
 		return importer.ImportCheckpoint{}, err
 	}

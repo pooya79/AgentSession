@@ -204,6 +204,14 @@ content, metadata, snapshots, sidechains, and agent logs represented by the
 fixtures. It preserves malformed and unsupported variants and assigns distinct
 canonical identities to agent-owned logs.
 
+Ordinary Bash starts and supported foreground completions retain tool-use linkage
+and explicit invocation directories. The represented result envelopes lack numeric
+exit codes, so tool error flags and output prose leave process results unknown.
+Matching structured ordinary Edit/Write results can confirm changes, with malformed,
+failed, no-op, partial and contradictory effects handled conservatively. Both
+interfaces consume the existing source-neutral assessments. See the Claude fixture
+inventory for supported shapes, provenance and the bounded checkpointed linkage.
+
 Coverage varies across Claude record and content-block variants. Unsupported
 nested content remains visible as partial interpretation.
 

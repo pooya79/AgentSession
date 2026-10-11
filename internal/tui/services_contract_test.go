@@ -60,3 +60,8 @@ func TestChangeVerificationServiceContract(t *testing.T) {
 	fixture := apptest.NewFixture(t, "changes.jsonl")
 	apptest.RunChangeVerificationContract(t, contractConsumer{services: fixture.Services})
 }
+
+func TestClaudeEvidenceServiceContract(t *testing.T) {
+	fixture := apptest.NewClaudeFixture(t, "ordinary_tools.jsonl")
+	apptest.RunClaudeEvidenceContract(t, contractConsumer{services: fixture.Services})
+}

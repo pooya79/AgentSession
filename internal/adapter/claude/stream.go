@@ -16,6 +16,7 @@ import (
 )
 
 type prepared struct {
+	evidence     evidenceState
 	adapter      *Adapter
 	source       importer.Source
 	sourceStream io.ReadCloser
@@ -53,6 +54,7 @@ func (p *prepared) Reconcile(ctx context.Context, sink importer.ImportSink) erro
 		}
 		p.reader = bufio.NewReaderSize(io.MultiReader(p.spool, p.reader), readBuffer)
 	}
+	p.evidence = evidenceState{}
 	p.offset = 0
 	p.recordSeq = 0
 	p.eventSeq = 0

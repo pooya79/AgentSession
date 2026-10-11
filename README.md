@@ -202,6 +202,19 @@ unknown commands or interpretation gaps can prevent proof of omission; independe
 conclusive missing changes still trigger the assessment. Imports reassess the
 record, and offline rebuilds use stored canonical evidence.
 
+## Claude findings evidence
+
+Both interfaces also assess supported ordinary Claude Bash/Edit/Write evidence.
+Structured matching Edit/Write results can confirm changes and establish missing
+verification. Requests, failed/partial edits and success prose cannot confirm
+changes. Ordinary Bash fixtures establish starts and understood foreground
+completion, but contain no numeric exit status: error flags and apparent failed
+or successful rerun text leave repeated failures, unresolved verification, and
+verification after a change uncertain. A later confirmed Go change without any
+relevant recorded check can still establish missing verification independently.
+See the [Claude evidence inventory](internal/adapter/claude/testdata/README.md)
+for exact structures, linkage bounds, fixture provenance, and limitations.
+
 ## Development
 
 Common tasks are available through the Makefile:
