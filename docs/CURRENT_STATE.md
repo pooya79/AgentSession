@@ -93,8 +93,8 @@ representative collection of real sessions.
   browse/read/inspect/return journey and fresh production terminal captures.
   [Final measurements](benchmarks/tui-timeline-final.md) reconfirm the reference
   workload's below-100 ms loaded-interaction target and bounded heavy retention.
-  Final product-owner visual acceptance is pending; captures and test results
-  alone do not establish it.
+  The product owner accepted the second simplification on 2026-10-12; the
+  acceptance record preserves that verdict separately from automated checks.
 - The web interface is server-rendered and remains functional for its main
   operations without JavaScript. Embedded htmx provides bounded partial
   updates when available.

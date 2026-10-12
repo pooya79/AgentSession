@@ -8,7 +8,12 @@ checked after the PTY journey; mouse capture enable sequences are rejected.
 
 ## Product-owner review
 
-**Revised; owner review pending.** The owner rejected the initial combined UI as
+**Accepted on 2026-10-12.** The owner accepted the second simplification with
+“Accept this version” in response to the final review request covering the actual
+screens, sizes, color profiles and live terminal-selection check. The accepted
+production code is `b8fe9e7`; its final captures and check record are at `c4c08c2`.
+
+The owner rejected the initial combined UI as
 “messy”, with too much text and unclear navigation, and requested simplification
 across all screens. The owner then rejected the first simplification as still
 needing more simplification. This second revision removes repeated titles,
@@ -27,13 +32,12 @@ final product-owner acceptance. Fresh frames and input/output/resize recordings
 below document the combined production journey; automated captures and an
 agent's visual inspection cannot supply the owner's verdict.
 
-Review the [actual-screen gallery](gallery.html) against the
-[accepted preview](../tui-review-88.html). Review wide 120×32, baseline 80×24,
+The final review provided the [actual-screen gallery](gallery.html) and
+[accepted preview](../tui-review-88.html), covering wide 120×32, baseline 80×24,
 compact 54×18, minimum 40×12, and insufficient 32×10 behavior in dark, light,
-and color-free profiles. Try the live isolated review binary as well, including
+and color-free profiles. The review request also included the live isolated TUI,
 normal terminal text selection and the browse → read → inspect → return journey.
-Record any material deviations before accepting. Issue #93 remains incomplete
-until that review is explicitly accepted and requested corrections are resolved.
+The owner accepted this version without requesting further corrections.
 
 ## Reproduce the actual terminal journey
 
@@ -129,10 +133,11 @@ On 2026-10-12, after the second simplification and regression fixes at `b8fe9e7`
   revisited every source-order target and retained the documented exceptions.
 - Two independent code-review agents compared `67d8885...b8fe9e7`:
   Standards: no findings. Spec: no implementation defects or scope creep;
-  one completion finding, final owner visual acceptance remains pending.
+  one completion finding at review time, final owner visual acceptance,
+  subsequently resolved by the owner’s explicit acceptance above.
   The review found command-whitespace and clipped-preview regressions; both
   were corrected with failing-then-passing tests before the final review.
 
-**Final owner verdict remains pending.** The agent's checks do not supply the
-required owner judgment or a human terminal-selection verdict. #93 remains
-incomplete until the revised implemented screens and live workflow are accepted.
+**Final owner verdict: accepted.** This is the owner’s explicit verdict,
+separate from the automated checks. The documented memory and measurement
+limitations remain applicable.

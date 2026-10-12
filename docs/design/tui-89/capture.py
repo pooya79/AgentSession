@@ -397,7 +397,7 @@ details{margin:20px 0}summary{cursor:pointer}code{display:block;margin:16px 0}
 <code>go run ./docs/design/tui-89/_capture</code>
 <p>Run from the repository root. Browse, read, inspect and return; try search,
 resizing and normal terminal text selection. The runner uses isolated sample data.</p></details>
-<p>Owner acceptance is pending. Captures and automated checks do not replace your final verdict.</p>
+<p>Owner accepted this version on 2026-10-12. See the validation record for review scope and checks.</p>
 <noscript><p>Enable JavaScript to use the selectors, or open All capture files above.</p></noscript>
 <script>
 const screen = document.getElementById('screen');
