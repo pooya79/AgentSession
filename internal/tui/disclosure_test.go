@@ -282,3 +282,39 @@ func TestUnknownInspectionOffersOneExplicitRawAction(t *testing.T) {
 		t.Fatalf("Unknown inspection repeats prompts and format metadata:\n%s", view)
 	}
 }
+
+func TestCommandInspectionPreservesSignificantSpacesAndPhysicalLines(t *testing.T) {
+	m := readingModel(t)
+	services := m.services.(*servicesStub)
+	services.detail = app.EventDetail{State: app.EvidenceComplete, Event: testEvent("long", 0),
+		Payload: model.CommandData{Command: "printf 'a  b'\n  printf 'second line'", Output: "a  bsecond line"}}
+	m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: 'd', Text: "d"})
+	m, _ = updateModel(t, m, cmd())
+	for _, key := range []string{"", "w", "v"} {
+		if key != "" {
+			m, _ = updateModel(t, m, tea.KeyPressMsg{Code: rune(key[0]), Text: key})
+		}
+		if view := ansi.Strip(m.View().Content); !strings.Contains(view, "$ printf 'a  b'") || !strings.Contains(view, "\n  printf 'second line'") {
+			t.Fatalf("inspection changes recorded shell text in mode %q:\n%s", key, view)
+		}
+	}
+}
+
+func TestWideBrowsingKeepsLongPreviewWhenItAlsoSuppliesTheTitle(t *testing.T) {
+	m := New(t.Context(), &servicesStub{})
+	m.sessionsState.loading, m.sessionsState.overviewLoading = false, false
+	m.width, m.height = 120, 32
+	session := testSession("one")
+	session.Title = ""
+	session.Preview = strings.Repeat("recorded context ", 12) + "PREVIEW-TAIL"
+	m.sessionsState.page = app.SessionPage{Sessions: []app.SessionSummary{session}}
+	m.restoreSessionSelection()
+	for _, key := range []string{"", "v"} {
+		if key != "" {
+			m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'v', Text: "v"})
+		}
+		if view := ansi.Strip(m.View().Content); !strings.Contains(view, "PREVIEW-TAIL") {
+			t.Fatalf("wide browsing loses the preview suffix in mode %q:\n%s", key, view)
+		}
+	}
+}

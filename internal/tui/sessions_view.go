@@ -109,7 +109,8 @@ func (m Model) sessionPreviewLines(width int) []string {
 	if preview == "" {
 		preview = "Preview evidence unavailable."
 	}
-	if preview != sessionLabel(session) {
+	listTextWidth := m.renderWidth() - width - 5
+	if preview != sessionLabel(session) || ansi.StringWidth(safeInline(preview)) > listTextWidth || m.sessionsState.showDetails {
 		lines = append(lines, "")
 		lines = append(lines, strings.Split(ansi.Wrap(safeInline(preview), width, ""), "\n")...)
 	}

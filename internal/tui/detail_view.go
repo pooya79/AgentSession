@@ -66,7 +66,8 @@ func (m Model) detailContentLines() []string {
 	if m.detailState.detail.State == app.EvidenceUnavailable || m.detailState.detail.Payload == nil {
 		lines = append(lines, "Payload evidence is unavailable.", "")
 	} else if command, ok := m.detailState.detail.Payload.(model.CommandData); ok {
-		lines = append(lines, "$ "+safeInline(command.Command), "")
+		lines = append(lines, strings.Split("$ "+terminalText(command.Command), "\n")...)
+		lines = append(lines, "")
 		output := command.Output
 		if output == "" {
 			output = "No output recorded."

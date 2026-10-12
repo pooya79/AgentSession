@@ -360,42 +360,68 @@ for theme in ('dark', 'light', 'mono'):
     capture(theme)
 assert all(hashlib.sha256(p.read_bytes()).digest() == digest for p, digest in hashes.items())
 if ACCEPTANCE:
+    screens = {'sessions':'Sessions', 'timeline':'Conversation', 'expanded':'Expanded event',
+               'details':'Inspection', 'search':'Search', 'assessments':'Assessments',
+               'unknown-prompt':'Unknown event', 'unknown-raw':'Retained evidence',
+               'projections':'Derived views', 'indexing':'Indexing', 'help':'Help'}
     gallery = ['''<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AgentSession #93 — actual terminal review</title>
+<title>AgentSession TUI review</title>
 <style>
-body{font:16px system-ui;background:#eef1f5;color:#172434;margin:24px;max-width:1400px}
-a{color:#005fa3} nav{display:flex;gap:16px;flex-wrap:wrap;margin:20px 0}
-section{border-top:2px solid #aab7c5;margin-top:28px}figure{margin:24px 0}
-img{display:block;max-width:100%;height:auto;border:1px solid #8896a5}
-figcaption{margin:8px 0;font-weight:600}details{margin:20px 0}summary{cursor:pointer}
-</style><h1>Simplified TUI · review #93</h1>
-<p><strong>Revised after owner feedback; acceptance pending.</strong> Compare these fresh production
-PTY frames with the <a href="../tui-review-88.html">accepted #88 preview</a>.
-Review the live isolated binary and input/output recordings as well; snapshots
-and automated checks alone do not establish acceptance.</p>
-<p>From the repository root: <code>go run ./docs/design/tui-89/_capture</code>.
-Try selection/preview → read → disclose → inspect → return, search editing/paste,
-assessment evidence links, Unknown inspection, projections, indexing, help,
-resize, refresh, and normal terminal text selection. Sources remain read-only.</p>
-<p><a href="README.md">Method, coverage, remaining limits and review record</a></p>
-<nav>''']
-    for theme in ('dark', 'light', 'mono'):
-        gallery.append(f'<a href="#{theme}">{theme} profile</a>')
-    gallery.append('</nav>')
-    for theme in ('dark', 'light', 'mono'):
-        gallery.append(f'<section id="{theme}"><h2>{theme} profile</h2>')
-        gallery.append(f'<p><a href="workflow-{theme}.cast">Input/output/resize recording (asciicast v2)</a></p>')
-        for size in ('80x24', '120x32', '54x18', '40x12', '32x10'):
-            expanded = ' open' if size == '80x24' and theme == 'dark' else ''
-            gallery.append(f'<details{expanded}><summary>{size}</summary>')
-            order = ['sessions', 'timeline', 'expanded', 'details', 'search', 'assessments', 'unknown-prompt', 'unknown-raw', 'projections', 'indexing', 'help']
-            paths = OUT.glob(f'*-{size}-{theme}.png')
-            for path in sorted(paths, key=lambda p: order.index(p.stem.removesuffix(f'-{size}-{theme}')) if p.stem.removesuffix(f'-{size}-{theme}') in order else len(order)):
-                name = html.escape(path.name)
-                label = html.escape(path.stem.removesuffix(f'-{size}-{theme}').replace('-', ' '))
-                gallery.append(f'<figure><figcaption>{label} · {size} · {theme} · <a href="{name}">native size</a></figcaption><img loading="lazy" src="{name}" alt="{label} at {size} in {theme}"></figure>')
-            gallery.append('</details>')
-        gallery.append('</section>')
+body{font:16px system-ui;background:#f4f5f7;color:#172434;margin:28px;max-width:1180px}
+h1{font-size:26px;margin-bottom:6px}a{color:#005fa3}
+.controls{display:flex;gap:20px;flex-wrap:wrap;margin:24px 0 16px}
+label{display:grid;gap:6px;font-size:14px}select,button{font:inherit;padding:7px 12px}
+figure{margin:0}img{display:block;max-width:100%;height:auto;border:1px solid #aab7c5}
+figcaption{margin:12px 0;color:#536071}footer{display:flex;gap:20px;flex-wrap:wrap;margin:22px 0}
+details{margin:20px 0}summary{cursor:pointer}code{display:block;margin:16px 0}
+</style><h1>AgentSession TUI</h1>
+<p>Choose a screen, size and color profile to review the second simplification.</p>
+<div class="controls"><label>Screen<select id="screen">''']
+    for value, label in screens.items():
+        gallery.append(f'<option value="{value}">{label}</option>')
+    gallery.append('''</select></label>
+<label>Terminal size<select id="size"><option>80x24</option><option>120x32</option>
+<option>54x18</option><option>40x12</option><option>32x10</option></select></label>
+<label>Color profile<select id="theme"><option value="dark">Dark</option>
+<option value="light">Light</option><option value="mono">Color-free</option></select></label>
+</div><figure><img id="frame" src="sessions-80x24-dark.png" alt="Sessions at 80x24 in dark">
+<figcaption><span id="caption">Sessions · 80x24 · dark</span> ·
+<a id="native" href="sessions-80x24-dark.png">Full size</a></figcaption></figure>
+<div><button id="previous">Previous screen</button> <button id="next">Next screen</button></div>
+<footer><a href="../tui-review-88.html">Accepted preview</a>
+<a href="README.md">Validation and review record</a>
+<a id="recording" href="workflow-dark.cast">Workflow recording</a>
+<a href="./">All capture files</a></footer>
+<details><summary>Try the live TUI</summary>
+<code>go run ./docs/design/tui-89/_capture</code>
+<p>Run from the repository root. Browse, read, inspect and return; try search,
+resizing and normal terminal text selection. The runner uses isolated sample data.</p></details>
+<p>Owner acceptance is pending. Captures and automated checks do not replace your final verdict.</p>
+<noscript><p>Enable JavaScript to use the selectors, or open All capture files above.</p></noscript>
+<script>
+const screen = document.getElementById('screen');
+const size = document.getElementById('size');
+const theme = document.getElementById('theme');
+function update() {
+  const name = size.value === '32x10' ? 'resize' : screen.value;
+  const file = name + '-' + size.value + '-' + theme.value + '.png';
+  const label = size.value === '32x10' ? 'Resize prompt' : screen.selectedOptions[0].text;
+  const caption = label + ' · ' + size.value + ' · ' + theme.selectedOptions[0].text;
+  document.getElementById('frame').src = file;
+  document.getElementById('frame').alt = caption;
+  document.getElementById('caption').textContent = caption;
+  document.getElementById('native').href = file;
+  document.getElementById('recording').href = 'workflow-' + theme.value + '.cast';
+}
+for (const control of [screen, size, theme]) control.addEventListener('change', update);
+document.getElementById('previous').addEventListener('click', () => {
+  screen.selectedIndex = (screen.selectedIndex + screen.length - 1) % screen.length; update();
+});
+document.getElementById('next').addEventListener('click', () => {
+  screen.selectedIndex = (screen.selectedIndex + 1) % screen.length; update();
+});
+update();
+</script>''')
     (OUT/'gallery.html').write_text('\n'.join(gallery)+'</html>\n')
 print('Captured production TUI in three terminal profiles; fixture bytes unchanged.')
