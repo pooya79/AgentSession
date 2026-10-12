@@ -18,6 +18,9 @@ func (m Model) timelineHeaderLines() []string {
 	}
 	lines := []string{label}
 	if len(m.timelineState.page.Events) > 0 {
+		if m.timelineState.loading {
+			lines = append(lines, m.spinner.View()+" Loading local history… navigation remains available.")
+		}
 		if m.timelineState.err != nil {
 			lines = append(lines, "Timeline read failed: "+safeInline(m.timelineState.err.Error()), "Loaded evidence retained · r to retry; scroll near end for continuation.")
 		}
@@ -35,7 +38,7 @@ func (m Model) timelineHeaderLines() []string {
 func (m Model) timelineLines() []string {
 	lines := m.timelineHeaderLines()
 	switch {
-	case m.timelineState.loading && len(m.timelineState.page.Events) == 0:
+	case m.timelineState.loading && (len(m.timelineState.page.Events) == 0 || m.timelineState.page.Payloads == nil):
 		return append(lines, "", m.spinner.View()+" Loading timeline events…")
 	case m.timelineState.err != nil && len(m.timelineState.page.Events) == 0:
 		return append(lines, "", "Could not load timeline: "+m.timelineState.err.Error(), "Press r to retry.")

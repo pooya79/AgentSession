@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/pooya79/AgentSession/internal/app"
+	"github.com/pooya79/AgentSession/internal/model"
 )
 
 // Update handles navigation, bounded page requests, refreshes, and import
@@ -76,25 +77,69 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.timelineState.loading = false
 		m.timelineState.pendingCursor = ""
 		m.timelineState.err = visibleError(msg.err)
+		if msg.err != nil && msg.history && msg.page.State == app.EvidenceNotFound {
+			m.timelineState.selectionRequested = false
+			m.timelineState.notice = "History anchor removed; r to refresh nearby available evidence."
+		}
+		if msg.err != nil && msg.history && m.timelineState.err == nil {
+			m.timelineState.notice = "History read canceled; r to retry."
+		}
 		if msg.err != nil && msg.cursor != "" {
 			delete(m.timelineState.requestedCursors, msg.cursor)
 		}
 		if msg.err == nil {
 			selected := m.timelineState.selected
-			if msg.cursor == "" {
+			if msg.cursor == "" && !msg.history {
 				m.invalidateTimelineRender()
 				previous := m.timelineState.page
 				m.timelineState.page = msg.page
 				m.reconcileTimelineAnchor(previous, msg.inspections)
 				m.timelineState.requestedCursors = map[string]bool{"": true}
+				m.timelineState.residentStart, m.timelineState.residentEnd = 0, 0
+				m.timelineState.earlierExhausted = false
+				m.timelineState.cards = nil
+				for _, event := range msg.page.Events {
+					if m.timelineState.page.Payloads == nil {
+						m.timelineState.page.Payloads = make(map[model.EventID]model.NormalizedData)
+					}
+					m.timelineState.page.Payloads[event.ID] = msg.page.Payloads[event.ID]
+				}
 			} else {
+				next := m.timelineState.page.NextCursor
+				last := int64(-1)
+				if len(m.timelineState.page.Events) > 0 {
+					last = m.timelineState.page.Events[len(m.timelineState.page.Events)-1].Sequence
+				}
+				if msg.history {
+					m.reconcileHistoryWindow(msg.page)
+				}
 				m.appendTimelinePage(msg.page)
+				if msg.history && (len(msg.page.Events) == 0 || msg.page.Events[len(msg.page.Events)-1].Sequence < last) {
+					m.timelineState.page.NextCursor = next
+				}
+				if msg.earlier && len(msg.page.Events) < pageSize {
+					m.timelineState.earlierExhausted = true
+				}
 			}
+			m.rememberTimelinePayloads(msg.page)
+			if msg.target != "" && msg.target == selected && m.timelineState.selectionRequested {
+				m.timelineState.anchor = timelineReadingAnchor{eventID: selected, header: true}
+				m.timelineState.selectionRequested = false
+			}
+			m.timelineState.pendingTarget = ""
 			for index, event := range m.timelineState.page.Events {
 				if event.ID == selected {
 					m.timelineState.cursor = index
 					break
 				}
+			}
+			if step := m.timelineState.edgeStep; step != 0 {
+				next := m.timelineState.cursor + step
+				if next >= 0 && next < len(m.timelineState.page.Events) {
+					m.timelineState.cursor = next
+					m.timelineState.anchor = timelineReadingAnchor{eventID: m.timelineState.page.Events[next].ID, header: true}
+				}
+				m.timelineState.edgeStep = 0
 			}
 			if m.timelineState.cursor >= len(m.timelineState.page.Events) {
 				m.timelineState.cursor = max(0, len(m.timelineState.page.Events)-1)
@@ -103,6 +148,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.timelineState.selected = m.timelineState.page.Events[m.timelineState.cursor].ID
 			}
 		}
+		m.boundTimeline()
 		m.invalidateTimelineRender()
 		m.syncViewports()
 		if m.timelineState.anchor.eventID == "" {

@@ -25,6 +25,9 @@ func (s *readingTimelineServices) Timeline(ctx context.Context, request app.Time
 		return app.TimelinePage{}, err
 	}
 	s.timelineCalls = append(s.timelineCalls, request)
+	if s.timelineErr != nil {
+		return app.TimelinePage{}, s.timelineErr
+	}
 	start, end := 0, 0
 	if request.FocusedEvent != "" {
 		found := false
@@ -138,6 +141,7 @@ func TestTimelineReturnsFromTemporaryNavigation(t *testing.T) {
 			}
 			anchor := regexp.MustCompile(`line-\d{3}`).FindString(m.View().Content)
 			services := m.services.(*servicesStub)
+			originalPage := m.timelineState.page
 			switch route {
 			case "help":
 				m, _ = updateModel(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
@@ -166,7 +170,12 @@ func TestTimelineReturnsFromTemporaryNavigation(t *testing.T) {
 			case "detail":
 				m.screen = detailScreen
 			}
-			m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+			services.timeline = originalPage
+			var returnCmd tea.Cmd
+			m, returnCmd = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+			if returnCmd != nil {
+				m, _ = updateModel(t, m, returnCmd())
+			}
 			if got := m.View().Content; anchor == "" || !strings.Contains(got, anchor) || !strings.Contains(got, "Target: long") || !strings.Contains(got, "session session-1") {
 				t.Fatalf("%s return lost reading context %q:\n%s", route, anchor, got)
 			}

@@ -13,26 +13,35 @@ func (m *Model) syncViewports() {
 	width := max(1, m.renderWidth())
 	height := max(1, m.contentHeight())
 
-	m.captureTimelineAnchor()
-	timelineLines, timelineRanges := m.timelineContent()
-	m.timelineState.viewport.SetWidth(width)
-	m.timelineState.viewport.SetHeight(max(1, height-len(m.timelineHeaderLines())))
-	m.timelineState.viewport.SetContentLines(timelineLines)
-	m.restoreTimelineAnchor(timelineRanges)
-
-	detailHeight := height
-	if m.screen == detailScreen {
-		detailHeight -= len(m.detailHeaderLines())
+	if m.helpOpen {
+		m.helpViewport.SetWidth(width)
+		m.helpViewport.SetHeight(height)
+		m.helpViewport.SetContentLines(sanitizeLines(m.helpLines()))
+		return
 	}
-	m.syncDetailViewport(width, max(1, detailHeight))
+	switch m.screen {
+	case timelineScreen:
+		m.captureTimelineAnchor()
+		changed := m.timelineState.cachedLines == nil || m.timelineState.cachedRevision != m.timelineState.renderRevision || m.timelineState.cachedWidth != max(20, m.renderWidth()-2)
+		timelineLines, timelineRanges := m.timelineContent()
+		m.timelineState.viewport.SetWidth(width)
+		m.timelineState.viewport.SetHeight(max(1, height-len(m.timelineHeaderLines())))
+		if changed {
+			m.timelineState.viewport.SetContentLines(timelineLines)
+		}
+		m.restoreTimelineAnchor(timelineRanges)
+	case detailScreen, findingsScreen:
+		detailHeight := height
+		if m.screen == detailScreen {
+			detailHeight -= len(m.detailHeaderLines())
+		}
+		m.syncDetailViewport(width, max(1, detailHeight))
+	case indexingScreen:
+		m.indexingState.viewport.SetWidth(width)
+		m.indexingState.viewport.SetHeight(height)
+		m.indexingState.viewport.SetContentLines(sanitizeLines(m.indexingContentLines()))
+	}
 
-	m.indexingState.viewport.SetWidth(width)
-	m.indexingState.viewport.SetHeight(height)
-	m.indexingState.viewport.SetContentLines(sanitizeLines(m.indexingContentLines()))
-
-	m.helpViewport.SetWidth(width)
-	m.helpViewport.SetHeight(height)
-	m.helpViewport.SetContentLines(sanitizeLines(m.helpLines()))
 }
 
 // syncDetailViewport retains a logical line and display-cell position through

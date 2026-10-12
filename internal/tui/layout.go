@@ -103,6 +103,9 @@ func (m Model) statusLine() string {
 		state := "open"
 		if m.timelineState.page.Payloads[m.timelineState.selected] == nil {
 			state = "unavailable"
+			if _, resident := m.timelineState.page.Payloads[m.timelineState.selected]; !resident {
+				state = "outside working set · Enter reload"
+			}
 		}
 		if timelinePayloadTruncatable(m.timelineState.page.Payloads[m.timelineState.selected]) {
 			state = "+ closed"

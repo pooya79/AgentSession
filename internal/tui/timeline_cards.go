@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"unicode"
 
@@ -18,47 +19,82 @@ type timelineCardRange struct {
 	offsets []int
 }
 
+type timelineCachedCard struct {
+	lines      []string
+	offsets    []int
+	event      model.EventSummary
+	payload    model.NormalizedData
+	width      int
+	expanded   bool
+	inspection app.UnknownEvidenceInspection
+	loading    bool
+	err        error
+	bytes      int
+}
+
 func (m *Model) timelineContent() ([]string, map[model.EventID]timelineCardRange) {
 	width := max(20, m.renderWidth()-2)
+	if m.timelineState.page.Payloads == nil && m.timelineState.loading {
+		return nil, nil
+	}
 	if m.timelineState.cachedLines != nil &&
 		m.timelineState.cachedRevision == m.timelineState.renderRevision &&
 		m.timelineState.cachedWidth == width {
 		return m.timelineState.cachedLines, m.timelineState.cachedRanges
 	}
-	lines := make([]string, 0, len(m.timelineState.page.Events)*4)
-	ranges := make(map[model.EventID]timelineCardRange, len(m.timelineState.page.Events))
-	for index, event := range m.timelineState.page.Events {
-		start := len(lines)
-		card := timelineCardLines(
-			event,
-			m.timelineState.page.Payloads[event.ID],
-			width,
-			index == m.timelineState.cursor,
-			m.timelineState.expanded[event.ID],
-			m.timelineState.inspections[event.ID],
-			m.timelineState.inspectionLoading[event.ID],
-			m.timelineState.inspectionErrors[event.ID],
-		)
-		lines = append(lines, card...)
-		offsets := make([]int, len(card))
-		position := 0
-		for row, line := range card {
-			offsets[row] = position
-			if row == 0 {
-				continue
-			} // the selection/disclosure header is presentation
-			for _, r := range line {
-				if !unicode.IsSpace(r) {
-					position++
+	if m.timelineState.cards == nil {
+		m.timelineState.cards = make(map[model.EventID]timelineCachedCard)
+	}
+	startIndex, endIndex := m.timelineState.residentStart, m.timelineState.residentEnd
+	if endIndex == 0 {
+		endIndex = len(m.timelineState.page.Events)
+	}
+	endIndex = min(endIndex, len(m.timelineState.page.Events))
+	startIndex = min(startIndex, endIndex)
+	lines := make([]string, 0, (endIndex-startIndex)*4)
+	ranges := make(map[model.EventID]timelineCardRange, endIndex-startIndex)
+	for _, event := range m.timelineState.page.Events[startIndex:endIndex] {
+		payload := m.timelineState.page.Payloads[event.ID]
+		expanded := m.timelineState.expanded[event.ID]
+		inspection := m.timelineState.inspections[event.ID]
+		loading, inspectionErr := m.timelineState.inspectionLoading[event.ID], m.timelineState.inspectionErrors[event.ID]
+		cached, ok := m.timelineState.cards[event.ID]
+		if !ok || cached.width != width || cached.expanded != expanded || !reflect.DeepEqual(cached.event, event) || !reflect.DeepEqual(cached.payload, payload) || !reflect.DeepEqual(cached.inspection, inspection) || cached.loading != loading || !reflect.DeepEqual(cached.err, inspectionErr) {
+			card := timelineCardLines(event, payload, width, false, expanded, inspection, loading, inspectionErr)
+			offsets := make([]int, len(card)+1)
+			position, size := 0, 40 // include the inter-card blank row
+			for row, line := range card {
+				offsets[row] = position
+				size += len(line) + 40 // card/composite string headers and row offsets
+				if row == 0 {
+					continue
+				}
+				for _, r := range line {
+					if !unicode.IsSpace(r) {
+						position++
+					}
 				}
 			}
+			offsets[len(card)] = position
+			cached = timelineCachedCard{lines: card, offsets: offsets, event: event, payload: payload, width: width, expanded: expanded, inspection: inspection, loading: loading, err: inspectionErr, bytes: size}
+			m.timelineState.cards[event.ID] = cached
 		}
-		ranges[event.ID] = timelineCardRange{start: start, end: len(lines), offsets: offsets}
+		start := len(lines)
+		lines = append(lines, cached.lines...)
+		if event.ID == m.timelineState.selected && len(cached.lines) > 0 {
+			lines[start] = ">" + lines[start][1:]
+		}
+		ranges[event.ID] = timelineCardRange{start: start, end: len(lines) + 1, offsets: cached.offsets}
 		lines = append(lines, "")
+	}
+	// Newly formatted cards can exceed the rendered-byte budget independently of
+	// payload size (for example, many short lines). Evict and rebuild the layout.
+	if m.boundTimeline() {
+		return m.timelineContent()
 	}
 	if m.timelineState.loading && len(m.timelineState.page.Events) > 0 {
 		lines = append(lines, "Loading more events…")
-	} else if m.timelineState.page.NextCursor == "" && len(m.timelineState.page.Events) > 0 {
+	} else if m.timelineState.page.NextCursor == "" && endIndex == len(m.timelineState.page.Events) && len(m.timelineState.page.Events) > 0 {
 		lines = append(lines, fmt.Sprintf("End of timeline · %d events loaded", len(m.timelineState.page.Events)))
 	} else if len(m.timelineState.page.Events) > 0 {
 		lines = append(lines, fmt.Sprintf("%d events loaded · more available", len(m.timelineState.page.Events)))

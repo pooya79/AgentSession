@@ -57,6 +57,13 @@ timeline, selection, disclosure, and reading position. Resizing and refreshing
 preserve the position within available content; refresh explains changed or
 removed anchor evidence. Failed reads retain usable evidence and can be retried
 with `r`; interrupted continuation can resume when you scroll near the end.
+Long histories retain a working set of up to 150 payloads/cards, with 2 MiB of
+accounted payload content and 4 MiB of rendered content. Earlier evidence reloads
+from the local index as you scroll or jump back; disclosure and reading anchors
+remain keyed by event identity. Lightweight navigation metadata still grows with
+visited history. An oversized event and one boundary neighbor can exceed the byte
+budgets to keep all evidence readable. Refresh rereads the current neighborhood.
+See the [measured limits and reproduction](docs/benchmarks/tui-timeline-bounded.md).
 
 At 110 columns or wider, sessions show a list beside the selected session's
 recorded preview, evidence coverage and projection readiness. Opening a session

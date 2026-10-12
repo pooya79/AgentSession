@@ -1,9 +1,10 @@
 package tui
 
 import (
+	"cmp"
 	"reflect"
+	"slices"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/pooya79/AgentSession/internal/app"
 	"github.com/pooya79/AgentSession/internal/model"
 )
@@ -20,7 +21,7 @@ type timelineReadingAnchor struct {
 func (m *Model) captureTimelineAnchor() {
 	top := m.timelineState.viewport.YOffset()
 	for id, card := range m.timelineState.cachedRanges {
-		if top >= card.start && top <= card.end && len(card.offsets) > 0 {
+		if top >= card.start && top < card.end && len(card.offsets) > 0 {
 			row := min(top-card.start, len(card.offsets)-1)
 			first := row
 			for first > 1 && card.offsets[first-1] == card.offsets[row] {
@@ -89,14 +90,14 @@ func (m *Model) reconcileTimelineAnchor(previous app.TimelinePage, inspections m
 				break
 			}
 		}
-	case !reflect.DeepEqual(previous.Payloads[anchor.eventID], m.timelineState.page.Payloads[anchor.eventID]) ||
+	case previous.Payloads[anchor.eventID] != nil && !reflect.DeepEqual(previous.Payloads[anchor.eventID], m.timelineState.page.Payloads[anchor.eventID]) ||
 		!reflect.DeepEqual(m.timelineState.inspections[anchor.eventID], inspections[anchor.eventID]):
 		m.timelineState.notice = "Reading anchor changed; showing the updated event from its start."
 		anchor = timelineReadingAnchor{eventID: anchor.eventID, header: true}
 	}
 	m.timelineState.anchor = anchor
 	for id := range m.timelineState.disclosureAnchors {
-		if !reflect.DeepEqual(previous.Payloads[id], m.timelineState.page.Payloads[id]) ||
+		if previous.Payloads[id] != nil && !reflect.DeepEqual(previous.Payloads[id], m.timelineState.page.Payloads[id]) ||
 			!reflect.DeepEqual(m.timelineState.inspections[id], inspections[id]) {
 			delete(m.timelineState.disclosureAnchors, id)
 		}
@@ -111,6 +112,7 @@ func (m *Model) reconcileTimelineAnchor(previous app.TimelinePage, inspections m
 }
 
 func (m *Model) resetTimelineState() {
+	m.releaseSavedTimelineContent()
 	timelineViewport := m.timelineState.viewport
 	timelineViewport.GotoTop()
 	m.timelineState = timelineState{
@@ -138,58 +140,29 @@ func (m *Model) appendTimelinePage(next app.TimelinePage) {
 }
 
 func mergeTimelinePage(current, next app.TimelinePage) app.TimelinePage {
-	seen := make(map[model.EventID]bool, len(current.Events))
-	var lastSequence int64 = -1
+	rows := make(map[model.EventID]model.EventSummary, len(current.Events)+len(next.Events))
 	for _, event := range current.Events {
-		seen[event.ID] = true
-		if event.Sequence > lastSequence {
-			lastSequence = event.Sequence
-		}
+		rows[event.ID] = event
 	}
 	for _, event := range next.Events {
-		if seen[event.ID] || event.Sequence <= lastSequence {
-			continue
-		}
-		current.Events = append(current.Events, event)
-		seen[event.ID] = true
-		lastSequence = event.Sequence
+		rows[event.ID] = event
 	}
+	current.Events = make([]model.EventSummary, 0, len(rows))
+	for _, event := range rows {
+		current.Events = append(current.Events, event)
+	}
+	slices.SortFunc(current.Events, func(a, b model.EventSummary) int { return cmp.Compare(a.Sequence, b.Sequence) })
 	if current.Payloads == nil {
 		current.Payloads = make(map[model.EventID]model.NormalizedData)
 	}
-	for eventID, payload := range next.Payloads {
-		if seen[eventID] {
-			current.Payloads[eventID] = payload
-		}
+	for _, event := range next.Events {
+		current.Payloads[event.ID] = next.Payloads[event.ID]
 	}
 	current.NextCursor = next.NextCursor
 	current.State = next.State
 	current.Diagnostics = next.Diagnostics
 	current.Interpretation = next.Interpretation
 	return current
-}
-
-func (m *Model) prefetchTimelineIfNeeded() tea.Cmd {
-	if m.screen != timelineScreen || m.timelineState.loading || m.services == nil {
-		return nil
-	}
-	next := m.timelineState.page.NextCursor
-	if next == "" || m.timelineState.requestedCursors[next] {
-		return nil
-	}
-	nearSelection := len(m.timelineState.page.Events)-m.timelineState.cursor <= timelinePrefetchThreshold
-	if !nearSelection && !m.timelineState.viewport.AtBottom() {
-		return nil
-	}
-	ctx := m.replaceRequest()
-	m.timelineState.loading = true
-	m.timelineState.err = nil
-	m.timelineState.pendingCursor = next
-	m.timelineState.requestedCursors[next] = true
-	m.invalidateTimelineRender()
-	return m.startSpinner(loadTimeline(
-		ctx, m.services, m.requestGeneration, m.sessionsState.selected, next,
-	))
 }
 
 // clearSupersededReads releases guards for all reads canceled when the shared
@@ -201,6 +174,7 @@ func (m *Model) clearSupersededReads() {
 		delete(m.timelineState.requestedCursors, m.timelineState.pendingCursor)
 		m.timelineState.loading = false
 		m.timelineState.pendingCursor = ""
+		m.timelineState.pendingTarget = ""
 		m.invalidateTimelineRender()
 	}
 	m.sessionsState.loading = false

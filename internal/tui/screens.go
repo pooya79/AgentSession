@@ -25,30 +25,37 @@ type sessionsState struct {
 	overviewErr     error
 }
 
-// timelineState accumulates bounded chunks into one continuously scrollable
-// timeline. Expansion and retained-evidence inspection are keyed by stable
-// event identity so appends and resizes do not disturb them.
+// timelineState keeps lightweight visited summaries separately from a bounded
+// contiguous content window. Disclosure and content positions use stable IDs.
 type timelineState struct {
-	page              app.TimelinePage
-	loading           bool
-	err               error
-	cursor            int
-	selected          model.EventID
-	pendingCursor     string
-	requestedCursors  map[string]bool
-	expanded          map[model.EventID]bool
-	disclosureAnchors map[model.EventID]timelineReadingAnchor
-	inspections       map[model.EventID]app.UnknownEvidenceInspection
-	inspectionErrors  map[model.EventID]error
-	inspectionLoading map[model.EventID]bool
-	viewport          viewport.Model
-	renderRevision    uint64
-	cachedRevision    uint64
-	cachedWidth       int
-	cachedLines       []string
-	cachedRanges      map[model.EventID]timelineCardRange
-	anchor            timelineReadingAnchor
-	notice            string
+	page                       app.TimelinePage
+	residentStart, residentEnd int
+	payloadMetadata            map[model.EventID]timelinePayloadMetadata
+	cards                      map[model.EventID]timelineCachedCard
+	pendingTarget              model.EventID
+	earlierExhausted           bool
+	edgeStep                   int
+	selectionRequested         bool
+	scrollDirection            int
+	loading                    bool
+	err                        error
+	cursor                     int
+	selected                   model.EventID
+	pendingCursor              string
+	requestedCursors           map[string]bool
+	expanded                   map[model.EventID]bool
+	disclosureAnchors          map[model.EventID]timelineReadingAnchor
+	inspections                map[model.EventID]app.UnknownEvidenceInspection
+	inspectionErrors           map[model.EventID]error
+	inspectionLoading          map[model.EventID]bool
+	viewport                   viewport.Model
+	renderRevision             uint64
+	cachedRevision             uint64
+	cachedWidth                int
+	cachedLines                []string
+	cachedRanges               map[model.EventID]timelineCardRange
+	anchor                     timelineReadingAnchor
+	notice                     string
 }
 
 // detailState retains the last usable detail while a refresh is in flight or

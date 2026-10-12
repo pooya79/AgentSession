@@ -228,14 +228,14 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		} else {
 			m.move(-1)
 		}
-		return m, m.prefetchTimelineIfNeeded()
+		return m, m.requestTimelineHistory()
 	case "down", "j":
 		if m.screen == timelineScreen {
 			m.moveScroll(1)
 		} else {
 			m.move(1)
 		}
-		return m, m.prefetchTimelineIfNeeded()
+		return m, m.requestTimelineHistory()
 	case "[", "]":
 		if m.screen == timelineScreen {
 			delta := 1
@@ -243,18 +243,22 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 				delta = -1
 			}
 			m.move(delta)
-			return m, m.prefetchTimelineIfNeeded()
+			return m, m.requestTimelineHistory()
 		}
 	case "home", "g":
 		m.moveToBoundary(false)
-		return m, m.prefetchTimelineIfNeeded()
+		return m, m.requestTimelineHistory()
 	case "end", "G":
 		m.moveToBoundary(true)
-		return m, m.prefetchTimelineIfNeeded()
+		return m, m.requestTimelineHistory()
 	case "pgup":
 		if m.screen == timelineScreen {
 			m.syncViewports()
+			m.timelineState.edgeStep = 0
+			m.timelineState.selectionRequested = false
+			m.timelineState.scrollDirection = -1
 			m.timelineState.viewport.PageUp()
+			return m, m.requestTimelineHistory()
 		} else if m.screen == detailScreen || m.screen == findingsScreen || m.screen == indexingScreen {
 			m.moveScroll(-m.pageStep())
 		} else {
@@ -263,8 +267,11 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	case "pgdown":
 		if m.screen == timelineScreen {
 			m.syncViewports()
+			m.timelineState.edgeStep = 0
+			m.timelineState.selectionRequested = false
+			m.timelineState.scrollDirection = 1
 			m.timelineState.viewport.PageDown()
-			return m, m.prefetchTimelineIfNeeded()
+			return m, m.requestTimelineHistory()
 		} else if m.screen == detailScreen || m.screen == findingsScreen || m.screen == indexingScreen {
 			m.moveScroll(m.pageStep())
 		} else {

@@ -78,6 +78,12 @@ func (m *Model) back() (tea.Model, tea.Cmd) {
 		m.screen, m.sessionsState.selected = previous.screen, previous.session
 		m.timelineState, m.detailState = previous.timeline, previous.detail
 		m.findingsState, m.searchState = previous.findings, previous.search
+		if m.screen == timelineScreen && len(m.timelineState.page.Events) > 0 && m.timelineState.page.Payloads == nil {
+			notice := m.timelineState.notice
+			cmd := m.reloadTimeline()
+			m.timelineState.notice = notice
+			return m, cmd
+		}
 		m.syncViewports()
 		switch m.screen {
 		case sessionsScreen:
@@ -182,11 +188,16 @@ func (m *Model) move(delta int) {
 		}
 	case timelineScreen:
 		if len(m.timelineState.page.Events) > 0 {
-			m.timelineState.cursor = clamp(m.timelineState.cursor+delta, 0, len(m.timelineState.page.Events)-1)
+			m.timelineState.selectionRequested = true
+			m.timelineState.scrollDirection = delta
+			next := m.timelineState.cursor + delta
+			m.timelineState.cursor = clamp(next, 0, len(m.timelineState.page.Events)-1)
+			m.timelineState.edgeStep = next - m.timelineState.cursor
 			m.timelineState.selected = m.timelineState.page.Events[m.timelineState.cursor].ID
 			m.invalidateTimelineRender()
 			m.syncViewports()
 			m.revealTimelineSelection(m.timelineState.cachedRanges)
+			m.captureTimelineAnchor()
 		}
 	case projectionsScreen:
 		if len(m.projectionsState.status.Projections) > 0 {
@@ -222,6 +233,9 @@ func (m *Model) moveToBoundary(last bool) {
 		if len(m.timelineState.page.Events) == 0 {
 			return
 		}
+		m.timelineState.selectionRequested = true
+		m.timelineState.scrollDirection = 1
+		m.timelineState.edgeStep = 0
 		m.timelineState.cursor = 0
 		if last {
 			m.timelineState.cursor = len(m.timelineState.page.Events) - 1
@@ -258,6 +272,9 @@ func (m *Model) moveToBoundary(last bool) {
 // moveScroll delegates clamping to the viewport so repeated input cannot leave
 // a latent offset beyond the rendered content.
 func (m *Model) moveScroll(delta int) {
+	m.timelineState.edgeStep = 0
+	m.timelineState.selectionRequested = false
+	m.timelineState.scrollDirection = delta
 	m.syncViewports()
 	target := &m.detailState.viewport
 	if m.screen == timelineScreen {
@@ -346,6 +363,10 @@ func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		event := m.timelineState.page.Events[m.timelineState.cursor]
+		if _, resident := m.timelineState.page.Payloads[event.ID]; !resident {
+			m.timelineState.selectionRequested = true
+			return m, m.requestTimelineHistory()
+		}
 		if timelinePayloadTruncatable(m.timelineState.page.Payloads[event.ID]) ||
 			m.timelineState.inspections[event.ID].EventID != "" {
 			m.captureTimelineAnchor()
@@ -362,7 +383,7 @@ func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 			}
 			m.syncViewports()
 		}
-		return m, m.prefetchTimelineIfNeeded()
+		return m, m.requestTimelineHistory()
 	}
 	return m, nil
 }

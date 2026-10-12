@@ -84,9 +84,11 @@ representative collection of real sessions.
   context; refresh explains changed or removed anchor evidence. Canceled reads
   release retry guards without canceling application-owned background work.
 - The [initial 10,000-event TUI baseline](benchmarks/tui-timeline-initial.md)
-  records reproduced correctness defects and pre-optimization costs. Bounded
-  retention and responsiveness acceptance under real indexing contention
-  remain follow-up work.
+  records reproduced correctness defects and pre-optimization costs. The
+  [bounded-retention follow-up](benchmarks/tui-timeline-bounded.md) documents
+  event/content budgets, position-preserving local reloads, metadata growth,
+  oversized-event exceptions, and measured latency/memory with real indexing
+  contention.
 - The web interface is server-rendered and remains functional for its main
   operations without JavaScript. Embedded htmx provides bounded partial
   updates when available.
