@@ -350,6 +350,11 @@ make build  # build bin/agentsession
 make check  # verify generated code, vet, and run tests
 ```
 
+The [combined TUI acceptance record](docs/design/tui-93/README.md) includes an
+isolated live review command, terminal captures, and the final visual-review
+status. See the [final benchmark report](docs/benchmarks/tui-timeline-final.md)
+for the 10,000-event workload, measured responsiveness, cache budgets and limits.
+
 ## Documentation
 
 - [Documentation guide](docs/README.md)

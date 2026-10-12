@@ -1,0 +1,12 @@
+AgentSession  /  Timeline  ·  local · o…
+Keyboard help
+
+Global
+  ?            open or close this help
+  Esc          close an overlay or retur
+n to the parent screen
+  q / Ctrl-C   quit
+
+Navigation
+[FOCUS] Help · returns to Timeline
+↑↓ scroll · PgUp/Dn · Esc close

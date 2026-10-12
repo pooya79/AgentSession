@@ -1,0 +1,12 @@
+AgentSession  /  Projections  ·  local …
+Projection lifecycle · session fixture-1
+7
+Canonical evidence remains available · c
+omplete · derived usable 2/5 · pending 3
+ · running 0 · failed 0 · stale 0 · not
+implemented 3
+
+> search            ready · usable  · ta
+rget 1/1 · attempts 1
+[FOCUS] search · ready
+↑↓ target · t/b act · Esc · ? help

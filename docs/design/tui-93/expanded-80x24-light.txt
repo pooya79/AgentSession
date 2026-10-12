@@ -1,0 +1,24 @@
+AgentSession  /  Timeline  ·  local · offline · read-only
+Timeline · session fixture-17 · canonical complete
+20. Recorded evidence remains in source order; a build does not establish test
+    recovery.
+
+╰─
+
+  #2 + Command · RESULT UNAVAILABLE · go test ./internal/client
+
+> #3 - Command · RECORDED FAILURE (exit 1) · go test ./internal/client
+  Invocation ID: test
+  Phase: completed
+  Command: go test ./internal/client
+  Working directory: /fixture/project
+  Exit status: 1
+  Output:     --- FAIL: TestRetryTimeout (0.03s)
+                  retry_test.go:42: expected deadline exceeded; got request co
+                  mpleted after caller cancellation; request_id=fixture-00017;
+                   attempt=3; timeout=3000ms
+              FAIL example.invalid/project/internal/client
+  Enter to hide details
+
+Target: evt_f29169eb63552… #3 · - expanded · Index: complete
+↑↓ scroll · [/] events · Enter toggle · d inspect · Esc back · ? help

@@ -1,0 +1,24 @@
+AgentSession  /  Assessments  ·  local · offline · read-only
+orrectness, test coverage, or dependency coverage. Unconfirmed or contradictory
+changes, unknown results/commands, interpretation gaps, unfamiliar file roles, u
+nclear path bases, unknown move endpoints, and module/workspace boundaries limit
+ affected conclusions. Independent conclusive instances remain usable.mits affec
+Confirmed paths 0 · applicable changes 0 · verified changes 0 · missing changes
+0 · documentation exemptions 0
+uncertainties 1 · omitted references 0
+
+No severity grade or session outcome is assigned.
+Supporting events · [ / ] select · Enter opens timeline context
+  evt_b01d2f6765eb11f87543bfdfcb33b6a7580e6f12280ad339d7f8a29268d3be1b
+> evt_dc369f017c9753cd2e51ec02997d433effff204eb86d2335a67058b140e5b52d
+  evt_c778462172081af8d316eae0f7701eb89609fa69a06cad05e8ac1bb9a0dcab23
+  evt_f29169eb635523700089f0c03c4059204113d61f97f69ce9ddbe5df00c631770
+  evt_a0eab2183d7b9712100fe054b54c93dbc339bf5aad1d7336e6302077fecc91f7
+  evt_c778462172081af8d316eae0f7701eb89609fa69a06cad05e8ac1bb9a0dcab23
+  evt_f29169eb635523700089f0c03c4059204113d61f97f69ce9ddbe5df00c631770
+  evt_a0eab2183d7b9712100fe054b54c93dbc339bf5aad1d7336e6302077fecc91f7
+  evt_b01d2f6765eb11f87543bfdfcb33b6a7580e6f12280ad339d7f8a29268d3be1b
+  evt_dc369f017c9753cd2e51ec02997d433effff204eb86d2335a67058b140e5b52d
+  evt_a0eab2183d7b9712100fe054b54c93dbc339bf5aad1d7336e6302077fecc91f7
+[FOCUS] Evidence 2/11 · Enter opens context
+↑↓ scroll · [/] evidence · Enter context · r retry · Esc back · ? help

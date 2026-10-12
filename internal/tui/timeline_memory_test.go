@@ -119,7 +119,9 @@ func TestTimelineRetentionMeasurement(t *testing.T) {
 	timelineRetentionSample(t, m, "evict-large-revisit-start", baseline)
 	for i := 1; i < 10000; i++ {
 		m = historyKey(t, m, "]")
-		_ = m.View().Content
+		if view := m.View().Content; !strings.Contains(view, fmt.Sprintf(" #%d ·", i)) {
+			t.Fatalf("10,000-event revisit skipped or duplicated target %d:\n%s", i, view)
+		}
 		if i%2500 == 2499 {
 			timelineRetentionSample(t, m, fmt.Sprintf("revisit-%d", i+1), baseline)
 		}

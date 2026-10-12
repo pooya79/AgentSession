@@ -1,0 +1,24 @@
+AgentSession  /  Sessions  ·  local · offline · read-only
+[FOCUS] Sessions · last activity ↓nonical complete
+Sessions 3 · Events 10 · Agents 1 · Evidence issues 0
+
+> Fix request timeout without hiding errors.
+  CODEX · 2026-10-10 12:00 UTC
+  8 events · complete
+  Document local setup
+  CODEX · 2026-10-09 10:00 UTC
+  1 events · complete
+  Inspect search coverage
+  CODEX · 2026-10-08 10:00 UTC
+  1 events · complete
+Page 1 · 3 shown
+
+
+
+
+
+
+
+
+CANONICAL INDEX · COMPLETE · 3 sources · 3 sessions
+↑↓ move · Enter open · / search · i index · r rescan · ? help · q quit

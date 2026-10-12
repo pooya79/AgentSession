@@ -1,0 +1,32 @@
+AgentSession  /  Event  ·  local · offline · read-only
+Inspection #6 · Unsupported session activity · future_activity
+Normalized payload
+  #6 - Unsupported session activity · future_activity
+  Reason: unsupported_record_kind
+  Original kind: future_activity
+  Press u to inspect bounded, redacted retained evidence.
+
+Event metadata
+Event detail · session fixture-17
+#6 · unknown · complete
+Unsupported Codex record: future_activity
+Event: evt_a0eab2183d7b9712100fe054b54c93dbc339bf5aad1d7336e6302077fecc91f7
+Interpretation: partially_interpreted · 1 Unknown events · 0 malformed records
+
+Retained Unknown evidence
+Press u to inspect a redacted, bounded copy.
+
+
+
+
+
+
+
+
+
+
+
+
+
+[FOCUS] Wrapped · complete
+↑↓ scroll · w wrap · ←→ pan · u raw · r retry · Esc back · ? help

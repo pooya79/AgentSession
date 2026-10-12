@@ -1,0 +1,18 @@
+AgentSession  /  Event  ·  local · offline · read-only
+Inspection #3 · Command · RECORDED FAILURE (exit 1) ·…
+Normalized payload
+  #3 - Command · RECORDED FAILURE (exit 1) · go test .
+  /internal/client
+  Invocation ID: test
+  Phase: completed
+  Command: go test ./internal/client
+  Working directory: /fixture/project
+  Exit status: 1
+  Output:     --- FAIL: TestRetryTimeout (0.03s)
+                  retry_test.go:42: expected deadline
+                  exceeded; got request completed afte
+                  r caller cancellation; request_id=fi
+                  xture-00017; attempt=3; timeout=3000
+                  ms
+[FOCUS] Wrapped · complete
+↑↓ scroll · w wrap · Esc back · ? help

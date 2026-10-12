@@ -1,0 +1,24 @@
+AgentSession  /  Timeline  ·  local · offline · read-only
+Keyboard help
+
+Global
+  ?            open or close this help
+  Esc          close an overlay or return to the parent screen
+  q / Ctrl-C   quit
+
+Navigation
+  ↑/↓ or j/k   scroll timeline text; move rows in lists
+  [ / ]        jump to previous/next timeline event
+  Home/End     jump to the first or last row
+  g/G          jump to the first or last row
+  PgUp/PgDn    scroll long evidence
+  n/p          next/previous session or search page
+  Enter        open a session or expand/collapse a timeline card
+  Target       footer names the event Enter, d and u act on
+  Esc          return to the previous reading context, including search
+
+Actions
+  d            inspect selected normalized event
+  w            toggle wrapping in inspection; ←/→ pan when unwrapped
+[FOCUS] Help · returns to Timeline
+↑↓ scroll · PgUp/PgDn · g/G ends · Esc close · ? close

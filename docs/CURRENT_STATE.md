@@ -89,6 +89,12 @@ representative collection of real sessions.
   event/content budgets, position-preserving local reloads, metadata growth,
   oversized-event exceptions, and measured latency/memory with real indexing
   contention.
+- The [combined TUI acceptance record](design/tui-93/README.md) adds a real-index
+  browse/read/inspect/return journey and fresh production terminal captures.
+  [Final measurements](benchmarks/tui-timeline-final.md) reconfirm the reference
+  workload's below-100 ms loaded-interaction target and bounded heavy retention.
+  Final product-owner visual acceptance is pending; captures and test results
+  alone do not establish it.
 - The web interface is server-rendered and remains functional for its main
   operations without JavaScript. Embedded htmx provides bounded partial
   updates when available.

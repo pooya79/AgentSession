@@ -1,0 +1,12 @@
+AgentSession  /  Indexing  ·  local · o…
+Indexing details
+
+Indexing completed successfully.
+Sources: 3 discovered · 3 completed · 0
+failed
+Totals: 0 records · 0 events · 3 session
+s · 3 unchanged
+Diagnostics: 0 total · 0 omitted from bo
+unded status
+[FOCUS] Indexing · Index: complete
+↑↓ scroll · r rescan · Esc · ? help

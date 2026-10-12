@@ -20,6 +20,9 @@ The [terminal design review for #88](design/tui-review-88.md) contains offline
 previews and the visual acceptance record for the TUI design direction.
 The [#89 production captures](design/tui-89/README.md) compare that direction
 with the implemented session browser, timeline and inspection workflow.
+The [combined #93 acceptance record](design/tui-93/README.md) collects final
+journey coverage, actual-screen review artifacts and the visual verdict, with
+[final latency/memory measurements](benchmarks/tui-timeline-final.md).
 
 ## Document roles
 

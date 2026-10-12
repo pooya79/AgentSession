@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Review-only PTY capture. Requires pexpect, pyte and Pillow; no app dependency."""
 import hashlib
+import html
 import json
 import os
 import re
@@ -15,8 +16,12 @@ from PIL import Image, ImageDraw, ImageFont
 FIXTURES = Path(__file__).resolve().parent/'fixtures'
 SEARCH = '--search' in sys.argv
 SUPPORTING = '--supporting' in sys.argv
+ACCEPTANCE = '--acceptance' in sys.argv
 OUT = Path(__file__).resolve().parent
-if SEARCH:
+if ACCEPTANCE:
+    OUT = OUT.parent/'tui-93'
+    OUT.mkdir(exist_ok=True)
+elif SEARCH:
     OUT = OUT.parent/'tui-91'
     OUT.mkdir(exist_ok=True)
 elif SUPPORTING:
@@ -60,7 +65,7 @@ def capture(theme):
     screen = Screen(120, 32)
     stream = Stream(screen)
     started = time.monotonic()
-    recording = [{'version': 2, 'width': 120, 'height': 32, 'title': 'AgentSession ' + ('#92 supporting ' if SUPPORTING else '#91 search ' if SEARCH else '#89 ') + theme}]
+    recording = [{'version': 2, 'width': 120, 'height': 32, 'title': 'AgentSession ' + ('#93 acceptance ' if ACCEPTANCE else '#92 supporting ' if SUPPORTING else '#91 search ' if SEARCH else '#89 ') + theme}]
     pending = ''
 
     def send(text):
@@ -113,7 +118,99 @@ def capture(theme):
 
     drain(1.5)
     assert 'PREVIEW' in '\n'.join(screen.display), '\n'.join(screen.display)
-    if SUPPORTING:
+    if ACCEPTANCE:
+        def matrix(name):
+            for cols, rows in ((120,32), (80,24), (54,18), (40,12)):
+                resize(cols, rows)
+                frame(f'{name}-{cols}x{rows}')
+            resize(80,24)
+
+        def contains(text):
+            assert text in '\n'.join(screen.display), '\n'.join(screen.display)
+
+        matrix('sessions')
+        send('\r'); drain()
+        matrix('timeline')
+        send(']'); drain()
+        send('\x1b[6~'); drain()
+        contains('10. Recorded evidence')
+        frame('reading-80x24')
+        send('?'); drain()
+        matrix('help')
+        send('\x1b'); drain()
+        contains('10. Recorded evidence')
+        send(']]\r'); drain()
+        contains('RECORDED FAILURE')
+        matrix('expanded')
+        send('d'); drain()
+        matrix('details')
+        send('w' + '\x1b[C'*16); drain()
+        contains('timeout=3000ms')
+        frame('unwrapped-80x24')
+        send('\x1b'); drain()
+        contains('RECORDED FAILURE')
+        send('/'); drain()
+        send('\x1b[200~go tst\x1b[201~'+'\x1b[D'*2+'e'); drain()
+        contains('go te█st')
+        frame('editing-80x24')
+        send('\x05\x1b[200~ q/?[]\x1b[201~'); drain()
+        contains('q/?[]█')
+        frame('paste-80x24')
+        send('\x7f'*6+'\r'); drain()
+        contains('matching event')
+        matrix('search')
+        send('\r'); drain()
+        contains('Timeline')
+        frame('search-evidence-80x24')
+        send('\x1b'); drain()
+        contains('Query: go test')
+        send('\x1b'); drain()
+        contains('RECORDED FAILURE')
+        frame('search-return-80x24')
+        send('f'); drain()
+        matrix('assessments')
+        send(']'); drain()
+        frame('supporting-reference-80x24')
+        send('\r'); drain()
+        contains('Timeline')
+        frame('supporting-timeline-80x24')
+        send('\x1b'); drain()
+        contains('Assessments')
+        send('\x1b'); drain()
+        contains('RECORDED FAILURE')
+        send('g'+']'*6+'d'); drain()
+        contains('Press u')
+        matrix('unknown-prompt')
+        send('u'); drain()
+        send('G'); drain()
+        contains('raw stays hidden')
+        matrix('unknown-raw')
+        send('\x1b'); drain()
+        send('x'); drain()
+        matrix('projections')
+        send('g'+'b'); drain(1)
+        contains('attempts 2')
+        frame('projection-rebuild-80x24')
+        send('\x1b'); drain()
+        contains('Timeline')
+        send('g'+'r'); drain()
+        contains('Fix request timeout')
+        frame('refreshed-80x24')
+        resize(32,10)
+        contains('Resize to at least 40×12')
+        frame('resize-32x10')
+        resize(80,24)
+        contains('Fix request timeout')
+        send('\x1b'); drain()
+        contains('Sessions')
+        frame('returned-80x24')
+        send('i'); drain()
+        contains('Indexing completed successfully')
+        matrix('indexing')
+        send('\x1b'); drain()
+        contains('Sessions')
+        send('q')
+    elif SUPPORTING:
         send('i'); drain()
         assert 'Indexing completed successfully' in '\n'.join(screen.display)
         frame('indexing-120x32')
@@ -249,8 +346,9 @@ def capture(theme):
         frame('resize-32x10')
         send('q')
     child.expect(pexpect.EOF, timeout=5)
+    output = ''.join(item[2] for item in recording[1:] if item[1] == 'o')
+    assert not re.search(r'\x1b\[\?(?:1000|1002|1003|1006)h', output), 'mouse capture enabled'
     if theme == 'mono':
-        output = ''.join(item[2] for item in recording[1:] if item[1] == 'o')
         assert not re.search(r'\x1b\[[0-9;:]*(?:38|48)[;:]', output), 'color survived NO_COLOR'
     (OUT/('workflow-'+theme+'.cast')).write_text('\n'.join(json.dumps(item) for item in recording)+'\n')
 
@@ -259,4 +357,40 @@ hashes = {p: hashlib.sha256(p.read_bytes()).digest() for p in FIXTURES.glob('*.j
 for theme in ('dark', 'light', 'mono'):
     capture(theme)
 assert all(hashlib.sha256(p.read_bytes()).digest() == digest for p, digest in hashes.items())
+if ACCEPTANCE:
+    gallery = ['''<!doctype html><html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AgentSession #93 — actual terminal review</title>
+<style>
+body{font:16px system-ui;background:#eef1f5;color:#172434;margin:24px;max-width:1400px}
+a{color:#005fa3} nav{display:flex;gap:16px;flex-wrap:wrap;margin:20px 0}
+section{border-top:2px solid #aab7c5;margin-top:28px}figure{margin:24px 0}
+img{display:block;max-width:100%;height:auto;border:1px solid #8896a5}
+figcaption{margin:8px 0;font-weight:600}details{margin:20px 0}summary{cursor:pointer}
+</style><h1>Actual implemented TUI · final review #93</h1>
+<p><strong>Product-owner acceptance pending.</strong> Compare these fresh production
+PTY frames with the <a href="../tui-review-88.html">accepted #88 preview</a>.
+Review the live isolated binary and input/output recordings as well; snapshots
+and automated checks alone do not establish acceptance.</p>
+<p>From the repository root: <code>go run ./docs/design/tui-89/_capture</code>.
+Try selection/preview → read → disclose → inspect → return, search editing/paste,
+assessment evidence links, Unknown inspection, projections, indexing, help,
+resize, refresh, and normal terminal text selection. Sources remain read-only.</p>
+<p><a href="README.md">Method, coverage, remaining limits and review record</a></p>
+<nav>''']
+    for theme in ('dark', 'light', 'mono'):
+        gallery.append(f'<a href="#{theme}">{theme} profile</a>')
+    gallery.append('</nav>')
+    for theme in ('dark', 'light', 'mono'):
+        gallery.append(f'<section id="{theme}"><h2>{theme} profile</h2>')
+        gallery.append(f'<p><a href="workflow-{theme}.cast">Input/output/resize recording (asciicast v2)</a></p>')
+        for size in ('120x32', '80x24', '54x18', '40x12', '32x10'):
+            gallery.append(f'<details open><summary>{size}</summary>')
+            for path in sorted(OUT.glob(f'*-{size}-{theme}.png')):
+                name = html.escape(path.name)
+                label = html.escape(path.stem.removesuffix(f'-{size}-{theme}').replace('-', ' '))
+                gallery.append(f'<figure><figcaption>{label} · {size} · {theme} · <a href="{name}">native size</a></figcaption><img loading="lazy" src="{name}" alt="{label} at {size} in {theme}"></figure>')
+            gallery.append('</details>')
+        gallery.append('</section>')
+    (OUT/'gallery.html').write_text('\n'.join(gallery)+'</html>\n')
 print('Captured production TUI in three terminal profiles; fixture bytes unchanged.')

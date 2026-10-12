@@ -1,0 +1,24 @@
+AgentSession  /  Event  ·  local · offline · read-only
+Inspection #3 · Command · RECORDED FAILURE (exit 1) · go test ./internal/client
+
+
+
+
+
+
+
+
+d after caller cancellation; request_id=fixture-00017; attempt=3; timeout=3000ms
+
+
+
+
+
+
+
+
+
+
+
+[FOCUS] Unwrapped · column 85 · ←/→ pan
+↑↓ scroll · w wrap · ←→ pan · r retry · Esc back · ? help

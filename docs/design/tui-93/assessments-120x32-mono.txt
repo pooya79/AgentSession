@@ -1,0 +1,32 @@
+AgentSession  /  Assessments  ·  local · offline · read-only
+Rule assessments · session fixture-17
+
+repeated_command_failures · insufficient_evidence · version 1
+Assessment finding_7362fcbbb503188fd044c574bb935bb38032bf9ae0aa90b67630a689e8372939
+Within the currently imported record in source order: 2 invocations, 1 failed results, 0 repeated failure sequences, 0 l
+ater recorded recoveries. Command identity requires exact recorded text trimmed at the ends and an established matching
+directory. Missing, conflicting, unsupported, or oversized evidence limits affected sequences; independent positive evid
+ence remains usable.
+Invocations 2 · failures 1 · recovered 0
+uncertainties 1 · omitted references 0
+Repeated failure sequences 0
+
+unresolved_failed_verification · insufficient_evidence · version 1
+Assessment finding_6b6c32761b101d6637f836309c13d6e466f078143e979cffa88f65ad400fd27a
+Within the currently imported record in source order: 2 recognized Go verification invocations (1 tests, 0 static checks
+, 1 builds), 1 failed results, 0 failures with later recorded recovery, 0 conclusively unresolved failures. Recovery req
+uires exact recorded command text trimmed at the ends and an established matching directory, with the successful invocat
+ion starting after the failure completed. Parallel success, a different check, pending reruns, and assistant assurance d
+o not establish recovery. Missing, conflicting, unsupported, or oversized evidence limits affected conclusions; compatib
+le gaps or unknown results may hide recovery. Independent conclusive instances remain usable. Recognition is limited to
+documented standalone Go test, vet, and build forms. Declared scope does not establish file participation, coverage, or
+correctness; build success does not establish test success.
+Invocations 2 · failures 1 · recovered 0
+uncertainties 2 · omitted references 0
+Conclusively unresolved 0 · tests 1 · static checks 0 · builds 1
+
+missing_verification · insufficient_evidence · version 1
+Assessment finding_19635076f190d3b0c0d58913dd17111f1f68a4c47e65b68926d3eca82d0b6af2
+Within the currently imported record in source order: 0 confirmed mutations, 0 applicable Go scopes, 0 with completed re
+[FOCUS] Evidence 1/11 · Enter opens context
+↑↓ scroll · [/] evidence · Enter context · r retry · Esc back · ? help

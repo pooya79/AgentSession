@@ -1,0 +1,32 @@
+AgentSession  /  Timeline  ·  local · offline · read-only
+Timeline · session fixture-17 · canonical complete
+> ╭─ You
+Fix request timeout without hiding errors.
+╰─
+
+  ╭─ Assistant
+§ Retry policy
+
+- Bound each retry.
+- Keep the original cause.
+
+Code · go
+func retry(ctx context.Context) error {
+    return request.WithTimeout(ctx, "https://example.invalid/api/very/long/path/for/terminal/wrapping", 3*time.Second)
+}
+
+
+§ Reading notes
+
+1. Recorded evidence remains in source order; a build does not establish test recovery.
+2. Recorded evidence remains in source order; a build does not establish test recovery.
+3. Recorded evidence remains in source order; a build does not establish test recovery.
+4. Recorded evidence remains in source order; a build does not establish test recovery.
+5. Recorded evidence remains in source order; a build does not establish test recovery.
+6. Recorded evidence remains in source order; a build does not establish test recovery.
+7. Recorded evidence remains in source order; a build does not establish test recovery.
+8. Recorded evidence remains in source order; a build does not establish test recovery.
+9. Recorded evidence remains in source order; a build does not establish test recovery.
+10. Recorded evidence remains in source order; a build does not establish test recovery.
+Target: evt_cdcc2c120140d05c105f6dc9612… #0 · open · Index: complete
+↑↓ j/k scroll · PgUp/PgDn · [/] events · Enter toggle · d inspect · u raw · f rules · x projections · Esc back · ? help

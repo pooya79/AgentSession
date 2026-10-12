@@ -1,0 +1,18 @@
+AgentSession  /  Timeline  ·  local · offline · read-…
+Keyboard help
+
+Global
+  ?            open or close this help
+  Esc          close an overlay or return to the paren
+t screen
+  q / Ctrl-C   quit
+
+Navigation
+  ↑/↓ or j/k   scroll timeline text; move rows in list
+s
+  [ / ]        jump to previous/next timeline event
+  Home/End     jump to the first or last row
+  g/G          jump to the first or last row
+  PgUp/PgDn    scroll long evidence
+[FOCUS] Help · returns to Timeline
+↑↓ scroll · PgUp/Dn · Esc close

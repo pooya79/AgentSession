@@ -1,0 +1,18 @@
+AgentSession  /  Projections  ·  local · offline · re…
+Projection lifecycle · session fixture-17
+Canonical evidence remains available · complete · deri
+ved usable 2/5 · pending 3 · running 0 · failed 0 · st
+ale 0 · not implemented 3
+
+> search            ready · usable  · target 1/1 · att
+empts 1
+  git_correlation   not implemented in this build · re
+  mains pending  · target 1/1 · attempts 0
+  findings          ready · usable  · target 1/1 · att
+  empts 1
+  outcomes          not implemented in this build · re
+  mains pending  · target 1/1 · attempts 0
+  aggregates        not implemented in this build · re
+  mains pending  · target 1/1 · attempts 0
+[FOCUS] search · ready
+↑↓ target · t/b act · Esc · ? help
