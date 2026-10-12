@@ -179,7 +179,10 @@ func (m *Model) clearSupersededReads() {
 	}
 	m.sessionsState.loading = false
 	m.sessionsState.overviewLoading = false
-	m.searchState.loading = false
+	if m.searchState.loading {
+		m.searchState.loading = false
+		m.searchState.notice = "Search canceled."
+	}
 	m.detailState.loading = false
 	m.findingsState.loading = false
 	changed := false

@@ -33,10 +33,16 @@ func (m *Model) pushNavigation() {
 }
 
 func (m *Model) runSearch(cursor string) tea.Cmd {
+	m.searchState.refreshing = cursor == "" && !m.searchState.dirty && len(m.searchState.page.Results) > 0
 	ctx := m.replaceRequest()
 	m.searchState.loading = true
 	m.searchState.err = nil
-	m.searchState.cursor = 0
+	m.searchState.notice = ""
+	if m.searchState.dirty {
+		m.searchState.page = app.SearchPage{}
+		m.searchState.cursor = 0
+	}
+	m.searchState.dirty = false
 	return m.startSpinner(loadSearch(ctx, m.services, m.requestGeneration, m.searchState.query, cursor))
 }
 
@@ -300,7 +306,7 @@ func (m Model) pageStep() int {
 func (m *Model) nextPage() (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case searchScreen:
-		if m.searchState.page.NextCursor == "" || m.searchState.loading {
+		if m.searchState.page.NextCursor == "" || m.searchState.loading || m.searchState.dirty {
 			return m, nil
 		}
 		return m, m.runSearch(m.searchState.page.NextCursor)
@@ -326,7 +332,7 @@ func (m *Model) nextPage() (tea.Model, tea.Cmd) {
 func (m *Model) previousPage() (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case searchScreen:
-		if m.searchState.page.PreviousCursor == "" || m.searchState.loading {
+		if m.searchState.page.PreviousCursor == "" || m.searchState.loading || m.searchState.dirty {
 			return m, nil
 		}
 		return m, m.runSearch(m.searchState.page.PreviousCursor)
@@ -347,6 +353,9 @@ func (m *Model) previousPage() (tea.Model, tea.Cmd) {
 func (m *Model) openSelection() (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case searchScreen:
+		if m.searchState.dirty || !m.searchState.loading && m.searchState.page.State == "" && len(m.searchState.page.Results) == 0 {
+			return m, m.runSearch("")
+		}
 		if m.searchState.loading || len(m.searchState.page.Results) == 0 {
 			return m, nil
 		}

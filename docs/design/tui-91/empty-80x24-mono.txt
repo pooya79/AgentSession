@@ -1,0 +1,24 @@
+AgentSession  /  Search  ·  local · offline · read-only
+Search canonical evidence
+Query: absentword
+Filters · session: kind: after: before: file: tool: command:
+Complete · 3 sessions searchable
+
+No matching sessions.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[FOCUS] Results · r retry · Esc back
+/ edit · ↑↓ select · Enter timeline · n/p page · Esc back · ? help

@@ -1,0 +1,24 @@
+AgentSession  /  Search  ·  local · offline · read-only
+Search canonical evidence
+Query: kind:invalid
+Filters · session: kind: after: before: file: tool: command:
+Search could not be completed: Kind filter value is not a canonical event kind.
+Press r to retry; / to edit; Esc back.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[FOCUS] Results · r retry · Esc back
+/ edit · ↑↓ select · Enter timeline · n/p page · Esc back · ? help

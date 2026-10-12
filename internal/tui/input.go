@@ -9,29 +9,6 @@ import (
 
 // handleKey maps the documented controls to screen-aware navigation.
 func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
-	if m.screen == searchScreen && m.searchState.editing {
-		switch key {
-		case "ctrl+c":
-			return m, tea.Quit
-		case "esc":
-			m.searchState.editing = false
-		case "enter":
-			m.searchState.editing = false
-			return m, m.runSearch("")
-		case "backspace":
-			runes := []rune(m.searchState.query)
-			if len(runes) > 0 {
-				m.searchState.query = string(runes[:len(runes)-1])
-			}
-		case "space":
-			m.searchState.query += " "
-		default:
-			if len([]rune(key)) == 1 && len(m.searchState.query)+len(key) <= 4096 {
-				m.searchState.query += key
-			}
-		}
-		return m, nil
-	}
 	if key == "ctrl+c" || key == "q" {
 		if m.requestCancel != nil {
 			m.requestCancel()
@@ -148,8 +125,11 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 			m.pushNavigation()
 		}
 		m.screen = searchScreen
+		if m.searchState.loading {
+			m.cancelRequest()
+		}
 		m.searchState.editing = true
-		m.searchState.err = nil
+		m.searchState.queryCursor = len([]rune(m.searchState.query))
 		m.stopObservation()
 		return m, nil
 	case "i":

@@ -22,7 +22,11 @@ func (m Model) View() tea.View {
 	}
 
 	if width < 40 || height < 12 {
-		view := terminalView(fit([]string{"AgentSession", "Resize to at least 40×12", fmt.Sprintf("Current: %d×%d", width, height), "q quit"}, width, height))
+		quit := "q / Ctrl-C quit"
+		if m.screen == searchScreen && m.searchState.editing {
+			quit = "Ctrl-C quit"
+		}
+		view := terminalView(fit([]string{"AgentSession", "Resize to at least 40×12", fmt.Sprintf("Current: %d×%d", width, height), quit}, width, height))
 		view.AltScreen = true
 		return view
 	}

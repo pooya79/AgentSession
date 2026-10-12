@@ -10,23 +10,59 @@ import (
 
 // searchLines renders the current query, projection coverage, and bounded results.
 func (m Model) searchLines() []string {
-	prompt := "Query: " + m.searchState.query
-	if m.searchState.editing {
-		prompt += "█"
-	}
+	prompt := m.searchPrompt()
 	lines := []string{
 		"Search canonical evidence",
 		prompt,
-		"Filters · session: kind: after: before: file: tool: command:",
 	}
+	// Short terminals reserve their rows for request state, the selected
+	// result, and both persistent footers. Filters remain available in help.
+	if m.height <= 0 || m.height >= 18 {
+		lines = append(lines, "Filters · session: kind: after: before: file: tool: command:")
+	}
+	if m.searchState.dirty {
+		if m.searchState.editing {
+			return append(lines, "", "Query changed · Enter to search.")
+		}
+		return append(lines, "", "Query changed · Enter to search; / to edit.")
+	}
+	previous := false
 	if m.searchState.loading {
-		return append(lines, "", m.spinner.View()+" Searching…")
+		lines = append(lines, m.spinner.View()+" Searching…")
+		previous = true
 	}
 	if m.searchState.err != nil {
-		return append(lines, "", "Search could not be completed: "+m.searchState.err.Error())
+		lines = append(lines, "Search could not be completed: "+m.searchState.err.Error())
+		previous = true
+	}
+	if m.searchState.notice != "" {
+		lines = append(lines, m.searchState.notice)
+		previous = previous || m.searchState.notice == "Search canceled."
+	}
+	if previous {
+		if !m.searchState.loading {
+			hint := "Press r to retry; / to edit; Esc back."
+			if m.searchState.editing {
+				hint = "Edit query · Enter to search; Esc results."
+			}
+			lines = append(lines, hint)
+		}
+		if len(m.searchState.page.Results) == 0 {
+			return lines
+		}
+		lines = append(lines, "Previous results · freshness unconfirmed.")
+	}
+	if m.searchState.page.State == "" && len(m.searchState.page.Results) == 0 {
+		return append(lines, "", "Enter to search canonical evidence; / to edit.")
 	}
 	lines = append(lines, searchAvailabilityLine(m.searchState.page))
+	if m.searchState.page.State == app.EvidenceUnavailable {
+		return append(lines, "", "Search coverage unavailable · r to retry.")
+	}
 	if len(m.searchState.page.Results) == 0 {
+		if m.searchState.page.State == app.EvidencePartial {
+			return append(lines, "", "No matches in searchable evidence.")
+		}
 		return append(lines, "", "No matching sessions.")
 	}
 

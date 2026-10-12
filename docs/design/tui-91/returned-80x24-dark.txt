@@ -1,0 +1,24 @@
+AgentSession  /  Search  ·  local · offline · read-only
+Search canonical evidence
+Query: go test
+Filters · session: kind: after: before: file: tool: command:
+Complete · 3 sessions searchable
+
+> Fix request timeout without hiding errors.
+  2026-10-10 12:00 UTC · CODEX · 3 matching events / 8 events
+  Match · Assistant message
+  Assistant message ## Retry policy - Bound each retry. - Keep the original cau…
+Result 1/1
+
+
+
+
+
+
+
+
+
+
+
+[FOCUS] Results · r retry · Esc back
+/ edit · ↑↓ select · Enter timeline · n/p page · Esc back · ? help

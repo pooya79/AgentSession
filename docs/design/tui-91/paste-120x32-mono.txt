@@ -1,0 +1,32 @@
+AgentSession  /  Search  ·  local · offline · read-only
+Search canonical evidence
+Query: go test q/?[]█
+Filters · session: kind: after: before: file: tool: command:
+
+Query changed · Enter to search.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[FOCUS] Query · ←/→ Home/End · Del/Backspace
+Type query · Enter search · Esc results · Ctrl-C quit

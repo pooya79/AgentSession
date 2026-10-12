@@ -65,6 +65,21 @@ visited history. An oversized event and one boundary neighbor can exceed the byt
 budgets to keep all evidence readable. Refresh rereads the current neighborhood.
 See the [measured limits and reproduction](docs/benchmarks/tui-timeline-bounded.md).
 
+Search uses Left/Right to move the query cursor, Home/End (or Ctrl-A/Ctrl-E) to
+move to its beginning/end, and Backspace/Delete to remove text before/at the
+cursor. Typing and bracketed paste insert at the cursor; shortcut characters
+such as `q`, `/`, `?`, `[` and `]` remain query text. Pasted line breaks and tabs
+become spaces. Enter submits through the shared search service; Esc leaves
+editing, then returns to the previous screen. `/` edits again, `n`/`p` page
+results, and `r` reruns the query from the first page. Edited queries require a
+new search before old results can be opened or paged. Enter on a result opens
+its session timeline; Esc restores the query, selected result, and result page.
+Search cancellation and failures have explicit retry guidance; superseded
+responses cannot replace the current query's results. Refresh retains earlier
+results with a previous-results label while freshness is unconfirmed, preserves
+the selected session when still present, and explains a removed selection.
+See the [search terminal captures](docs/design/tui-91/README.md).
+
 At 110 columns or wider, sessions show a list beside the selected session's
 recorded preview, evidence coverage and projection readiness. Opening a session
 gives its timeline the full main area. At 80×24, one main view provides the full

@@ -75,7 +75,7 @@ func (m Model) helpLine(width int) string {
 		if m.searchState.editing {
 			return "Type query · Enter search · Esc results · Ctrl-C quit"
 		}
-		return "/ edit · ↑/↓ select · Enter timeline · n/p page · Esc sessions · r refresh · ? help"
+		return "/ edit · ↑/↓ select · Enter timeline · n/p page · Esc back · r retry · ? help"
 	case indexingScreen:
 		return "↑/↓ or j/k scroll · g/G top/bottom · PgUp/PgDn scroll · Esc sessions · r rescan · ? help · q quit"
 	case timelineScreen:
@@ -93,6 +93,12 @@ func (m Model) helpLine(width int) string {
 // statusLine keeps the action target visible even when it is outside the
 // reading viewport. Scrolling never changes which event Enter acts on.
 func (m Model) statusLine() string {
+	if m.screen == searchScreen && !m.helpOpen {
+		if m.searchState.editing {
+			return "[FOCUS] Query · ←/→ Home/End · Del/Backspace"
+		}
+		return "[FOCUS] Results · r retry · Esc back"
+	}
 	if m.screen == detailScreen && !m.helpOpen {
 		if m.detailState.unwrapped {
 			return fmt.Sprintf("Unwrapped · column %d · ←/→ pan · w wrap", m.detailState.viewport.XOffset()+1)

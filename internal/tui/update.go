@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -275,12 +276,32 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case searchLoadedMsg:
-		if msg.generation != m.requestGeneration {
+		if msg.generation != m.requestGeneration || m.screen != searchScreen {
 			return m, nil
 		}
 		m.searchState.loading = false
 		m.searchState.err = visibleError(msg.err)
+		if errors.Is(msg.err, context.Canceled) {
+			m.searchState.notice = "Search canceled."
+		}
 		if msg.err == nil {
+			var selected model.SessionID
+			if m.searchState.refreshing && m.searchState.cursor < len(m.searchState.page.Results) {
+				selected = m.searchState.page.Results[m.searchState.cursor].SessionID
+			}
+			m.searchState.cursor = 0
+			if selected != "" {
+				found := false
+				for i, result := range msg.page.Results {
+					if result.SessionID == selected {
+						m.searchState.cursor, found = i, true
+						break
+					}
+				}
+				if !found {
+					m.searchState.notice = "Selected result changed or removed · showing available matches."
+				}
+			}
 			m.searchState.page = msg.page
 			if m.searchState.cursor >= len(msg.page.Results) {
 				m.searchState.cursor = max(0, len(msg.page.Results)-1)
@@ -295,11 +316,19 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.projectionsState.loading = true
 		return m, m.startSpinner(readProjectionStatus(ctx, m.services, m.projectionsState.generation, m.sessionsState.selected))
 	case tea.KeyPressMsg:
+		if m.screen == searchScreen && m.searchState.editing && !m.helpOpen {
+			return m.editSearch(msg)
+		}
 		updated, cmd := m.handleKey(msg.String())
 		if pointer, ok := updated.(*Model); ok {
 			return *pointer, cmd
 		}
 		return updated, cmd
+	case tea.PasteMsg:
+		if m.screen == searchScreen && m.searchState.editing && !m.helpOpen {
+			m.insertSearchText(msg.Content)
+		}
+		return m, nil
 	}
 	return m, nil
 }

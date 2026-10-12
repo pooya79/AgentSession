@@ -102,10 +102,14 @@ type projectionsState struct {
 
 // searchState keeps query editing separate from bounded result navigation.
 type searchState struct {
-	query   string
-	editing bool
-	page    app.SearchPage
-	loading bool
-	err     error
-	cursor  int
+	query       string
+	queryCursor int
+	dirty       bool
+	notice      string
+	refreshing  bool
+	editing     bool
+	page        app.SearchPage
+	loading     bool
+	err         error
+	cursor      int
 }

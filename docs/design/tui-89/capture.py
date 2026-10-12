@@ -12,7 +12,12 @@ import pexpect
 import pyte
 from PIL import Image, ImageDraw, ImageFont
 
+FIXTURES = Path(__file__).resolve().parent/'fixtures'
+SEARCH = '--search' in sys.argv
 OUT = Path(__file__).resolve().parent
+if SEARCH:
+    OUT = OUT.parent/'tui-91'
+    OUT.mkdir(exist_ok=True)
 BINARY = sys.argv[1] if len(sys.argv) > 1 else '/tmp/agentsession-89-capture'
 FONT = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf', 14)
 CELL, ROW = 9, 19
@@ -51,7 +56,7 @@ def capture(theme):
     screen = Screen(120, 32)
     stream = Stream(screen)
     started = time.monotonic()
-    recording = [{'version': 2, 'width': 120, 'height': 32, 'title': 'AgentSession #89 ' + theme}]
+    recording = [{'version': 2, 'width': 120, 'height': 32, 'title': 'AgentSession ' + ('#91 search ' if SEARCH else '#89 ') + theme}]
     pending = ''
 
     def send(text):
@@ -104,34 +109,80 @@ def capture(theme):
 
     drain(1.5)
     assert 'PREVIEW' in '\n'.join(screen.display), '\n'.join(screen.display)
-    frame('sessions-120x32')
-    resize(80, 24)
-    send('\r'); drain()
-    frame('timeline-80x24')
-    send('\x1b[6~'); drain()
-    frame('reading-80x24')
-    send(']]]'); drain()
-    send('\r'); drain()
-    assert 'RECORDED FAILURE' in '\n'.join(screen.display), '\n'.join(screen.display)
-    frame('evidence-80x24')
-    send('d'); drain()
-    frame('inspection-wrapped-80x24')
-    send('w'); drain()
-    send('\x1b[C'*16); drain()
-    assert 'timeout=3000ms' in '\n'.join(screen.display), '\n'.join(screen.display)
-    frame('inspection-80x24')
-    send('\x1b'); drain()
-    send(']]]'); drain()
-    send('\r'); drain()
-    frame('unknown-80x24')
-    send('['*3); drain()
-    resize(54, 18)
-    frame('compact-54x18')
-    resize(40, 12)
-    frame('minimum-40x12')
-    resize(32, 10)
-    frame('resize-32x10')
-    send('q')
+    if SEARCH:
+        def query(text):
+            send('/')
+            drain(0.15)
+            send('\x01')  # Ctrl-A, then Delete at the cursor.
+            send('\x1b[3~'*256)
+            send('\x1b[200~'+text+'\x1b[201~')
+            drain(0.2)
+
+        query('go tst')
+        send('\x1b[D'*2+'e'); drain()
+        assert 'go te█st' in '\n'.join(screen.display), '\n'.join(screen.display)
+        frame('editing-120x32')
+        send('\x05')  # Ctrl-E.
+        send('\x1b[200~ q/?[]\x1b[201~'); drain()
+        assert 'q/?[]█' in '\n'.join(screen.display), '\n'.join(screen.display)
+        frame('paste-120x32')
+        send('\x7f'*6); drain()
+        send('\r'); drain()
+        assert 'matching event' in '\n'.join(screen.display), '\n'.join(screen.display)
+        frame('results-120x32')
+        for cols, rows in ((80,24), (54,18), (40,12)):
+            resize(cols, rows)
+            assert 'Match' in '\n'.join(screen.display), '\n'.join(screen.display)
+            frame(f'results-{cols}x{rows}')
+        resize(80,24)
+        send('\r'); drain()
+        assert 'Timeline' in '\n'.join(screen.display), '\n'.join(screen.display)
+        frame('opened-80x24')
+        send('\x1b'); drain()
+        assert 'Query: go test' in '\n'.join(screen.display), '\n'.join(screen.display)
+        frame('returned-80x24')
+        query('absentword'); send('\r'); drain()
+        assert 'No matching sessions' in '\n'.join(screen.display), '\n'.join(screen.display)
+        frame('empty-80x24')
+        query('kind:invalid'); send('\r'); drain()
+        assert 'Search could not be completed' in '\n'.join(screen.display), '\n'.join(screen.display)
+        frame('error-80x24')
+        query('q/?[]')
+        resize(32,10)
+        assert 'Ctrl-C quit' in '\n'.join(screen.display), '\n'.join(screen.display)
+        frame('resize-32x10')
+        send('\x03')
+    else:
+        drain(1.5)
+        assert 'PREVIEW' in '\n'.join(screen.display), '\n'.join(screen.display)
+        frame('sessions-120x32')
+        resize(80, 24)
+        send('\r'); drain()
+        frame('timeline-80x24')
+        send('\x1b[6~'); drain()
+        frame('reading-80x24')
+        send(']]]'); drain()
+        send('\r'); drain()
+        assert 'RECORDED FAILURE' in '\n'.join(screen.display), '\n'.join(screen.display)
+        frame('evidence-80x24')
+        send('d'); drain()
+        frame('inspection-wrapped-80x24')
+        send('w'); drain()
+        send('\x1b[C'*16); drain()
+        assert 'timeout=3000ms' in '\n'.join(screen.display), '\n'.join(screen.display)
+        frame('inspection-80x24')
+        send('\x1b'); drain()
+        send(']]]'); drain()
+        send('\r'); drain()
+        frame('unknown-80x24')
+        send('['*3); drain()
+        resize(54, 18)
+        frame('compact-54x18')
+        resize(40, 12)
+        frame('minimum-40x12')
+        resize(32, 10)
+        frame('resize-32x10')
+        send('q')
     child.expect(pexpect.EOF, timeout=5)
     if theme == 'mono':
         output = ''.join(item[2] for item in recording[1:] if item[1] == 'o')
@@ -139,7 +190,7 @@ def capture(theme):
     (OUT/('workflow-'+theme+'.cast')).write_text('\n'.join(json.dumps(item) for item in recording)+'\n')
 
 
-hashes = {p: hashlib.sha256(p.read_bytes()).digest() for p in (OUT/'fixtures').glob('*.jsonl')}
+hashes = {p: hashlib.sha256(p.read_bytes()).digest() for p in FIXTURES.glob('*.jsonl')}
 for theme in ('dark', 'light', 'mono'):
     capture(theme)
 assert all(hashlib.sha256(p.read_bytes()).digest() == digest for p, digest in hashes.items())
