@@ -1,31 +1,31 @@
 === RUN   TestTimelineResponsivenessMeasurement
-    timeline_measurement_test.go:147: exploration=3.840788795s retained_heap=6855264 heap_sys=20676608 alloc_bytes=466607760 allocations=1240270 resident_payloads=150
-    timeline_measurement_test.go:212: indexing=false action=scroll warmup=3 samples=100 p95=268.353µs
-    timeline_measurement_test.go:212: indexing=false action=event warmup=3 samples=100 p95=18.156526ms
-    timeline_measurement_test.go:212: indexing=true action=scroll warmup=3 samples=100 p95=284.826µs
-    timeline_measurement_test.go:212: indexing=true action=event warmup=3 samples=100 p95=21.269486ms
+    timeline_measurement_test.go:147: exploration=3.668290353s retained_heap=6836024 heap_sys=24543232 alloc_bytes=466917160 allocations=1248167 resident_payloads=150
+    timeline_measurement_test.go:212: indexing=false action=scroll warmup=3 samples=100 p95=249.914µs
+    timeline_measurement_test.go:212: indexing=false action=event warmup=3 samples=100 p95=16.059306ms
+    timeline_measurement_test.go:212: indexing=true action=scroll warmup=3 samples=100 p95=224.034µs
+    timeline_measurement_test.go:212: indexing=true action=event warmup=3 samples=100 p95=23.413481ms
     timeline_measurement_test.go:219: concurrent_import_batches=12 records=1200
-    timeline_measurement_test.go:223: total_alloc_bytes=1184226912 allocations=6152991 heap_sys=28246016
---- PASS: TestTimelineResponsivenessMeasurement (9.77s)
+    timeline_measurement_test.go:223: total_alloc_bytes=1184907336 allocations=6160970 heap_sys=34242560
+--- PASS: TestTimelineResponsivenessMeasurement (9.45s)
 PASS
 	Command being timed: "/tmp/agentsession-93.test -test.run ^TestTimelineResponsivenessMeasurement$ -test.count=1 -test.v"
-	User time (seconds): 10.23
-	System time (seconds): 1.75
+	User time (seconds): 9.85
+	System time (seconds): 1.72
 	Percent of CPU this job got: 122%
-	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:09.77
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:09.45
 	Average shared text size (kbytes): 0
 	Average unshared data size (kbytes): 0
 	Average stack size (kbytes): 0
 	Average total size (kbytes): 0
-	Maximum resident set size (kbytes): 53468
+	Maximum resident set size (kbytes): 53044
 	Average resident set size (kbytes): 0
 	Major (requiring I/O) page faults: 0
-	Minor (reclaiming a frame) page faults: 162594
-	Voluntary context switches: 87449
-	Involuntary context switches: 687
+	Minor (reclaiming a frame) page faults: 156833
+	Voluntary context switches: 85314
+	Involuntary context switches: 1258
 	Swaps: 0
-	File system inputs: 0
-	File system outputs: 731520
+	File system inputs: 24
+	File system outputs: 728136
 	Socket messages sent: 0
 	Socket messages received: 0
 	Signals delivered: 0

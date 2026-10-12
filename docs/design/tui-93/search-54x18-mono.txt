@@ -1,11 +1,10 @@
 AgentSession  /  Search
-Search canonical evidence
 Query: go test
-Complete · 3 sessions searchable
 
 > Fix request timeout without hiding errors.
-  2026-10-10 12:00 UTC · CODEX · 3 matching events / …
-  Match · Assistant message — Assistant message ## Re…
+  CODEX · 2026-10-10 12:00 UTC
+  Assistant message ## Retry policy - Bound each retr…
+
 Result 1/1
 
 
@@ -14,5 +13,6 @@ Result 1/1
 
 
 
-[FOCUS] Results · r retry · Esc back
-Enter open · / edit · ? help
+
+
+Enter open · / edit · Esc · ? help

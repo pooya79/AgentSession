@@ -1,11 +1,10 @@
 AgentSession  /  Search
-Search canonical evidence
 Query: go test
-Complete · 3 sessions searchable
 
 > Fix request timeout without hiding errors.
-  2026-10-10 12:00 UTC · CODEX · 3 matching events / 8 events
-  Match · Assistant message — Assistant message ## Retry policy - Bound each retry. - Keep the original cause. ```go fu…
+  CODEX · 2026-10-10 12:00 UTC
+  Assistant message ## Retry policy - Bound each retry. - Keep the original cause. ```go func retry(ctx context.Context…
+
 Result 1/1
 
 
@@ -28,5 +27,6 @@ Result 1/1
 
 
 
-[FOCUS] Results · r retry · Esc back
-↑↓ choose · Enter open · / edit · v details · Esc back · ? help
+
+
+Enter open · / edit · Esc · ? help

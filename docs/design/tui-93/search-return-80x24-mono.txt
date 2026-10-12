@@ -1,11 +1,14 @@
 AgentSession  /  Timeline
 Fix request timeout without hiding errors.
+17. Recorded evidence remains in source order; a build does not establish test
+    recovery.
+18. Recorded evidence remains in source order; a build does not establish test
+    recovery.
 19. Recorded evidence remains in source order; a build does not establish test
     recovery.
 20. Recorded evidence remains in source order; a build does not establish test
     recovery.
 
-╰─
 
   #2 + Command · RESULT UNAVAILABLE · go test ./internal/client
 
@@ -17,8 +20,5 @@ Fix request timeout without hiding errors.
                   retry_test.go:42: expected deadline exceeded; got request co
                   mpleted after caller cancellation; request_id=fixture-00017;
                    attempt=3; timeout=3000ms
-              FAIL example.invalid/project/internal/client
-  Enter to hide details
-
-Target: #3 · - expanded · Index: complete
-↑↓ read · [] events · Enter collapse · d inspect · Esc · ? help
+Target: #3 · - expanded
+[] events · Enter collapse · Esc · ? help

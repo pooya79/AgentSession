@@ -14,5 +14,5 @@ Keyboard help · Timeline
 
   PgUp/PgDn    scroll a page
   Home/End     first/last row (also g/G)
-[FOCUS] Help · returns to Timeline
-↑↓ scroll · PgUp/Dn · Esc close
+Help for Timeline
+↑↓ scroll · Esc close

@@ -1,12 +1,12 @@
 AgentSession  /  Event
 Inspection #3 · Command · RECORDED FAIL…
-  Command: go test ./internal/client
-  Working directory: /fixture/project
-  Exit status: 1
-  Output:     --- FAIL: TestRetryTimeout
-   (0.03s)
-                  retry_test.go:42: expe
-                  cted deadline exceeded
-                  ; got request complete
-[FOCUS] Wrapped · complete
-↑↓ scroll · w wrap · Esc back · ? help
+$ go test ./internal/client
+
+    --- FAIL: TestRetryTimeout (0.03s)
+        retry_test.go:42: expected deadl
+        ine exceeded; got request comple
+        ted after caller cancellation; r
+        equest_id=fixture-00017; attempt
+        =3; timeout=3000ms
+Wrapped
+w wrap · Esc · ? help

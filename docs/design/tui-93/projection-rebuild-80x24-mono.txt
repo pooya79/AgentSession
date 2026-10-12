@@ -1,5 +1,5 @@
 AgentSession  /  Projections
-Derived views · session fixture-17
+Session fixture-17
 Canonical evidence remains available · complete · derived usable 2/5 · pending 3
  · running 0 · failed 0 · stale 0 · not implemented 3
 
@@ -20,5 +20,5 @@ Canonical evidence remains available · complete · derived usable 2/5 · pendin
 
 
 
-[FOCUS] search · ready
-↑↓ select · b rebuild · v details · Esc back · ? help
+Search · ready
+b rebuild · v details · Esc · ? help

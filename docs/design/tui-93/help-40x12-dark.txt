@@ -8,5 +8,5 @@ Keyboard help · Timeline
   d            inspect selected event
   u            inspect redacted Unknown
 evidence
-[FOCUS] Help · returns to Timeline
-↑↓ scroll · PgUp/Dn · Esc close
+Help for Timeline
+↑↓ scroll · Esc close

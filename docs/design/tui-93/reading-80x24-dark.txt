@@ -20,5 +20,5 @@ Fix request timeout without hiding errors.
 12. Recorded evidence remains in source order; a build does not establish test
     recovery.
 13. Recorded evidence remains in source order; a build does not establish test
-Target: #1 · open · Index: complete
-↑↓ read · [] events · d inspect · / search · Esc back · ? help
+Target: #1 · open
+↑↓ read · [] events · Esc · ? help

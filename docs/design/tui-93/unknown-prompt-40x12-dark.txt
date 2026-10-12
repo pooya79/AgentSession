@@ -1,12 +1,12 @@
 AgentSession  /  Event
 Inspection #6 · Unsupported session act…
-  Reason: unsupported_record_kind
-  Original kind: future_activity
-  Press u to inspect bounded, redacted r
-  etained evidence.
+unsupported record kind
 
 Retained Unknown evidence
 Press u to inspect a redacted, bounded c
 opy.
-[FOCUS] Wrapped · complete
-↑↓ scroll · u raw · Esc back · ? help
+
+
+
+Wrapped
+u raw · Esc · ? help

@@ -1,8 +1,6 @@
 AgentSession  /  Event
 Inspection #6 · Unsupported session activity · future_activity
-  Reason: unsupported_record_kind
-  Original kind: future_activity
-  Press u to inspect bounded, redacted retained evidence.
+unsupported record kind
 
 Retained Unknown evidence
 136 of 136 bytes · 0 redactions · truncated: false
@@ -20,5 +18,7 @@ te": "Invented unsupported record; raw stays hidden."}}
 
 
 
-[FOCUS] Wrapped · complete
-↑↓ read · u raw · v metadata · Esc back · ? help
+
+
+Wrapped
+u raw · Esc · ? help

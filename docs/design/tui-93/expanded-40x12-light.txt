@@ -1,12 +1,12 @@
 AgentSession  /  Timeline
 Fix request timeout without hiding erro…
+17. Recorded evidence remains in
+    source order; a build does not
+    establish test recovery.
+18. Recorded evidence remains in
+    source order; a build does not
+    establish test recovery.
 19. Recorded evidence remains in
     source order; a build does not
-    establish test recovery.
-20. Recorded evidence remains in
-    source order; a build does not
-    establish test recovery.
-
-╰─
-Target: #3 · - off-screen · Index: comp…
+Target: #3 · - off-screen
 ↑↓ read · [] events · Esc · ? help

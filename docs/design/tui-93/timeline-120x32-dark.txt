@@ -1,10 +1,9 @@
 AgentSession  /  Timeline
 Fix request timeout without hiding errors.
-> ╭─ You
+> You
 Fix request timeout without hiding errors.
-╰─
 
-  ╭─ Assistant
+  Assistant
 § Retry policy
 
 - Bound each retry.
@@ -28,5 +27,6 @@ func retry(ctx context.Context) error {
 8. Recorded evidence remains in source order; a build does not establish test recovery.
 9. Recorded evidence remains in source order; a build does not establish test recovery.
 10. Recorded evidence remains in source order; a build does not establish test recovery.
-Target: #0 · open · Index: complete
-↑↓ read · [] events · d inspect · / search · Esc back · ? help
+11. Recorded evidence remains in source order; a build does not establish test recovery.
+Target: #0 · open
+↑↓ read · [] events · Esc · ? help

@@ -28,5 +28,5 @@ Keyboard help · Timeline
 
 
 
-[FOCUS] Help · returns to Timeline
-↑↓ scroll · PgUp/PgDn · g/G ends · Esc close · ? close
+Help for Timeline
+↑↓ scroll · Esc close

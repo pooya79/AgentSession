@@ -2,17 +2,17 @@ AgentSession  /  Indexing
 Indexing completed successfully.
 3/3 sources checked · 3 sessions observed
 
-Discovered sources
-  rollout-retry.jsonl · completed
-  rollout-search.jsonl · completed
-  rollout-setup.jsonl · completed
-
-v source paths, counters and diagnostics
 
 
 
 
 
 
-[FOCUS] Indexing · Index: complete
-↑↓ scroll · r rescan · Esc · ? help
+
+
+
+
+
+
+
+v details · r rescan · Esc · ? help

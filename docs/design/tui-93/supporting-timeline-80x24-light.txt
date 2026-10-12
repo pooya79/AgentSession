@@ -1,15 +1,15 @@
 AgentSession  /  Timeline
 Fix request timeout without hiding errors.
+    recovery.
 17. Recorded evidence remains in source order; a build does not establish test
     recovery.
 18. Recorded evidence remains in source order; a build does not establish test
     recovery.
 19. Recorded evidence remains in source order; a build does not establish test
-s, …recovery.
+    recovery.
 20. Recorded evidence remains in source order; a build does not establish test
     recovery.
 
-╰─
 
   #2 + Command · RESULT UNAVAILABLE · go test ./internal/client
 
@@ -20,5 +20,5 @@ s, …recovery.
 > #5 + Command · recorded exit 0 · go build ./...
 
 6 events loaded · more available
-Target: #5 · + closed · Index: complete
-↑↓ read · [] events · Enter expand · d inspect · Esc · ? help
+Target: #5 · + closed
+[] events · Enter expand · Esc · ? help

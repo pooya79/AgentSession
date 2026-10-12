@@ -1,12 +1,12 @@
 AgentSession  /  Assessments
-Rule assessments
-Repeated command failures · insufficient
- evidence
-  Within the currently imported record …
-Unresolved failed verification · insuffi
-cient evidence
-  Within the currently imported record …
-Missing verification · insufficient evid
-ence
-[FOCUS] Evidence 1/11 · Enter opens con…
-[] refs · Enter open · Esc · ? help
+Outcome: Unknown (not assessed)
+
+Repeated failures · not enough evidence
+Unresolved checks · not enough evidence
+Missing checks · not enough evidence
+
+v explanations
+
+Supporting events
+Evidence 1/5
+[] evidence · Enter · Esc · ? help

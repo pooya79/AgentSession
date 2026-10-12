@@ -1,12 +1,12 @@
 AgentSession  /  Timeline
 Fix request timeout without hiding erro…
-> ╭─ You
+> You
 Fix request timeout without hiding
 errors.
-╰─
 
-  ╭─ Assistant
+  Assistant
 § Retry policy
 
-Target: #0 · open · Index: complete
+- Bound each retry.
+Target: #0 · open
 ↑↓ read · [] events · Esc · ? help

@@ -1,13 +1,11 @@
 AgentSession  /  Assessments
-Rule assessments
-Repeated command failures · insufficient evidence
-  Within the currently imported record in source order: 2 invocations, 1 failed results, 0 repeated failure sequences, …
-Unresolved failed verification · insufficient evidence
-  Within the currently imported record in source order: 2 recognized Go verification invocations (1 tests, 0 static che…
-Missing verification · insufficient evidence
-  Within the currently imported record in source order: 0 confirmed mutations, 0 applicable Go scopes, 0 with completed…
+Outcome: Unknown (not assessed)
 
-v full explanations and counts
+Repeated failures · not enough evidence
+Unresolved checks · not enough evidence
+Missing checks · not enough evidence
+
+v explanations
 
 Supporting events
 > #4 · Command started
@@ -15,12 +13,6 @@ Supporting events
   #2 · Command started
   #3 · Command completed
   #6 · Unsupported Codex record: future_activity
-  #2 · Command started
-  #3 · Command completed
-  #6 · Unsupported Codex record: future_activity
-  #4 · Command started
-  #5 · Command completed
-  #6 · Unsupported Codex record: future_activity
 
 
 
@@ -28,5 +20,13 @@ Supporting events
 
 
 
-[FOCUS] Evidence 1/11 · Enter opens context
-[] evidence · Enter open · v explain · Esc back · ? help
+
+
+
+
+
+
+
+
+Evidence 1/5
+[] evidence · Enter open · Esc · ? help

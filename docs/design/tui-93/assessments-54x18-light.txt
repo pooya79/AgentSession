@@ -1,18 +1,18 @@
 AgentSession  /  Assessments
-Rule assessments
-Repeated command failures · insufficient evidence
-  Within the currently imported record in source orde…
-Unresolved failed verification · insufficient evidence
-  Within the currently imported record in source orde…
-Missing verification · insufficient evidence
-  Within the currently imported record in source orde…
+Outcome: Unknown (not assessed)
 
-v full explanations and counts
+Repeated failures · not enough evidence
+Unresolved checks · not enough evidence
+Missing checks · not enough evidence
+
+v explanations
 
 Supporting events
 > #4 · Command started
   #5 · Command completed
   #2 · Command started
   #3 · Command completed
-[FOCUS] Evidence 1/11 · Enter opens context
-[] refs · Enter open · Esc · ? help
+  #6 · Unsupported Codex record: future_activity
+
+Evidence 1/5
+[] evidence · Enter · Esc · ? help

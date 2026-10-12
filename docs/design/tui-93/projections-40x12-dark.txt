@@ -1,12 +1,12 @@
 AgentSession  /  Projections
-Derived views · session fixture-17
-Canonical evidence: complete
 
-> search            ready
-  git_correlation   not implemented in t
+> Search            ready
+  Git links         not implemented in t
   his build
-  findings          ready
-  outcomes          not implemented in t
+  Rule assessments  ready
+  Session outcomes  not implemented in t
   his build
-[FOCUS] search · ready
-↑↓ target · t/b act · Esc · ? help
+  Totals            not implemented in t
+  his build
+Search · ready
+b rebuild · Esc · ? help

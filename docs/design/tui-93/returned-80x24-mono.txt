@@ -1,17 +1,12 @@
 AgentSession  /  Sessions
-[FOCUS] Sessions · last activity ↓ errors.
-Sessions 3 · Events 10
+Recent · last activity ↓
 
 > Fix request timeout without hiding errors.
   CODEX · 2026-10-10 12:00 UTC
-  8 events · complete
   Document local setup
   CODEX · 2026-10-09 10:00 UTC
-  1 events · complete
   Inspect search coverage
   CODEX · 2026-10-08 10:00 UTC
-  1 events · complete
-Page 1 · 3 shown
 
 
 
@@ -20,5 +15,10 @@ Page 1 · 3 shown
 
 
 
-CANONICAL INDEX · COMPLETE · 3 sources · 3 sessions
-↑↓ choose · Enter open · / search · v details · ? help
+
+
+
+
+
+
+Enter open · / search · ? help

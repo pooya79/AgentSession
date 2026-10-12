@@ -1,24 +1,24 @@
 AgentSession  /  Assessments
-Repeated command failures · insufficient evidence
-  Within the currently imported record in source order: 2 invocations, 1 failed…
-Unresolved failed verification · insufficient evidence
-  Within the currently imported record in source order: 2 recognized Go verific…
-Missing verification · insufficient evidence
-  Within the currently imported record in son source order: 0 confirmed mutation
-s, …
-v full explanations and counts
+Outcome: Unknown (not assessed)
+
+Repeated failures · not enough evidence
+Unresolved checks · not enough evidence
+Missing checks · not enough evidence
+
+v explanations
 
 Supporting events
+  #4 · Command started
+> #5 · Command completed
+  #2 · Command started
+  #3 · Command completed
+  #6 · Unsupported Codex record: future_activity
 
-  #4 · Command started
-  #5 · Command completed
-  #2 · Command started
-  #3 · Command completed
-  #6 · Unsupported Codex record: future_activity
-  #2 · Command started
-  #3 · Command completed
-  #6 · Unsupported Codex record: future_activity
-  #4 · Command started
-  #5 · Command completed
-[FO6 · Unsupporte2/Codex record: future_activity
-[] evidence · Enter open · v explain · Esc back · ? help
+
+
+
+
+
+
+Evidence 2/5
+[] evidence · Enter open · Esc · ? help

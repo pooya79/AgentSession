@@ -1,8 +1,6 @@
 AgentSession  /  Event
 Inspection #6 · Unsupported session activity · future_activity
-  Reason: unsupported_record_kind
-  Original kind: future_activity
-  Press u to inspect bounded, redacted retained evidence.
+unsupported record kind
 
 Retained Unknown evidence
 Press u to inspect a redacted, bounded copy.
@@ -20,5 +18,7 @@ Press u to inspect a redacted, bounded copy.
 
 
 
-[FOCUS] Wrapped · complete
-↑↓ read · u raw · v metadata · Esc back · ? help
+
+
+Wrapped
+u raw · Esc · ? help

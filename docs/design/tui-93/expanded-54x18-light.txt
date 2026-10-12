@@ -1,18 +1,18 @@
 AgentSession  /  Timeline
 Fix request timeout without hiding errors.
+17. Recorded evidence remains in source order; a
+    build does not establish test recovery.
+18. Recorded evidence remains in source order; a
+    build does not establish test recovery.
 19. Recorded evidence remains in source order; a
     build does not establish test recovery.
 20. Recorded evidence remains in source order; a
     build does not establish test recovery.
 
-╰─
 
   #2 + Command · RESULT UNAVAILABLE · go test ./int…
 
 > #3 - Command · RECORDED FAILURE (exit 1) · go tes…
   Command: go test ./internal/client
-  Working directory: /fixture/project
-  Exit status: 1
-  Output:     --- FAIL: TestRetryTimeout (0.03s)
-Target: #3 · - · Index: complete
+Target: #3 · -
 ↑↓ read · [] events · Esc · ? help

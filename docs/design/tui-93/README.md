@@ -107,28 +107,31 @@ transport/paint latency are outside the cache and model-to-frame guarantees.
 
 ## Check record
 
-On 2026-10-12, after the simplification at `7d268bb`:
+On 2026-10-12, after the second simplification and regression fixes at `b8fe9e7`:
 
 - `GOCACHE=/tmp/agentsession-go-cache make fmt` passed: templ formatting,
   generation and gofmt; no generated output changes.
 - `GOCACHE=/tmp/agentsession-go-cache make check` passed: generated-code
   consistency, static analysis and the complete test suite, including shared
   TUI/web application-service contracts.
-- `GOCACHE=/tmp/agentsession-go-cache go test -race ./internal/tui` passed
-  (75.638 s).
+- `GOCACHE=/tmp/agentsession-go-cache go test -race ./...` passed
+  (TUI: 77.282 s).
 - `CGO_ENABLED=0 GOCACHE=/tmp/agentsession-go-cache go build` for
   `./cmd/agentsession` passed; production capture runner build passed.
 - The full PTY journey passed in all three profiles; source fixture hashes were
   unchanged, no mouse-capture enable sequences appeared, and color-free output
   contained no color controls. All 168 PNG/text pairs, three recordings and
   local gallery links exist. The gallery was opened in the in-app browser and
-  its initial rendered image was verified.
+  the screen, size and profile selectors, previous/next navigation and image
+  loading were verified. The gallery presents one screen at a time.
 - Both final opt-in real-index measurement runs passed, sequentially after
   capture/full/race checks. All four p95s remain below 100 ms; the memory run
   revisited every source-order target and retained the documented exceptions.
-- Two independent code-review agents compared `67d8885...7d268bb`:
+- Two independent code-review agents compared `67d8885...b8fe9e7`:
   Standards: no findings. Spec: no implementation defects or scope creep;
   one completion finding, final owner visual acceptance remains pending.
+  The review found command-whitespace and clipped-preview regressions; both
+  were corrected with failing-then-passing tests before the final review.
 
 **Final owner verdict remains pending.** The agent's checks do not supply the
 required owner judgment or a human terminal-selection verdict. #93 remains

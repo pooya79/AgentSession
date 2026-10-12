@@ -1,5 +1,4 @@
 AgentSession  /  Search
-Search canonical evidence
 Query: go te█st
 
 Query changed · Enter to search.
@@ -20,5 +19,6 @@ Query changed · Enter to search.
 
 
 
-[FOCUS] Query · ←/→ Home/End · Del/Backspace
-Type query · Enter search · Esc results · Ctrl-C quit
+
+←→ move cursor · Backspace/Delete edit
+Enter search · Esc results

@@ -1,10 +1,9 @@
 AgentSession  /  Timeline
 Fix request timeout without hiding errors.
-> ╭─ You
+> You
 Fix request timeout without hiding errors.
-╰─
 
-  ╭─ Assistant
+  Assistant
 § Retry policy
 
 - Bound each retry.
@@ -14,5 +13,6 @@ Code · go
 func retry(ctx context.Context) error {
     return request.WithTimeout(ctx, "https://example
     .invalid/api/very/long/path/for/terminal/wrappin
-Target: #0 · open · Index: complete
+    g", 3*time.Second)
+Target: #0 · open
 ↑↓ read · [] events · Esc · ? help
