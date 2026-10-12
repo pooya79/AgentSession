@@ -21,19 +21,21 @@ func (m Model) projectionLines() []string {
 	case m.projectionsState.loading && len(m.projectionsState.status.Projections) == 0:
 		return append(lines, "", m.spinner.View()+" Loading projection status…")
 	case m.projectionsState.err != nil && len(m.projectionsState.status.Projections) == 0:
-		return append(lines, "", "Could not load projection status: "+m.projectionsState.err.Error())
+		return append(lines, "", "Could not load projection status: "+m.projectionsState.err.Error(), "Press r to retry.")
 	case m.projectionsState.status.State == app.EvidenceNotFound:
 		return append(lines, "", "This session is no longer available.")
+	case m.projectionsState.status.State != app.EvidenceComplete && m.projectionsState.status.State != app.EvidencePartial:
+		return append(lines, "", "Projection status unavailable · r to retry.")
 	}
 	summary := m.projectionsState.status.Summary
 	lines = append(lines,
-		fmt.Sprintf("Canonical evidence remains available · derived usable %d/%d · pending %d · running %d · failed %d · stale %d · not implemented %d",
-			summary.Usable, len(m.projectionsState.status.Projections), summary.Pending, summary.Running, summary.Failed, summary.Stale,
+		fmt.Sprintf("Canonical evidence remains available · %s · derived usable %d/%d · pending %d · running %d · failed %d · stale %d · not implemented %d",
+			evidenceLabel(m.projectionsState.status.State), summary.Usable, len(m.projectionsState.status.Projections), summary.Pending, summary.Running, summary.Failed, summary.Stale,
 			summary.Unimplemented),
 		"",
 	)
 	if m.projectionsState.err != nil {
-		lines = append(lines, "Refresh failed; showing the last observed projection status.", "")
+		lines = append(lines, "Refresh/action failed: "+m.projectionsState.err.Error(), "Previous snapshot · freshness unconfirmed · r to retry.", "")
 	} else if m.projectionsState.loading {
 		lines = append(lines, m.spinner.View()+" Refreshing projection status.", "")
 	}

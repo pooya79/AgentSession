@@ -11,25 +11,47 @@ import (
 // supporting-evidence timeline is open. Requests are canceled before saving;
 // their late responses cannot modify the saved context.
 type navigationContext struct {
-	screen   screen
-	session  model.SessionID
-	timeline timelineState
-	detail   detailState
-	findings findingsState
-	search   searchState
+	screen      screen
+	session     model.SessionID
+	timeline    timelineState
+	detail      detailState
+	findings    findingsState
+	search      searchState
+	projections projectionsState
 }
 
 func (m *Model) pushNavigation() {
+	if m.screen == detailScreen && m.detailState.inspection.State != "" {
+		m.syncViewports()
+	}
 	m.cancelRequest()
 	m.captureTimelineAnchor()
+	// Raw inspection is explicitly requested, short-lived presentation data.
+	// Do not retain it in a saved reader context or a rendered-card cache.
+	m.timelineState.inspections = make(map[model.EventID]app.UnknownEvidenceInspection)
+	m.timelineState.inspectionErrors = make(map[model.EventID]error)
+	m.timelineState.cards = nil
+	m.invalidateTimelineRender()
+	m.timelineState.viewport.SetContentLines(nil)
+	if m.detailState.inspection.State != "" {
+		// The logical inspection anchor survives clearing the viewport buffer;
+		// the next synchronization rebuilds only normalized evidence.
+		m.detailState.viewport.SetContentLines(nil)
+		m.detailState.viewport.SetXOffset(0)
+		m.detailState.renderedPositions = nil
+		m.detailState.lastTop, m.detailState.lastX = 0, 0
+	}
+	m.detailState.inspection = app.UnknownEvidenceInspection{}
+	m.detailState.inspectionErr = nil
+	if m.screen == projectionsScreen {
+		m.stopProjectionObservation()
+	}
 	m.navigation = append(m.navigation, navigationContext{
 		screen: m.screen, session: m.sessionsState.selected,
 		timeline: m.timelineState, detail: m.detailState,
 		findings: m.findingsState, search: m.searchState,
+		projections: m.projectionsState,
 	})
-	if m.screen == projectionsScreen {
-		m.stopProjectionObservation()
-	}
 }
 
 func (m *Model) runSearch(cursor string) tea.Cmd {
@@ -84,6 +106,12 @@ func (m *Model) back() (tea.Model, tea.Cmd) {
 		m.screen, m.sessionsState.selected = previous.screen, previous.session
 		m.timelineState, m.detailState = previous.timeline, previous.detail
 		m.findingsState, m.searchState = previous.findings, previous.search
+		if m.screen == projectionsScreen {
+			generation := m.projectionsState.generation
+			m.projectionsState = previous.projections
+			m.projectionsState.generation = generation
+			m.projectionsState.cancel = nil
+		}
 		if m.screen == timelineScreen && len(m.timelineState.page.Events) > 0 && m.timelineState.page.Payloads == nil {
 			notice := m.timelineState.notice
 			cmd := m.reloadTimeline()
@@ -96,6 +124,8 @@ func (m *Model) back() (tea.Model, tea.Cmd) {
 			return m, tea.Batch(m.reloadSessions(), m.observeNow())
 		case projectionsScreen:
 			return m, m.observeProjectionsNow()
+		case indexingScreen:
+			return m, m.observeNow()
 		case timelineScreen:
 			if len(m.timelineState.page.Events) == 0 {
 				return m, m.reloadTimeline()
@@ -208,6 +238,8 @@ func (m *Model) move(delta int) {
 	case projectionsScreen:
 		if len(m.projectionsState.status.Projections) > 0 {
 			m.projectionsState.cursor = clamp(m.projectionsState.cursor+delta, 0, len(m.projectionsState.status.Projections)-1)
+			m.projectionsState.revealTarget = true
+			m.syncViewports()
 		}
 	case detailScreen, findingsScreen, indexingScreen:
 		m.moveScroll(delta)
@@ -258,6 +290,8 @@ func (m *Model) moveToBoundary(last bool) {
 		if last {
 			m.projectionsState.cursor = len(m.projectionsState.status.Projections) - 1
 		}
+		m.projectionsState.revealTarget = true
+		m.syncViewports()
 	case detailScreen, findingsScreen:
 		m.syncViewports()
 		if last {
@@ -288,6 +322,9 @@ func (m *Model) moveScroll(delta int) {
 	}
 	if m.screen == indexingScreen {
 		target = &m.indexingState.viewport
+	}
+	if m.screen == projectionsScreen {
+		target = &m.projectionsState.viewport
 	}
 	if delta < 0 {
 		target.ScrollUp(-delta)

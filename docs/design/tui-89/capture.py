@@ -14,9 +14,13 @@ from PIL import Image, ImageDraw, ImageFont
 
 FIXTURES = Path(__file__).resolve().parent/'fixtures'
 SEARCH = '--search' in sys.argv
+SUPPORTING = '--supporting' in sys.argv
 OUT = Path(__file__).resolve().parent
 if SEARCH:
     OUT = OUT.parent/'tui-91'
+    OUT.mkdir(exist_ok=True)
+elif SUPPORTING:
+    OUT = OUT.parent/'tui-92'
     OUT.mkdir(exist_ok=True)
 BINARY = sys.argv[1] if len(sys.argv) > 1 else '/tmp/agentsession-89-capture'
 FONT = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf', 14)
@@ -56,7 +60,7 @@ def capture(theme):
     screen = Screen(120, 32)
     stream = Stream(screen)
     started = time.monotonic()
-    recording = [{'version': 2, 'width': 120, 'height': 32, 'title': 'AgentSession ' + ('#91 search ' if SEARCH else '#89 ') + theme}]
+    recording = [{'version': 2, 'width': 120, 'height': 32, 'title': 'AgentSession ' + ('#92 supporting ' if SUPPORTING else '#91 search ' if SEARCH else '#89 ') + theme}]
     pending = ''
 
     def send(text):
@@ -109,7 +113,68 @@ def capture(theme):
 
     drain(1.5)
     assert 'PREVIEW' in '\n'.join(screen.display), '\n'.join(screen.display)
-    if SEARCH:
+    if SUPPORTING:
+        send('i'); drain()
+        assert 'Indexing completed successfully' in '\n'.join(screen.display)
+        frame('indexing-120x32')
+        for cols, rows in ((80,24), (54,18), (40,12)):
+            resize(cols, rows)
+            frame(f'indexing-{cols}x{rows}')
+        resize(80,24)
+        send('?'); drain()
+        frame('help-80x24')
+        send('G'); drain()
+        assert 'rebuild all' in '\n'.join(screen.display)
+        frame('help-end-80x24')
+        send('\x1b'); drain()
+        send('\x1b'); drain()
+        send('\r'); drain()
+        send('f'); drain()
+        for cols, rows in ((120,32), (80,24), (54,18), (40,12)):
+            resize(cols, rows)
+            frame(f'assessments-{cols}x{rows}')
+        resize(80,24)
+        send(']'); drain()
+        frame('supporting-reference-80x24')
+        send('\r'); drain()
+        assert 'Timeline' in '\n'.join(screen.display)
+        frame('supporting-timeline-80x24')
+        send('\x1b'); drain()
+        frame('assessment-return-80x24')
+        send('\x1b'); drain()
+        send('x'); drain()
+        for cols, rows in ((120,32), (80,24), (54,18), (40,12)):
+            resize(cols, rows)
+            frame(f'projections-{cols}x{rows}')
+        resize(80,24)
+        send('g'); drain()
+        send('b'); drain(1)
+        assert 'attempts 2' in '\n'.join(screen.display)
+        frame('projection-rebuild-80x24')
+        send('a'); drain()
+        frame('projection-all-disabled-80x24')
+        send('\x1b'); drain()
+        send('g' + ']'*3); drain()
+        send('d'); drain()
+        for cols, rows in ((120,32), (80,24), (54,18), (40,12)):
+            resize(cols, rows)
+            frame(f'details-{cols}x{rows}')
+        resize(80,24)
+        send('w' + '\x1b[C'*10); drain()
+        frame('unwrapped-80x24')
+        send('\x1b'); drain()
+        send('g' + ']'*6); drain()
+        send('d'); drain()
+        assert 'Press u' in '\n'.join(screen.display)
+        frame('unknown-explicit-80x24')
+        send('u'); drain()
+        send('G'); drain()
+        assert 'raw stays hidden' in '\n'.join(screen.display)
+        frame('unknown-redacted-80x24')
+        resize(32,10)
+        frame('resize-32x10')
+        send('q')
+    elif SEARCH:
         def query(text):
             send('/')
             drain(0.15)

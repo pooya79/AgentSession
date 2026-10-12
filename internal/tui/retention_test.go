@@ -389,8 +389,8 @@ func TestTimelineSavedHistoryCanInspectUnknownEvidenceAfterReload(t *testing.T) 
 			m, _ = updateModel(t, m, cmd())
 		}
 	}
-	if got := m.View().Content; !strings.Contains(got, "Raw inspection evicted") || strings.Contains(got, "SANITIZED RAW EVIDENCE") {
-		t.Fatalf("raw eviction/explicit-action state lost:\n%s", got)
+	if got := m.View().Content; !strings.Contains(got, "Press u") || strings.Contains(got, "SANITIZED RAW EVIDENCE") {
+		t.Fatalf("raw navigation clearing/explicit-action state lost:\n%s", got)
 	}
 	m = historyKey(t, m, "u")
 	if got := m.View().Content; !strings.Contains(got, "SANITIZED RAW EVIDENCE") {

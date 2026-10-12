@@ -2,6 +2,7 @@ package tui
 
 import (
 	"cmp"
+	"context"
 	"reflect"
 	"slices"
 
@@ -183,7 +184,10 @@ func (m *Model) clearSupersededReads() {
 		m.searchState.loading = false
 		m.searchState.notice = "Search canceled."
 	}
-	m.detailState.loading = false
+	if m.detailState.loading {
+		m.detailState.err = inspectionError(context.Canceled)
+		m.detailState.loading = false
+	}
 	m.findingsState.loading = false
 	changed := false
 	for eventID, loading := range m.timelineState.inspectionLoading {

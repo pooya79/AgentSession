@@ -90,6 +90,25 @@ have text labels in dark, light and color-free output (`NO_COLOR=1`). Mouse
 capture stays disabled. See the [production terminal captures](docs/design/tui-89/README.md)
 for the comparison with the accepted design.
 
+Supporting screens use the same focus footer and Esc return behavior. In rule
+assessments, `[`/`]` reveal the selected supporting reference and Enter opens its
+timeline context; Esc restores the assessment and then the original reading
+position. In projections, arrows or `j`/`k` select the action scope, while
+Page Up/Page Down read long status and diagnostic text without changing that
+scope. `t` retries implemented pending/failed projections, `b` rebuilds the
+selected implemented projection, and `a` offers a `y`/`n`/Esc confirmation only
+when every registered projection can be built. Leaving a panel stops observation
+without canceling application-owned work. Search returns to the saved supporting
+screen and resumes observation where needed.
+
+Help owns its controls while open: arrows, Page Up/Page Down and `g`/`G` scroll;
+Esc or `?` returns to the reader. Detail and assessment reads show loading,
+cancellation and retry separately from missing or partial evidence. Command/tool
+details say when no output was recorded. Unknown raw inspection requires `u`,
+remains bounded and redacted by the shared service, and clears on navigation;
+it is still available when the normalized payload is unavailable. See the
+[supporting-screen terminal captures](docs/design/tui-92/README.md).
+
 To start the web interface:
 
 ```bash

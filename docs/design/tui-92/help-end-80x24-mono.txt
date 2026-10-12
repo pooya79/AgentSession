@@ -1,0 +1,24 @@
+AgentSession  /  Indexing  ·  local · offline · read-only
+  f            inspect rule assessments from the timeline
+  [ / ]        select assessment evidence; Enter opens timeline context
+  i            inspect indexing details from sessions
+  /            open search or edit the current search query
+
+Search editing
+  ←/→          move the query cursor
+  Home/End     beginning/end of query (also Ctrl-A/Ctrl-E)
+  Backspace/Del delete before/at the cursor
+  Paste        insert query text, including shortcut characters
+  Enter        submit query; Esc stops editing, then returns
+  r            retry search; edited queries require a new search
+  Filters      session: kind: after: before: file: tool: command:
+  Shortcuts such as q / ? [ ] remain text while editing.
+
+Evidence actions
+  x            inspect projection lifecycle from a timeline
+  u            inspect redacted retained evidence for an Unknown event
+  t            retry implemented pending or failed projections
+  b            rebuild the focused projection when implemented
+  a            rebuild all only when every projection is implemented
+[FOCUS] Help · returns to Indexing
+↑↓ scroll · PgUp/PgDn · g/G ends · Esc close · ? close

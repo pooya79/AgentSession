@@ -1,0 +1,24 @@
+AgentSession  /  Timeline  ·  local · offline · read-only
+Timeline · session fixture-17 · canonical complete
+17. Recorded evidence remains in source order; a build does not establish test
+    recovery.
+18. Recorded evidence remains in source order; a build does not establish test
+    recovery.
+19. Recorded evidence remains in source order; a build does not establish test
+    recovery.
+20. Recorded evidence remains in source order; a build does not establish test
+    recovery.
+
+╰─
+
+  #2 + Command · RESULT UNAVAILABLE · go test ./internal/client
+
+  #3 + Command · RECORDED FAILURE (exit 1) · go test ./internal/client
+
+  #4 + Command · RESULT UNAVAILABLE · go build ./...
+
+> #5 + Command · recorded exit 0 · go build ./...
+
+6 events loaded · more available
+Target: evt_dc369f017c975… #5 · + closed · Index: complete
+↑↓ scroll · [/] events · Enter toggle · d inspect · Esc back · ? help

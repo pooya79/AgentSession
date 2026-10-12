@@ -314,7 +314,10 @@ func (m *Model) observeProjectionsNow() tea.Cmd {
 // runProjectionAction marks the panel busy while the application accepts or
 // joins projection work.
 func (m *Model) runProjectionAction(kind string, retry bool) tea.Cmd {
+	m.startProjectionObservation()
 	m.projectionsState.loading = true
+	m.projectionsState.err = nil
+	m.projectionsState.actionNotice = "Submitting projection action; waiting for application admission."
 	return m.startSpinner(projectionAction(
 		m.services, m.projectionsState.generation, m.sessionsState.selected, kind, retry,
 	))

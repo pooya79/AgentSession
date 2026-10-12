@@ -40,8 +40,32 @@ func (m *Model) syncViewports() {
 		m.indexingState.viewport.SetWidth(width)
 		m.indexingState.viewport.SetHeight(height)
 		m.indexingState.viewport.SetContentLines(sanitizeLines(m.indexingContentLines()))
+	case projectionsScreen:
+		m.syncProjectionViewport(width, height)
 	}
 
+}
+
+// syncProjectionViewport wraps diagnostics without clipping them and reveals
+// the action target only on selection changes, so page scrolling stays put.
+func (m *Model) syncProjectionViewport(width, height int) {
+	state := &m.projectionsState
+	var lines []string
+	target := -1
+	for _, line := range m.projectionLines() {
+		line = terminalText(line)
+		if strings.HasPrefix(line, "> ") {
+			target = len(lines)
+		}
+		lines = append(lines, wrapIndented(line, width, true)...)
+	}
+	state.viewport.SetWidth(width)
+	state.viewport.SetHeight(height)
+	state.viewport.SetContentLines(lines)
+	if state.revealTarget && target >= 0 {
+		state.viewport.SetYOffset(target)
+		state.revealTarget = false
+	}
 }
 
 // syncDetailViewport retains a logical line and display-cell position through
@@ -49,13 +73,6 @@ func (m *Model) syncViewports() {
 // a short unwrapped document cannot put its target line at the top of the view.
 func (m *Model) syncDetailViewport(width, height int) {
 	state := &m.detailState
-	if m.screen == findingsScreen {
-		state.viewport.SoftWrap = true
-		state.viewport.SetWidth(width)
-		state.viewport.SetHeight(height)
-		state.viewport.SetContentLines(sanitizeLines(m.findingsContentLines()))
-		return
-	}
 	top, x := state.viewport.YOffset(), state.viewport.XOffset()
 	if !state.anchorSet || top != state.lastTop {
 		if len(state.renderedPositions) > 0 {
@@ -70,6 +87,9 @@ func (m *Model) syncDetailViewport(width, height int) {
 	var lines []string
 	var positions []inspectionPosition
 	physical := m.detailContentLines()
+	if m.screen == findingsScreen {
+		physical = m.findingsContentLines()
+	}
 	for index, line := range physical {
 		line = terminalText(line)
 		parts := []string{line}

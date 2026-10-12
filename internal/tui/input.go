@@ -52,6 +52,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		switch key {
 		case "esc", "n":
 			m.projectionsState.confirmAll = false
+			m.projectionsState.viewport.GotoTop()
 			return m, nil
 		case "y":
 			m.projectionsState.confirmAll = false
@@ -72,7 +73,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 			}
 			m.findingsState.evidenceCursor = clamp(m.findingsState.evidenceCursor+delta, 0, max(0, len(m.findingReferences())-1))
 			m.syncViewports()
-			m.detailState.viewport.GotoBottom()
+			m.revealFindingReference()
 			return m, nil
 		case "enter":
 			return m.openFindingEvidence()
@@ -87,8 +88,8 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 			vp := m.detailState.viewport
 			vp.GotoTop()
 			vp.SetXOffset(0)
-			m.detailState = detailState{viewport: vp, loading: true}
 			ctx := m.replaceRequest()
+			m.detailState = detailState{viewport: vp, loading: true}
 			return m, m.startSpinner(loadDetail(ctx, m.services, m.requestGeneration, m.sessionsState.selected, event.ID))
 		}
 	case "w":
@@ -115,7 +116,10 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 			m.pushNavigation()
 			m.screen = findingsScreen
 			m.findingsState.evidenceCursor = 0
-			m.detailState.viewport.GotoTop()
+			vp := m.detailState.viewport
+			vp.GotoTop()
+			vp.SetXOffset(0)
+			m.detailState = detailState{viewport: vp}
 			return m, m.loadFindings()
 		}
 	case "esc":
@@ -145,8 +149,13 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		if m.screen == timelineScreen {
 			m.pushNavigation()
 			m.screen = projectionsScreen
+			if m.projectionsState.status.SessionID != m.sessionsState.selected {
+				m.projectionsState.status = app.ProjectionStatus{}
+				m.projectionsState.actionNotice = ""
+			}
 			m.projectionsState.cursor = 0
 			m.projectionsState.confirmAll = false
+			m.projectionsState.viewport.GotoTop()
 			return m, m.observeProjectionsNow()
 		}
 	case "r":
@@ -158,6 +167,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 				ctx := m.replaceRequest()
 				m.timelineState.inspectionErrors[event.ID] = nil
 				m.timelineState.inspectionLoading[event.ID] = true
+				m.timelineState.expanded[event.ID] = true
 				m.invalidateTimelineRender()
 				return m, m.startSpinner(loadUnknownEvidence(
 					ctx, m.services, m.requestGeneration, m.sessionsState.selected, event.ID,
@@ -196,6 +206,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.projectionsState.confirmAll = true
+			m.projectionsState.viewport.GotoTop()
 		}
 	case "n":
 		if m.screen == timelineScreen {
@@ -239,7 +250,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 			m.timelineState.scrollDirection = -1
 			m.timelineState.viewport.PageUp()
 			return m, m.requestTimelineHistory()
-		} else if m.screen == detailScreen || m.screen == findingsScreen || m.screen == indexingScreen {
+		} else if m.screen == detailScreen || m.screen == findingsScreen || m.screen == indexingScreen || m.screen == projectionsScreen {
 			m.moveScroll(-m.pageStep())
 		} else {
 			return m.previousPage()
@@ -252,7 +263,7 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 			m.timelineState.scrollDirection = 1
 			m.timelineState.viewport.PageDown()
 			return m, m.requestTimelineHistory()
-		} else if m.screen == detailScreen || m.screen == findingsScreen || m.screen == indexingScreen {
+		} else if m.screen == detailScreen || m.screen == findingsScreen || m.screen == indexingScreen || m.screen == projectionsScreen {
 			m.moveScroll(m.pageStep())
 		} else {
 			return m.nextPage()

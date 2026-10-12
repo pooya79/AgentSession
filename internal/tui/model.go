@@ -152,6 +152,15 @@ func visibleError(err error) error {
 	return err
 }
 
+// inspectionError keeps cancellation visible when the current supporting read
+// ends without a replacement. Superseded responses are rejected by generation.
+func inspectionError(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return fmt.Errorf("read canceled: %w", err)
+	}
+	return err
+}
+
 // restoreSessionSelection prefers stable session identity over row position
 // when a refreshed page still contains the previously selected session.
 func (m *Model) restoreSessionSelection() {

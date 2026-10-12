@@ -64,10 +64,30 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen != findingsScreen {
 			return m, nil
 		}
-		m.findingsState.err = visibleError(msg.err)
+		m.findingsState.err = inspectionError(msg.err)
 		if msg.err == nil {
+			previous := m.findingReferences()
+			selected := model.EventID("")
+			if m.findingsState.evidenceCursor < len(previous) {
+				selected = previous[m.findingsState.evidenceCursor]
+			}
 			m.findingsState.page = msg.page
 			m.findingsState.refreshIncomplete = false
+			m.findingsState.notice = ""
+			refs := m.findingReferences()
+			m.findingsState.evidenceCursor = clamp(m.findingsState.evidenceCursor, 0, max(0, len(refs)-1))
+			if selected != "" {
+				found := false
+				for i, id := range refs {
+					if id == selected {
+						m.findingsState.evidenceCursor, found = i, true
+						break
+					}
+				}
+				if !found {
+					m.findingsState.notice = "Supporting reference changed or removed; showing available evidence."
+				}
+			}
 		}
 		m.syncViewports()
 		return m, nil
@@ -161,7 +181,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.detailState.loading = false
-		m.detailState.err = visibleError(msg.err)
+		m.detailState.err = inspectionError(msg.err)
 		if msg.err == nil {
 			m.detailState.detail = msg.detail
 		}
@@ -173,7 +193,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.timelineState.inspectionLoading[msg.eventID] {
 			delete(m.timelineState.inspectionLoading, msg.eventID)
-			m.timelineState.inspectionErrors[msg.eventID] = visibleError(msg.err)
+			m.timelineState.inspectionErrors[msg.eventID] = inspectionError(msg.err)
 			if msg.err == nil {
 				m.timelineState.inspections[msg.eventID] = msg.inspection
 				m.timelineState.expanded[msg.eventID] = true
@@ -186,7 +206,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.detailState.inspectionLoading = false
-		m.detailState.inspectionErr = visibleError(msg.err)
+		m.detailState.inspectionErr = inspectionError(msg.err)
 		if msg.err == nil {
 			m.detailState.inspection = msg.inspection
 		}
@@ -242,10 +262,20 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.projectionsState.loading = false
-		m.projectionsState.err = visibleError(msg.err)
+		m.projectionsState.err = inspectionError(msg.err)
 		if msg.err == nil {
+			selected := ""
+			if m.projectionsState.cursor < len(m.projectionsState.status.Projections) {
+				selected = m.projectionsState.status.Projections[m.projectionsState.cursor].Kind
+			}
 			m.projectionsState.status = msg.status
 			m.projectionsState.actionNotice = ""
+			for i, state := range msg.status.Projections {
+				if state.Kind == selected {
+					m.projectionsState.cursor = i
+					break
+				}
+			}
 			if m.projectionsState.cursor >= len(msg.status.Projections) {
 				m.projectionsState.cursor = max(0, len(msg.status.Projections)-1)
 			}
@@ -259,7 +289,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.projectionsState.loading = false
-		m.projectionsState.err = visibleError(msg.err)
+		m.projectionsState.err = inspectionError(msg.err)
 		if msg.err == nil {
 			m.projectionsState.status = msg.action.Status
 			m.projectionsState.status.State = msg.action.State

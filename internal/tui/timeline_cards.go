@@ -158,14 +158,22 @@ func timelineCardLines(
 		addField("Tool", value.ToolName)
 		addField("Call ID", value.CallID)
 		addField("Error", optionalBool(value.IsError))
-		addField("Output", value.Output)
+		output := value.Output
+		if output == "" {
+			output = "No output recorded."
+		}
+		addField("Output", output)
 	case model.CommandData:
 		addField("Invocation ID", reportedString(value.InvocationID))
 		addField("Phase", reportedString(string(value.Phase)))
 		addField("Command", value.Command)
 		addField("Working directory", reportedString(value.WorkingDirectory))
 		addField("Exit status", optionalInt(value.ExitCode))
-		addField("Output", value.Output)
+		output := value.Output
+		if output == "" {
+			output = "No output recorded."
+		}
+		addField("Output", output)
 	case model.PatchData:
 		addField("Change ID", reportedString(value.ChangeID))
 		addField("Status", reportedString(string(value.Status)))
@@ -204,7 +212,7 @@ func timelineCardLines(
 			lines = append(lines, "  Loading bounded, redacted retained evidence…")
 		case inspectionErr != nil:
 			lines = append(lines, "  Could not inspect retained evidence: "+safeInline(inspectionErr.Error()))
-		case inspection.EventID != "":
+		case inspection.State != "":
 			switch inspection.State {
 			case app.EvidenceUnavailable:
 				lines = append(lines, "  Retained evidence for this event is unavailable.")

@@ -54,7 +54,7 @@ func (m Model) View() tea.View {
 		case findingsScreen:
 			body = strings.Split(snapshot.detailState.viewport.View(), "\n")
 		case projectionsScreen:
-			body = snapshot.projectionLines()
+			body = strings.Split(snapshot.projectionsState.viewport.View(), "\n")
 		case searchScreen:
 			body = snapshot.searchLines()
 		}

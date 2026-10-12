@@ -11,12 +11,16 @@ import (
 func (m Model) indexingContentLines() []string {
 	status := m.indexingState.status
 	lines := []string{"Indexing details", ""}
-	switch status.Phase {
-	case app.ImportAllIndexing:
+	switch {
+	case m.indexingState.err != nil:
+		lines = append(lines, "AgentSession indexing observation failed: "+m.indexingState.err.Error(), "Status unavailable · r to rescan.")
+	case status.Failure != "":
+		lines = append(lines, "AgentSession indexing failed; available evidence was retained.")
+	case status.Active || status.Phase == app.ImportAllIndexing:
 		lines = append(lines, "Indexing is active. It continues while you browse imported sessions.")
-	case app.ImportAllUpToDate:
+	case status.Phase == app.ImportAllUpToDate:
 		lines = append(lines, "Indexing completed successfully.")
-	case app.ImportAllIssues:
+	case status.Phase == app.ImportAllIssues:
 		lines = append(lines, "Indexing completed with issues; available evidence was retained.")
 	default:
 		lines = append(lines, "Indexing is unavailable.")
@@ -46,7 +50,7 @@ func (m Model) indexingContentLines() []string {
 		}
 	}
 	if len(status.RecentDiagnostics) > 0 {
-		lines = append(lines, "", "Recent discovery/import diagnostics")
+		lines = append(lines, "", "AgentSession discovery/import diagnostics")
 		for _, diagnostic := range status.RecentDiagnostics {
 			where := string(diagnostic.SourceID)
 			if where == "" {

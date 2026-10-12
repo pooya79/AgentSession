@@ -30,69 +30,101 @@ func (m Model) renderWidth() int {
 
 // helpLine uses compact controls when terminal dimensions are constrained.
 func (m Model) helpLine(width int) string {
-	if width < 80 || m.height > 0 && m.height < 24 {
-		switch m.screen {
-		case sessionsScreen:
-			return "↑↓ select · Enter open · ? help"
-		case timelineScreen:
-			return "↑↓ scroll · [/] target · ? help"
-		case searchScreen:
-			if m.searchState.editing {
-				return "Type query · Enter search · Esc results"
-			}
-			return "Enter timeline · / edit · ? help"
-		case detailScreen:
-			return "w wrap · ←→ pan · Esc back · ? help"
-		default:
-			return "↑↓ move · Esc back · ? help"
+	compact := width < 80 || m.height > 0 && m.height < 24
+	if m.helpOpen {
+		if compact {
+			return "↑↓ scroll · PgUp/Dn · Esc close"
 		}
-	}
-	if width < 96 || m.height > 0 && m.height < 18 {
-		switch m.screen {
-		case sessionsScreen:
-			return "↑↓ move · Enter open · i index · r rescan · ? help · q quit"
-		case timelineScreen:
-			return "↑↓ scroll · [/] events · Enter toggle · d inspect · Esc back · ? help"
-		case detailScreen:
-			return "↑↓ scroll · w wrap · ←→ pan · Esc back · ? help"
-		case projectionsScreen:
-			return "↑↓ select · t retry · b rebuild · Esc back · ? help"
-		case searchScreen:
-			if m.searchState.editing {
-				return "Type query · Enter search · Esc results · Ctrl-C quit"
-			}
-			return "/ edit · ↑↓ select · Enter timeline · n/p page · Esc back · ? help"
-		default:
-			return "↑↓ scroll · PgUp/PgDn · Esc back · r refresh · ? help"
-		}
+		return "↑↓ scroll · PgUp/PgDn · g/G ends · Esc close · ? close"
 	}
 	switch m.screen {
 	case findingsScreen:
-		return "↑↓ scroll · [/] evidence · Enter timeline context · r refresh · Esc back"
+		if compact {
+			return "[] refs · Enter open · Esc · ? help"
+		}
+		return "↑↓ scroll · [/] evidence · Enter context · r retry · Esc back · ? help"
+	case projectionsScreen:
+		if m.projectionsState.confirmAll {
+			return "y confirm · n/Esc cancel · ? help"
+		}
+		if compact {
+			return "↑↓ target · t/b act · Esc · ? help"
+		}
+		return "↑↓ select · PgUp/Dn read · t retry · b rebuild · a all · Esc · ? help"
+	case indexingScreen:
+		if compact {
+			return "↑↓ scroll · r rescan · Esc · ? help"
+		}
+		return "↑↓ scroll · PgUp/PgDn · g/G ends · r rescan · Esc back · ? help"
+	case detailScreen:
+		if m.detailState.detail.Event.Kind == model.EventKindUnknown {
+			if compact {
+				return "↑↓ scroll · u raw · Esc back · ? help"
+			}
+			return "↑↓ scroll · w wrap · ←→ pan · u raw · r retry · Esc back · ? help"
+		}
+		if compact {
+			return "↑↓ scroll · w wrap · Esc back · ? help"
+		}
+		return "↑↓ scroll · w wrap · ←→ pan · r retry · Esc back · ? help"
 	case sessionsScreen:
-		return "↑/↓ move · Enter open · / search · i indexing · r rescan · ? help · q quit"
+		if compact {
+			return "↑↓ select · Enter open · ? help"
+		}
+		return "↑↓ move · Enter open · / search · i index · r rescan · ? help · q quit"
 	case searchScreen:
 		if m.searchState.editing {
+			if compact {
+				return "Type query · Enter search · Esc results"
+			}
 			return "Type query · Enter search · Esc results · Ctrl-C quit"
 		}
-		return "/ edit · ↑/↓ select · Enter timeline · n/p page · Esc back · r retry · ? help"
-	case indexingScreen:
-		return "↑/↓ or j/k scroll · g/G top/bottom · PgUp/PgDn scroll · Esc sessions · r rescan · ? help · q quit"
-	case timelineScreen:
-		return "↑↓ j/k scroll · PgUp/PgDn · [/] events · Enter toggle · d inspect · u raw · f rules · x projections · Esc back · ? help"
-	case projectionsScreen:
-		return "↑/↓ select · r refresh · t retry implemented · b rebuild selected · a rebuild all when available · Esc timeline · ? help"
-	default:
-		if m.detailState.detail.Event.Kind == model.EventKindUnknown {
-			return "↑/↓ or j/k scroll · u inspect Unknown · Esc timeline · r reload · ? help · q quit"
+		if compact {
+			return "Enter timeline · / edit · ? help"
 		}
-		return "↑/↓ or j/k scroll · g/G top/bottom · PgUp/PgDn scroll · Esc timeline · r reload · ? help · q quit"
+		return "/ edit · ↑↓ select · Enter timeline · n/p page · Esc back · ? help"
+	case timelineScreen:
+		if compact {
+			return "↑↓ scroll · [/] target · ? help"
+		}
+		if width < 96 {
+			return "↑↓ scroll · [/] events · Enter toggle · d inspect · Esc back · ? help"
+		}
+		return "↑↓ j/k scroll · PgUp/PgDn · [/] events · Enter toggle · d inspect · u raw · f rules · x projections · Esc back · ? help"
+	default:
+		return "Esc back · ? help"
 	}
 }
 
 // statusLine keeps the action target visible even when it is outside the
 // reading viewport. Scrolling never changes which event Enter acts on.
 func (m Model) statusLine() string {
+	if m.helpOpen {
+		return "[FOCUS] Help · returns to " + m.screenLabel()
+	}
+	if m.screen == projectionsScreen && !m.helpOpen {
+		if m.projectionsState.confirmAll {
+			return "[FOCUS] Confirm rebuild all · y / n"
+		}
+		if m.projectionsState.err != nil {
+			return "[FOCUS] Projection ERROR · r retry"
+		}
+		if len(m.projectionsState.status.Projections) > 0 {
+			state := m.projectionsState.status.Projections[m.projectionsState.cursor]
+			status := string(state.Status)
+			if state.Stale {
+				status = "stale · " + status
+			}
+			if m.projectionsState.loading {
+				status = "refreshing / admitting action"
+			}
+			return "[FOCUS] " + state.Kind + " · " + status
+		}
+		if m.projectionsState.loading {
+			return "[FOCUS] Projections · loading status/action"
+		}
+		return "[FOCUS] Projections · r retry status"
+	}
 	if m.screen == searchScreen && !m.helpOpen {
 		if m.searchState.editing {
 			return "[FOCUS] Query · ←/→ Home/End · Del/Backspace"
@@ -101,9 +133,19 @@ func (m Model) statusLine() string {
 	}
 	if m.screen == detailScreen && !m.helpOpen {
 		if m.detailState.unwrapped {
-			return fmt.Sprintf("Unwrapped · column %d · ←/→ pan · w wrap", m.detailState.viewport.XOffset()+1)
+			return fmt.Sprintf("[FOCUS] Unwrapped · column %d · ←/→ pan", m.detailState.viewport.XOffset()+1)
 		}
-		return "Wrapped · w unwrapped inspection · Esc restores timeline"
+		return "[FOCUS] Wrapped · " + evidenceLabel(m.detailState.detail.State)
+	}
+	if m.screen == findingsScreen {
+		refs := m.findingReferences()
+		if len(refs) > 0 && m.findingsState.page.State == app.EvidenceComplete {
+			return fmt.Sprintf("[FOCUS] Evidence %d/%d · Enter opens context", m.findingsState.evidenceCursor+1, len(refs))
+		}
+		return "[FOCUS] Assessments · " + evidenceLabel(m.findingsState.page.State)
+	}
+	if m.screen == indexingScreen {
+		return "[FOCUS] Indexing · " + m.compactIndexStatus()
 	}
 	if m.screen == timelineScreen && !m.helpOpen && m.timelineState.selected != "" {
 		state := "open"

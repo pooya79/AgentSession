@@ -62,14 +62,13 @@ func (m Model) detailContentLines() []string {
 	lines = []string{"Normalized payload"}
 	if m.detailState.detail.State == app.EvidenceUnavailable || m.detailState.detail.Payload == nil {
 		lines = append(lines, "Payload evidence is unavailable.", "")
-		lines = append(lines, metadata...)
-		return lines
+	} else {
+		card := timelineCardLines(event, m.detailState.detail.Payload, 1<<30, false, true, app.UnknownEvidenceInspection{}, false, nil)
+		if timelinePayloadTruncatable(m.detailState.detail.Payload) {
+			card = card[:len(card)-1]
+		}
+		lines = append(lines, card...)
 	}
-	card := timelineCardLines(event, m.detailState.detail.Payload, 1<<30, false, true, app.UnknownEvidenceInspection{}, false, nil)
-	if timelinePayloadTruncatable(m.detailState.detail.Payload) {
-		card = card[:len(card)-1]
-	}
-	lines = append(lines, card...)
 	lines = append(lines, "", "Event metadata")
 	lines = append(lines, metadata...)
 	if event.Kind == model.EventKindUnknown {
@@ -78,7 +77,7 @@ func (m Model) detailContentLines() []string {
 		case m.detailState.inspectionLoading:
 			lines = append(lines, m.spinner.View()+" Loading and redacting retained evidence…")
 		case m.detailState.inspectionErr != nil:
-			lines = append(lines, "Inspection failed: "+m.detailState.inspectionErr.Error())
+			lines = append(lines, "Inspection failed: "+m.detailState.inspectionErr.Error(), "Press u to retry retained inspection.")
 		case m.detailState.inspection.State == app.EvidenceUnavailable:
 			lines = append(lines, "Retained evidence for this event is no longer available.")
 		case m.detailState.inspection.State == app.EvidenceNotFound:

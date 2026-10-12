@@ -98,6 +98,8 @@ type projectionsState struct {
 	cursor       int
 	confirmAll   bool
 	actionNotice string
+	viewport     viewport.Model
+	revealTarget bool
 }
 
 // searchState keeps query editing separate from bounded result navigation.

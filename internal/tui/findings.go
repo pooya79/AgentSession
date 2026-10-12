@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/pooya79/AgentSession/internal/app"
@@ -15,6 +16,7 @@ type findingsState struct {
 	err               error
 	loading           bool
 	evidenceCursor    int
+	notice            string
 }
 type findingsLoadedMsg struct {
 	generation uint64
@@ -41,6 +43,9 @@ func (m *Model) loadFindings() tea.Cmd {
 func (m Model) findingsContentLines() []string {
 	lines := []string{"Rule assessments · session " + string(m.sessionsState.selected)}
 	page := m.findingsState.page
+	if m.findingsState.notice != "" {
+		lines = append(lines, m.findingsState.notice)
+	}
 	if m.findingsState.loading {
 		lines = append(lines, "Loading assessments…")
 		if page.State != app.EvidenceComplete {
@@ -50,11 +55,17 @@ func (m Model) findingsContentLines() []string {
 	if m.findingsState.err != nil {
 		lines = append(lines, "Could not refresh assessments: "+safeInline(m.findingsState.err.Error()), "Press r to retry.")
 	}
+	if page.State == app.EvidenceNotFound {
+		return append(lines, "This session is no longer available.")
+	}
 	if page.State != app.EvidenceComplete {
 		return append(lines, fmt.Sprintf("Assessments unavailable · %s · stale: %t", page.Status, page.Stale), "Use x from the timeline for projection readiness, retry and rebuild.")
 	}
 	if m.findingsState.refreshIncomplete {
 		lines = append(lines, "Previous snapshot · freshness has not been confirmed.")
+	}
+	if len(page.Assessments) == 0 {
+		lines = append(lines, "No rule assessments returned; this does not establish success.")
 	}
 	for _, f := range page.Assessments {
 		lines = append(lines, "", fmt.Sprintf("%s · %s · version %s", f.RuleID, f.State, f.RuleVersion), "Assessment "+string(f.ID), f.Explanation)
@@ -87,6 +98,17 @@ func (m Model) findingReferences() []model.EventID {
 		refs = append(refs, f.EventIDs...)
 	}
 	return refs
+}
+
+func (m *Model) revealFindingReference() {
+	row := 0
+	for _, line := range m.findingsContentLines() {
+		if strings.HasPrefix(line, "> ") {
+			m.detailState.viewport.SetYOffset(row)
+			return
+		}
+		row += len(wrapIndented(terminalText(line), m.renderWidth(), true))
+	}
 }
 func (m *Model) openFindingEvidence() (tea.Model, tea.Cmd) {
 	refs := m.findingReferences()

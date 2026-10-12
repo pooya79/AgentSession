@@ -1,0 +1,12 @@
+AgentSession  /  Event  ·  local · offl…
+Inspection #3 · Command · RECORDED FAIL…
+Normalized payload
+  #3 - Command · RECORDED FAILURE (exit
+  1) · go test ./internal/client
+  Invocation ID: test
+  Phase: completed
+  Command: go test ./internal/client
+  Working directory: /fixture/project
+  Exit status: 1
+[FOCUS] Wrapped · complete
+↑↓ scroll · w wrap · Esc back · ? help
