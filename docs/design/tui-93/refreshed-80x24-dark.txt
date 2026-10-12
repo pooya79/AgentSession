@@ -1,5 +1,5 @@
-AgentSession  /  Timeline  ·  local · offline · read-only
-Timeline · session fixture-17 · canonical complete
+AgentSession  /  Timeline
+Fix request timeout without hiding errors.
 > ╭─ You
 Fix request timeout without hiding errors.
 ╰─
@@ -20,5 +20,5 @@ func retry(ctx context.Context) error {
 § Reading notes
 
 1. Recorded evidence remains in source order; a build does not establish test
-Target: evt_cdcc2c120140d… #0 · open · Index: complete
-↑↓ scroll · [/] events · Enter toggle · d inspect · Esc back · ? help
+Target: #0 · open · Index: complete
+↑↓ read · [] events · d inspect · / search · Esc back · ? help

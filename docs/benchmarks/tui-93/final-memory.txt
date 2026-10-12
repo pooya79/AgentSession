@@ -1,37 +1,37 @@
 === RUN   TestTimelineRetentionMeasurement
-    timeline_memory_test.go:105: stage=explore-2500 visited=2500 resident=150 payload_bytes=71365 rendered_bytes=99515 metadata_bytes_estimate=606743 heap=1713184 heap_sys=16777216 alloc_bytes=63574488 allocations=310691
-    timeline_memory_test.go:105: stage=explore-5000 visited=5000 resident=150 payload_bytes=71365 rendered_bytes=99515 metadata_bytes_estimate=1213493 heap=2545240 heap_sys=16547840 alloc_bytes=160195440 allocations=624258
-    timeline_memory_test.go:105: stage=explore-7500 visited=7500 resident=150 payload_bytes=71365 rendered_bytes=99515 metadata_bytes_estimate=1820243 heap=3627960 heap_sys=16154624 alloc_bytes=285509176 allocations=938328
-    timeline_memory_test.go:105: stage=explore-10000 visited=10000 resident=150 payload_bytes=1119603 rendered_bytes=1685878 metadata_bytes_estimate=2426883 heap=6848640 heap_sys=25559040 alloc_bytes=469361200 allocations=1252998
-    timeline_memory_test.go:119: stage=evict-large-revisit-start visited=10000 resident=26 payload_bytes=20757 rendered_bytes=30696 metadata_bytes_estimate=2426883 heap=4019440 heap_sys=25559040 alloc_bytes=473606368 allocations=1257354
-    timeline_memory_test.go:126: stage=revisit-2500 visited=10000 resident=150 payload_bytes=81605 rendered_bytes=115195 metadata_bytes_estimate=2426883 heap=4231264 heap_sys=24379392 alloc_bytes=1205484760 allocations=5837239
-    timeline_memory_test.go:126: stage=revisit-5000 visited=10000 resident=150 payload_bytes=81605 rendered_bytes=115195 metadata_bytes_estimate=2426883 heap=4256192 heap_sys=24346624 alloc_bytes=1946441808 allocations=10453938
-    timeline_memory_test.go:126: stage=revisit-7500 visited=10000 resident=150 payload_bytes=81605 rendered_bytes=115195 metadata_bytes_estimate=2426883 heap=4273568 heap_sys=23920640 alloc_bytes=2687809880 allocations=15070671
-    timeline_memory_test.go:126: stage=revisit-10000 visited=10000 resident=150 payload_bytes=1119603 rendered_bytes=1685878 metadata_bytes_estimate=2426883 heap=6947472 heap_sys=25034752 alloc_bytes=3449925608 allocations=19687004
-    timeline_memory_test.go:129: stage=large-message-reloaded visited=10000 resident=150 payload_bytes=1119603 rendered_bytes=1685878 metadata_bytes_estimate=2426883 heap=6932664 heap_sys=25034752 alloc_bytes=3449953768 allocations=19687029
-    timeline_memory_test.go:130: exploration-and-revisit=22.635538521s
-    timeline_memory_test.go:136: stage=oversized-3MiB-with-boundary-neighbor visited=3 resident=2 payload_bytes=3145917 rendered_bytes=4759271 metadata_bytes_estimate=527 heap=8613352 heap_sys=37617664 alloc_bytes=3493114904 allocations=19688892
-    timeline_memory_test.go:88: sampled_peak_heap_5ms exploration=15230360 eviction_revisit=15843168 oversized=22621432
---- PASS: TestTimelineRetentionMeasurement (24.83s)
+    timeline_memory_test.go:105: stage=explore-2500 visited=2500 resident=150 payload_bytes=71365 rendered_bytes=98555 metadata_bytes_estimate=606743 heap=1730544 heap_sys=16154624 alloc_bytes=62882144 allocations=307731
+    timeline_memory_test.go:105: stage=explore-5000 visited=5000 resident=150 payload_bytes=71365 rendered_bytes=98555 metadata_bytes_estimate=1213493 heap=2537824 heap_sys=17301504 alloc_bytes=159147512 allocations=618357
+    timeline_memory_test.go:105: stage=explore-7500 visited=7500 resident=150 payload_bytes=71365 rendered_bytes=98555 metadata_bytes_estimate=1820243 heap=3542816 heap_sys=16678912 alloc_bytes=284413032 allocations=929462
+    timeline_memory_test.go:105: stage=explore-10000 visited=10000 resident=150 payload_bytes=1119603 rendered_bytes=1684918 metadata_bytes_estimate=2426883 heap=6845832 heap_sys=21528576 alloc_bytes=468599720 allocations=1241252
+    timeline_memory_test.go:119: stage=evict-large-revisit-start visited=10000 resident=26 payload_bytes=20757 rendered_bytes=30573 metadata_bytes_estimate=2426883 heap=4015888 heap_sys=21594112 alloc_bytes=472843120 allocations=1245564
+    timeline_memory_test.go:126: stage=revisit-2500 visited=10000 resident=150 payload_bytes=81605 rendered_bytes=114235 metadata_bytes_estimate=2426883 heap=4231320 heap_sys=18874368 alloc_bytes=1202928536 allocations=5809523
+    timeline_memory_test.go:126: stage=revisit-5000 visited=10000 resident=150 payload_bytes=81605 rendered_bytes=114235 metadata_bytes_estimate=2426883 heap=4262200 heap_sys=20054016 alloc_bytes=1940457200 allocations=10409841
+    timeline_memory_test.go:126: stage=revisit-7500 visited=10000 resident=150 payload_bytes=81605 rendered_bytes=114235 metadata_bytes_estimate=2426883 heap=4282744 heap_sys=20611072 alloc_bytes=2677528560 allocations=15009964
+    timeline_memory_test.go:126: stage=revisit-10000 visited=10000 resident=150 payload_bytes=1119603 rendered_bytes=1684918 metadata_bytes_estimate=2426883 heap=6954536 heap_sys=24084480 alloc_bytes=3438298160 allocations=19610208
+    timeline_memory_test.go:129: stage=large-message-reloaded visited=10000 resident=150 payload_bytes=1119603 rendered_bytes=1684918 metadata_bytes_estimate=2426883 heap=6939824 heap_sys=24084480 alloc_bytes=3438326032 allocations=19610232
+    timeline_memory_test.go:130: exploration-and-revisit=21.964092071s
+    timeline_memory_test.go:136: stage=oversized-3MiB-with-boundary-neighbor visited=3 resident=2 payload_bytes=3145917 rendered_bytes=4759271 metadata_bytes_estimate=527 heap=8621464 heap_sys=40861696 alloc_bytes=3481486688 allocations=19612090
+    timeline_memory_test.go:88: sampled_peak_heap_5ms exploration=13405512 eviction_revisit=16641112 oversized=22629064
+--- PASS: TestTimelineRetentionMeasurement (24.35s)
 PASS
 	Command being timed: "/tmp/agentsession-93.test -test.run ^TestTimelineRetentionMeasurement$ -test.count=1 -test.v"
-	User time (seconds): 23.98
-	System time (seconds): 3.06
-	Percent of CPU this job got: 108%
-	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:24.83
+	User time (seconds): 23.23
+	System time (seconds): 3.04
+	Percent of CPU this job got: 107%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:24.35
 	Average shared text size (kbytes): 0
 	Average unshared data size (kbytes): 0
 	Average stack size (kbytes): 0
 	Average total size (kbytes): 0
-	Maximum resident set size (kbytes): 53008
+	Maximum resident set size (kbytes): 57016
 	Average resident set size (kbytes): 0
 	Major (requiring I/O) page faults: 0
-	Minor (reclaiming a frame) page faults: 283671
-	Voluntary context switches: 127849
-	Involuntary context switches: 578
+	Minor (reclaiming a frame) page faults: 298411
+	Voluntary context switches: 127584
+	Involuntary context switches: 1396
 	Swaps: 0
 	File system inputs: 0
-	File system outputs: 367352
+	File system outputs: 366904
 	Socket messages sent: 0
 	Socket messages received: 0
 	Signals delivered: 0

@@ -1,18 +1,18 @@
-AgentSession  /  Indexing  ·  local · offline · read-…
-Indexing details
-
+AgentSession  /  Indexing
 Indexing completed successfully.
-Sources: 3 discovered · 3 completed · 0 failed
-Totals: 0 records · 0 events · 3 sessions · 3 unchange
-d
-Diagnostics: 0 total · 0 omitted from bounded status
+3/3 sources checked · 3 sessions observed
 
 Discovered sources
-codex · src_1cf1c16c7a705eeb4945d35e5a1e8fe1d711555cfe
-1608b33188716ba7085dba · completed
-  /home/mint/oss/AgentSession/docs/design/tui-89/fixtu
-res/rollout-retry.jsonl · explicit · 0 records · 0 eve
-nts · 1 sessions · 0 diagnostics
-codex · src_a20dfae7187cd1aa411dd51359ac75fd069ae94279
+  rollout-retry.jsonl · completed
+  rollout-search.jsonl · completed
+  rollout-setup.jsonl · completed
+
+v source paths, counters and diagnostics
+
+
+
+
+
+
 [FOCUS] Indexing · Index: complete
 ↑↓ scroll · r rescan · Esc · ? help

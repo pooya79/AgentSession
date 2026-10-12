@@ -1,12 +1,12 @@
-AgentSession  /  Timeline  ·  local · o…
-Timeline · session fixture-17 · canonic…
+AgentSession  /  Timeline
+Fix request timeout without hiding erro…
+19. Recorded evidence remains in
+    source order; a build does not
+    establish test recovery.
 20. Recorded evidence remains in
     source order; a build does not
     establish test recovery.
 
 ╰─
-
-  #2 + Command · RESULT UNAVAILABLE ·…
-
 Target: #3 · - off-screen · Index: comp…
-↑↓ scroll · [/] target · ? help
+↑↓ read · [] events · Esc · ? help

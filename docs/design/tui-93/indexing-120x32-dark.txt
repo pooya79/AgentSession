@@ -1,21 +1,21 @@
-AgentSession  /  Indexing  ·  local · offline · read-only
-Indexing details
-
+AgentSession  /  Indexing
 Indexing completed successfully.
-Sources: 3 discovered · 3 completed · 0 failed
-Totals: 0 records · 0 events · 3 sessions · 3 unchanged
-Diagnostics: 0 total · 0 omitted from bounded status
+3/3 sources checked · 3 sessions observed
 
 Discovered sources
-codex · src_1cf1c16c7a705eeb4945d35e5a1e8fe1d711555cfe1608b33188716ba7085dba · completed
-  /home/mint/oss/AgentSession/docs/design/tui-89/fixtures/rollout-retry.jsonl · explicit · 0 records · 0 events · 1 sess
-ions · 0 diagnostics
-codex · src_a20dfae7187cd1aa411dd51359ac75fd069ae94279c63f72977d3a10376f0361 · completed
-  /home/mint/oss/AgentSession/docs/design/tui-89/fixtures/rollout-search.jsonl · explicit · 0 records · 0 events · 1 ses
-sions · 0 diagnostics
-codex · src_a3a7403399ef5aebd6106839c260c37de08b8b20a873fa42a5cfb06ed06c90e8 · completed
-  /home/mint/oss/AgentSession/docs/design/tui-89/fixtures/rollout-setup.jsonl · explicit · 0 records · 0 events · 1 sess
-ions · 0 diagnostics
+  rollout-retry.jsonl · completed
+  rollout-search.jsonl · completed
+  rollout-setup.jsonl · completed
+
+v source paths, counters and diagnostics
+
+
+
+
+
+
+
+
 
 
 
@@ -29,4 +29,4 @@ ions · 0 diagnostics
 
 
 [FOCUS] Indexing · Index: complete
-↑↓ scroll · PgUp/PgDn · g/G ends · r rescan · Esc back · ? help
+↑↓ read · v details · r rescan · Esc back · ? help

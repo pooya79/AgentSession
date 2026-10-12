@@ -1,18 +1,18 @@
-AgentSession  /  Projections  ·  local · offline · re…
-Projection lifecycle · session fixture-17
-Canonical evidence remains available · complete · deri
-ved usable 2/5 · pending 3 · running 0 · failed 0 · st
-ale 0 · not implemented 3
+AgentSession  /  Projections
+Derived views · session fixture-17
+Canonical evidence: complete
 
-> search            ready · usable  · target 1/1 · att
-empts 1
-  git_correlation   not implemented in this build · re
-  mains pending  · target 1/1 · attempts 0
-  findings          ready · usable  · target 1/1 · att
-  empts 1
-  outcomes          not implemented in this build · re
-  mains pending  · target 1/1 · attempts 0
-  aggregates        not implemented in this build · re
-  mains pending  · target 1/1 · attempts 0
+> search            ready
+  git_correlation   not implemented in this build
+  findings          ready
+  outcomes          not implemented in this build
+  aggregates        not implemented in this build
+
+v versions, attempts and counters
+
+
+
+
+
 [FOCUS] search · ready
 ↑↓ target · t/b act · Esc · ? help

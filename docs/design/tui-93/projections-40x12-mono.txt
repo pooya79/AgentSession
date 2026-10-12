@@ -1,12 +1,12 @@
-AgentSession  /  Projections  ·  local …
-Projection lifecycle · session fixture-1
-7
-Canonical evidence remains available · c
-omplete · derived usable 2/5 · pending 3
- · running 0 · failed 0 · stale 0 · not
-implemented 3
+AgentSession  /  Projections
+Derived views · session fixture-17
+Canonical evidence: complete
 
-> search            ready · usable  · ta
-rget 1/1 · attempts 1
+> search            ready
+  git_correlation   not implemented in t
+  his build
+  findings          ready
+  outcomes          not implemented in t
+  his build
 [FOCUS] search · ready
 ↑↓ target · t/b act · Esc · ? help

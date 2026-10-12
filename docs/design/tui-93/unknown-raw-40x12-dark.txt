@@ -1,12 +1,12 @@
-AgentSession  /  Event  ·  local · offl…
+AgentSession  /  Event
 Inspection #6 · Unsupported session act…
-Normalized payload
-  #6 - Unsupported session activity · fu
-  ture_activity
   Reason: unsupported_record_kind
   Original kind: future_activity
   Press u to inspect bounded, redacted r
   etained evidence.
 
+Retained Unknown evidence
+136 of 136 bytes · 0 redactions · trunca
+ted: false
 [FOCUS] Wrapped · complete
 ↑↓ scroll · u raw · Esc back · ? help

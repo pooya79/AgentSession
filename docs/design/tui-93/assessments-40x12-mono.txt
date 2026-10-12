@@ -1,12 +1,12 @@
-AgentSession  /  Assessments  ·  local …
-Rule assessments · session fixture-17
-
-repeated_command_failures · insufficient
-_evidence · version 1
-Assessment finding_7362fcbbb503188fd044c
-574bb935bb38032bf9ae0aa90b67630a689e8372
-939
-Within the currently imported record in
-source order: 2 invocations, 1 failed re
+AgentSession  /  Assessments
+Rule assessments
+Repeated command failures · insufficient
+ evidence
+  Within the currently imported record …
+Unresolved failed verification · insuffi
+cient evidence
+  Within the currently imported record …
+Missing verification · insufficient evid
+ence
 [FOCUS] Evidence 1/11 · Enter opens con…
 [] refs · Enter open · Esc · ? help

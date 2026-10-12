@@ -1,10 +1,5 @@
-AgentSession  /  Event  ·  local · offline · read-only
+AgentSession  /  Event
 Inspection #3 · Command · RECORDED FAILURE (exit 1) ·…
-Normalized payload
-  #3 - Command · RECORDED FAILURE (exit 1) · go test .
-  /internal/client
-  Invocation ID: test
-  Phase: completed
   Command: go test ./internal/client
   Working directory: /fixture/project
   Exit status: 1
@@ -14,5 +9,10 @@ Normalized payload
                   r caller cancellation; request_id=fi
                   xture-00017; attempt=3; timeout=3000
                   ms
+              FAIL example.invalid/project/internal/cl
+              ient
+
+
+
 [FOCUS] Wrapped · complete
 ↑↓ scroll · w wrap · Esc back · ? help

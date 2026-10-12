@@ -1,12 +1,12 @@
-AgentSession  /  Timeline  ·  local · o…
-Keyboard help
+AgentSession  /  Timeline
+Keyboard help · Timeline
 
-Global
-  ?            open or close this help
-  Esc          close an overlay or retur
-n to the parent screen
-  q / Ctrl-C   quit
-
-Navigation
+  ↑/↓ or j/k   read text
+  [ / ]        previous/next event
+  Enter        expand/collapse technical
+ evidence
+  d            inspect selected event
+  u            inspect redacted Unknown
+evidence
 [FOCUS] Help · returns to Timeline
 ↑↓ scroll · PgUp/Dn · Esc close

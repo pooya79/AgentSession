@@ -7,8 +7,8 @@ a{color:#005fa3} nav{display:flex;gap:16px;flex-wrap:wrap;margin:20px 0}
 section{border-top:2px solid #aab7c5;margin-top:28px}figure{margin:24px 0}
 img{display:block;max-width:100%;height:auto;border:1px solid #8896a5}
 figcaption{margin:8px 0;font-weight:600}details{margin:20px 0}summary{cursor:pointer}
-</style><h1>Actual implemented TUI · final review #93</h1>
-<p><strong>Product-owner acceptance pending.</strong> Compare these fresh production
+</style><h1>Simplified TUI · review #93</h1>
+<p><strong>Revised after owner feedback; acceptance pending.</strong> Compare these fresh production
 PTY frames with the <a href="../tui-review-88.html">accepted #88 preview</a>.
 Review the live isolated binary and input/output recordings as well; snapshots
 and automated checks alone do not establish acceptance.</p>
@@ -24,208 +24,208 @@ resize, refresh, and normal terminal text selection. Sources remain read-only.</
 </nav>
 <section id="dark"><h2>dark profile</h2>
 <p><a href="workflow-dark.cast">Input/output/resize recording (asciicast v2)</a></p>
-<details open><summary>120x32</summary>
-<figure><figcaption>assessments · 120x32 · dark · <a href="assessments-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="assessments-120x32-dark.png" alt="assessments at 120x32 in dark"></figure>
-<figure><figcaption>details · 120x32 · dark · <a href="details-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="details-120x32-dark.png" alt="details at 120x32 in dark"></figure>
-<figure><figcaption>expanded · 120x32 · dark · <a href="expanded-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="expanded-120x32-dark.png" alt="expanded at 120x32 in dark"></figure>
-<figure><figcaption>help · 120x32 · dark · <a href="help-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="help-120x32-dark.png" alt="help at 120x32 in dark"></figure>
-<figure><figcaption>indexing · 120x32 · dark · <a href="indexing-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="indexing-120x32-dark.png" alt="indexing at 120x32 in dark"></figure>
-<figure><figcaption>projections · 120x32 · dark · <a href="projections-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="projections-120x32-dark.png" alt="projections at 120x32 in dark"></figure>
-<figure><figcaption>search · 120x32 · dark · <a href="search-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="search-120x32-dark.png" alt="search at 120x32 in dark"></figure>
-<figure><figcaption>sessions · 120x32 · dark · <a href="sessions-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="sessions-120x32-dark.png" alt="sessions at 120x32 in dark"></figure>
-<figure><figcaption>timeline · 120x32 · dark · <a href="timeline-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="timeline-120x32-dark.png" alt="timeline at 120x32 in dark"></figure>
-<figure><figcaption>unknown prompt · 120x32 · dark · <a href="unknown-prompt-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="unknown-prompt-120x32-dark.png" alt="unknown prompt at 120x32 in dark"></figure>
-<figure><figcaption>unknown raw · 120x32 · dark · <a href="unknown-raw-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="unknown-raw-120x32-dark.png" alt="unknown raw at 120x32 in dark"></figure>
-</details>
 <details open><summary>80x24</summary>
-<figure><figcaption>assessments · 80x24 · dark · <a href="assessments-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="assessments-80x24-dark.png" alt="assessments at 80x24 in dark"></figure>
-<figure><figcaption>details · 80x24 · dark · <a href="details-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="details-80x24-dark.png" alt="details at 80x24 in dark"></figure>
-<figure><figcaption>editing · 80x24 · dark · <a href="editing-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="editing-80x24-dark.png" alt="editing at 80x24 in dark"></figure>
-<figure><figcaption>expanded · 80x24 · dark · <a href="expanded-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="expanded-80x24-dark.png" alt="expanded at 80x24 in dark"></figure>
-<figure><figcaption>help · 80x24 · dark · <a href="help-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="help-80x24-dark.png" alt="help at 80x24 in dark"></figure>
-<figure><figcaption>indexing · 80x24 · dark · <a href="indexing-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="indexing-80x24-dark.png" alt="indexing at 80x24 in dark"></figure>
-<figure><figcaption>paste · 80x24 · dark · <a href="paste-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="paste-80x24-dark.png" alt="paste at 80x24 in dark"></figure>
-<figure><figcaption>projection rebuild · 80x24 · dark · <a href="projection-rebuild-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="projection-rebuild-80x24-dark.png" alt="projection rebuild at 80x24 in dark"></figure>
-<figure><figcaption>projections · 80x24 · dark · <a href="projections-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="projections-80x24-dark.png" alt="projections at 80x24 in dark"></figure>
-<figure><figcaption>reading · 80x24 · dark · <a href="reading-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="reading-80x24-dark.png" alt="reading at 80x24 in dark"></figure>
-<figure><figcaption>refreshed · 80x24 · dark · <a href="refreshed-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="refreshed-80x24-dark.png" alt="refreshed at 80x24 in dark"></figure>
-<figure><figcaption>returned · 80x24 · dark · <a href="returned-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="returned-80x24-dark.png" alt="returned at 80x24 in dark"></figure>
-<figure><figcaption>search · 80x24 · dark · <a href="search-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="search-80x24-dark.png" alt="search at 80x24 in dark"></figure>
-<figure><figcaption>search evidence · 80x24 · dark · <a href="search-evidence-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="search-evidence-80x24-dark.png" alt="search evidence at 80x24 in dark"></figure>
-<figure><figcaption>search return · 80x24 · dark · <a href="search-return-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="search-return-80x24-dark.png" alt="search return at 80x24 in dark"></figure>
 <figure><figcaption>sessions · 80x24 · dark · <a href="sessions-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="sessions-80x24-dark.png" alt="sessions at 80x24 in dark"></figure>
-<figure><figcaption>supporting reference · 80x24 · dark · <a href="supporting-reference-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="supporting-reference-80x24-dark.png" alt="supporting reference at 80x24 in dark"></figure>
-<figure><figcaption>supporting timeline · 80x24 · dark · <a href="supporting-timeline-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="supporting-timeline-80x24-dark.png" alt="supporting timeline at 80x24 in dark"></figure>
 <figure><figcaption>timeline · 80x24 · dark · <a href="timeline-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="timeline-80x24-dark.png" alt="timeline at 80x24 in dark"></figure>
+<figure><figcaption>expanded · 80x24 · dark · <a href="expanded-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="expanded-80x24-dark.png" alt="expanded at 80x24 in dark"></figure>
+<figure><figcaption>details · 80x24 · dark · <a href="details-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="details-80x24-dark.png" alt="details at 80x24 in dark"></figure>
+<figure><figcaption>search · 80x24 · dark · <a href="search-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="search-80x24-dark.png" alt="search at 80x24 in dark"></figure>
+<figure><figcaption>assessments · 80x24 · dark · <a href="assessments-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="assessments-80x24-dark.png" alt="assessments at 80x24 in dark"></figure>
 <figure><figcaption>unknown prompt · 80x24 · dark · <a href="unknown-prompt-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="unknown-prompt-80x24-dark.png" alt="unknown prompt at 80x24 in dark"></figure>
 <figure><figcaption>unknown raw · 80x24 · dark · <a href="unknown-raw-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="unknown-raw-80x24-dark.png" alt="unknown raw at 80x24 in dark"></figure>
+<figure><figcaption>projections · 80x24 · dark · <a href="projections-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="projections-80x24-dark.png" alt="projections at 80x24 in dark"></figure>
+<figure><figcaption>indexing · 80x24 · dark · <a href="indexing-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="indexing-80x24-dark.png" alt="indexing at 80x24 in dark"></figure>
+<figure><figcaption>help · 80x24 · dark · <a href="help-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="help-80x24-dark.png" alt="help at 80x24 in dark"></figure>
+<figure><figcaption>editing · 80x24 · dark · <a href="editing-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="editing-80x24-dark.png" alt="editing at 80x24 in dark"></figure>
+<figure><figcaption>paste · 80x24 · dark · <a href="paste-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="paste-80x24-dark.png" alt="paste at 80x24 in dark"></figure>
+<figure><figcaption>search evidence · 80x24 · dark · <a href="search-evidence-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="search-evidence-80x24-dark.png" alt="search evidence at 80x24 in dark"></figure>
+<figure><figcaption>returned · 80x24 · dark · <a href="returned-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="returned-80x24-dark.png" alt="returned at 80x24 in dark"></figure>
+<figure><figcaption>supporting timeline · 80x24 · dark · <a href="supporting-timeline-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="supporting-timeline-80x24-dark.png" alt="supporting timeline at 80x24 in dark"></figure>
+<figure><figcaption>search return · 80x24 · dark · <a href="search-return-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="search-return-80x24-dark.png" alt="search return at 80x24 in dark"></figure>
+<figure><figcaption>reading · 80x24 · dark · <a href="reading-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="reading-80x24-dark.png" alt="reading at 80x24 in dark"></figure>
+<figure><figcaption>refreshed · 80x24 · dark · <a href="refreshed-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="refreshed-80x24-dark.png" alt="refreshed at 80x24 in dark"></figure>
+<figure><figcaption>projection rebuild · 80x24 · dark · <a href="projection-rebuild-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="projection-rebuild-80x24-dark.png" alt="projection rebuild at 80x24 in dark"></figure>
 <figure><figcaption>unwrapped · 80x24 · dark · <a href="unwrapped-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="unwrapped-80x24-dark.png" alt="unwrapped at 80x24 in dark"></figure>
+<figure><figcaption>supporting reference · 80x24 · dark · <a href="supporting-reference-80x24-dark.png">native size</a></figcaption><img loading="lazy" src="supporting-reference-80x24-dark.png" alt="supporting reference at 80x24 in dark"></figure>
 </details>
-<details open><summary>54x18</summary>
-<figure><figcaption>assessments · 54x18 · dark · <a href="assessments-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="assessments-54x18-dark.png" alt="assessments at 54x18 in dark"></figure>
-<figure><figcaption>details · 54x18 · dark · <a href="details-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="details-54x18-dark.png" alt="details at 54x18 in dark"></figure>
-<figure><figcaption>expanded · 54x18 · dark · <a href="expanded-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="expanded-54x18-dark.png" alt="expanded at 54x18 in dark"></figure>
-<figure><figcaption>help · 54x18 · dark · <a href="help-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="help-54x18-dark.png" alt="help at 54x18 in dark"></figure>
-<figure><figcaption>indexing · 54x18 · dark · <a href="indexing-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="indexing-54x18-dark.png" alt="indexing at 54x18 in dark"></figure>
-<figure><figcaption>projections · 54x18 · dark · <a href="projections-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="projections-54x18-dark.png" alt="projections at 54x18 in dark"></figure>
-<figure><figcaption>search · 54x18 · dark · <a href="search-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="search-54x18-dark.png" alt="search at 54x18 in dark"></figure>
+<details><summary>120x32</summary>
+<figure><figcaption>sessions · 120x32 · dark · <a href="sessions-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="sessions-120x32-dark.png" alt="sessions at 120x32 in dark"></figure>
+<figure><figcaption>timeline · 120x32 · dark · <a href="timeline-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="timeline-120x32-dark.png" alt="timeline at 120x32 in dark"></figure>
+<figure><figcaption>expanded · 120x32 · dark · <a href="expanded-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="expanded-120x32-dark.png" alt="expanded at 120x32 in dark"></figure>
+<figure><figcaption>details · 120x32 · dark · <a href="details-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="details-120x32-dark.png" alt="details at 120x32 in dark"></figure>
+<figure><figcaption>search · 120x32 · dark · <a href="search-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="search-120x32-dark.png" alt="search at 120x32 in dark"></figure>
+<figure><figcaption>assessments · 120x32 · dark · <a href="assessments-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="assessments-120x32-dark.png" alt="assessments at 120x32 in dark"></figure>
+<figure><figcaption>unknown prompt · 120x32 · dark · <a href="unknown-prompt-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="unknown-prompt-120x32-dark.png" alt="unknown prompt at 120x32 in dark"></figure>
+<figure><figcaption>unknown raw · 120x32 · dark · <a href="unknown-raw-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="unknown-raw-120x32-dark.png" alt="unknown raw at 120x32 in dark"></figure>
+<figure><figcaption>projections · 120x32 · dark · <a href="projections-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="projections-120x32-dark.png" alt="projections at 120x32 in dark"></figure>
+<figure><figcaption>indexing · 120x32 · dark · <a href="indexing-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="indexing-120x32-dark.png" alt="indexing at 120x32 in dark"></figure>
+<figure><figcaption>help · 120x32 · dark · <a href="help-120x32-dark.png">native size</a></figcaption><img loading="lazy" src="help-120x32-dark.png" alt="help at 120x32 in dark"></figure>
+</details>
+<details><summary>54x18</summary>
 <figure><figcaption>sessions · 54x18 · dark · <a href="sessions-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="sessions-54x18-dark.png" alt="sessions at 54x18 in dark"></figure>
 <figure><figcaption>timeline · 54x18 · dark · <a href="timeline-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="timeline-54x18-dark.png" alt="timeline at 54x18 in dark"></figure>
+<figure><figcaption>expanded · 54x18 · dark · <a href="expanded-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="expanded-54x18-dark.png" alt="expanded at 54x18 in dark"></figure>
+<figure><figcaption>details · 54x18 · dark · <a href="details-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="details-54x18-dark.png" alt="details at 54x18 in dark"></figure>
+<figure><figcaption>search · 54x18 · dark · <a href="search-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="search-54x18-dark.png" alt="search at 54x18 in dark"></figure>
+<figure><figcaption>assessments · 54x18 · dark · <a href="assessments-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="assessments-54x18-dark.png" alt="assessments at 54x18 in dark"></figure>
 <figure><figcaption>unknown prompt · 54x18 · dark · <a href="unknown-prompt-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="unknown-prompt-54x18-dark.png" alt="unknown prompt at 54x18 in dark"></figure>
 <figure><figcaption>unknown raw · 54x18 · dark · <a href="unknown-raw-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="unknown-raw-54x18-dark.png" alt="unknown raw at 54x18 in dark"></figure>
+<figure><figcaption>projections · 54x18 · dark · <a href="projections-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="projections-54x18-dark.png" alt="projections at 54x18 in dark"></figure>
+<figure><figcaption>indexing · 54x18 · dark · <a href="indexing-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="indexing-54x18-dark.png" alt="indexing at 54x18 in dark"></figure>
+<figure><figcaption>help · 54x18 · dark · <a href="help-54x18-dark.png">native size</a></figcaption><img loading="lazy" src="help-54x18-dark.png" alt="help at 54x18 in dark"></figure>
 </details>
-<details open><summary>40x12</summary>
-<figure><figcaption>assessments · 40x12 · dark · <a href="assessments-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="assessments-40x12-dark.png" alt="assessments at 40x12 in dark"></figure>
-<figure><figcaption>details · 40x12 · dark · <a href="details-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="details-40x12-dark.png" alt="details at 40x12 in dark"></figure>
-<figure><figcaption>expanded · 40x12 · dark · <a href="expanded-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="expanded-40x12-dark.png" alt="expanded at 40x12 in dark"></figure>
-<figure><figcaption>help · 40x12 · dark · <a href="help-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="help-40x12-dark.png" alt="help at 40x12 in dark"></figure>
-<figure><figcaption>indexing · 40x12 · dark · <a href="indexing-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="indexing-40x12-dark.png" alt="indexing at 40x12 in dark"></figure>
-<figure><figcaption>projections · 40x12 · dark · <a href="projections-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="projections-40x12-dark.png" alt="projections at 40x12 in dark"></figure>
-<figure><figcaption>search · 40x12 · dark · <a href="search-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="search-40x12-dark.png" alt="search at 40x12 in dark"></figure>
+<details><summary>40x12</summary>
 <figure><figcaption>sessions · 40x12 · dark · <a href="sessions-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="sessions-40x12-dark.png" alt="sessions at 40x12 in dark"></figure>
 <figure><figcaption>timeline · 40x12 · dark · <a href="timeline-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="timeline-40x12-dark.png" alt="timeline at 40x12 in dark"></figure>
+<figure><figcaption>expanded · 40x12 · dark · <a href="expanded-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="expanded-40x12-dark.png" alt="expanded at 40x12 in dark"></figure>
+<figure><figcaption>details · 40x12 · dark · <a href="details-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="details-40x12-dark.png" alt="details at 40x12 in dark"></figure>
+<figure><figcaption>search · 40x12 · dark · <a href="search-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="search-40x12-dark.png" alt="search at 40x12 in dark"></figure>
+<figure><figcaption>assessments · 40x12 · dark · <a href="assessments-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="assessments-40x12-dark.png" alt="assessments at 40x12 in dark"></figure>
 <figure><figcaption>unknown prompt · 40x12 · dark · <a href="unknown-prompt-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="unknown-prompt-40x12-dark.png" alt="unknown prompt at 40x12 in dark"></figure>
 <figure><figcaption>unknown raw · 40x12 · dark · <a href="unknown-raw-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="unknown-raw-40x12-dark.png" alt="unknown raw at 40x12 in dark"></figure>
+<figure><figcaption>projections · 40x12 · dark · <a href="projections-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="projections-40x12-dark.png" alt="projections at 40x12 in dark"></figure>
+<figure><figcaption>indexing · 40x12 · dark · <a href="indexing-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="indexing-40x12-dark.png" alt="indexing at 40x12 in dark"></figure>
+<figure><figcaption>help · 40x12 · dark · <a href="help-40x12-dark.png">native size</a></figcaption><img loading="lazy" src="help-40x12-dark.png" alt="help at 40x12 in dark"></figure>
 </details>
-<details open><summary>32x10</summary>
+<details><summary>32x10</summary>
 <figure><figcaption>resize · 32x10 · dark · <a href="resize-32x10-dark.png">native size</a></figcaption><img loading="lazy" src="resize-32x10-dark.png" alt="resize at 32x10 in dark"></figure>
 </details>
 </section>
 <section id="light"><h2>light profile</h2>
 <p><a href="workflow-light.cast">Input/output/resize recording (asciicast v2)</a></p>
-<details open><summary>120x32</summary>
-<figure><figcaption>assessments · 120x32 · light · <a href="assessments-120x32-light.png">native size</a></figcaption><img loading="lazy" src="assessments-120x32-light.png" alt="assessments at 120x32 in light"></figure>
-<figure><figcaption>details · 120x32 · light · <a href="details-120x32-light.png">native size</a></figcaption><img loading="lazy" src="details-120x32-light.png" alt="details at 120x32 in light"></figure>
-<figure><figcaption>expanded · 120x32 · light · <a href="expanded-120x32-light.png">native size</a></figcaption><img loading="lazy" src="expanded-120x32-light.png" alt="expanded at 120x32 in light"></figure>
-<figure><figcaption>help · 120x32 · light · <a href="help-120x32-light.png">native size</a></figcaption><img loading="lazy" src="help-120x32-light.png" alt="help at 120x32 in light"></figure>
-<figure><figcaption>indexing · 120x32 · light · <a href="indexing-120x32-light.png">native size</a></figcaption><img loading="lazy" src="indexing-120x32-light.png" alt="indexing at 120x32 in light"></figure>
-<figure><figcaption>projections · 120x32 · light · <a href="projections-120x32-light.png">native size</a></figcaption><img loading="lazy" src="projections-120x32-light.png" alt="projections at 120x32 in light"></figure>
-<figure><figcaption>search · 120x32 · light · <a href="search-120x32-light.png">native size</a></figcaption><img loading="lazy" src="search-120x32-light.png" alt="search at 120x32 in light"></figure>
-<figure><figcaption>sessions · 120x32 · light · <a href="sessions-120x32-light.png">native size</a></figcaption><img loading="lazy" src="sessions-120x32-light.png" alt="sessions at 120x32 in light"></figure>
-<figure><figcaption>timeline · 120x32 · light · <a href="timeline-120x32-light.png">native size</a></figcaption><img loading="lazy" src="timeline-120x32-light.png" alt="timeline at 120x32 in light"></figure>
-<figure><figcaption>unknown prompt · 120x32 · light · <a href="unknown-prompt-120x32-light.png">native size</a></figcaption><img loading="lazy" src="unknown-prompt-120x32-light.png" alt="unknown prompt at 120x32 in light"></figure>
-<figure><figcaption>unknown raw · 120x32 · light · <a href="unknown-raw-120x32-light.png">native size</a></figcaption><img loading="lazy" src="unknown-raw-120x32-light.png" alt="unknown raw at 120x32 in light"></figure>
-</details>
-<details open><summary>80x24</summary>
-<figure><figcaption>assessments · 80x24 · light · <a href="assessments-80x24-light.png">native size</a></figcaption><img loading="lazy" src="assessments-80x24-light.png" alt="assessments at 80x24 in light"></figure>
-<figure><figcaption>details · 80x24 · light · <a href="details-80x24-light.png">native size</a></figcaption><img loading="lazy" src="details-80x24-light.png" alt="details at 80x24 in light"></figure>
-<figure><figcaption>editing · 80x24 · light · <a href="editing-80x24-light.png">native size</a></figcaption><img loading="lazy" src="editing-80x24-light.png" alt="editing at 80x24 in light"></figure>
-<figure><figcaption>expanded · 80x24 · light · <a href="expanded-80x24-light.png">native size</a></figcaption><img loading="lazy" src="expanded-80x24-light.png" alt="expanded at 80x24 in light"></figure>
-<figure><figcaption>help · 80x24 · light · <a href="help-80x24-light.png">native size</a></figcaption><img loading="lazy" src="help-80x24-light.png" alt="help at 80x24 in light"></figure>
-<figure><figcaption>indexing · 80x24 · light · <a href="indexing-80x24-light.png">native size</a></figcaption><img loading="lazy" src="indexing-80x24-light.png" alt="indexing at 80x24 in light"></figure>
-<figure><figcaption>paste · 80x24 · light · <a href="paste-80x24-light.png">native size</a></figcaption><img loading="lazy" src="paste-80x24-light.png" alt="paste at 80x24 in light"></figure>
-<figure><figcaption>projection rebuild · 80x24 · light · <a href="projection-rebuild-80x24-light.png">native size</a></figcaption><img loading="lazy" src="projection-rebuild-80x24-light.png" alt="projection rebuild at 80x24 in light"></figure>
-<figure><figcaption>projections · 80x24 · light · <a href="projections-80x24-light.png">native size</a></figcaption><img loading="lazy" src="projections-80x24-light.png" alt="projections at 80x24 in light"></figure>
-<figure><figcaption>reading · 80x24 · light · <a href="reading-80x24-light.png">native size</a></figcaption><img loading="lazy" src="reading-80x24-light.png" alt="reading at 80x24 in light"></figure>
-<figure><figcaption>refreshed · 80x24 · light · <a href="refreshed-80x24-light.png">native size</a></figcaption><img loading="lazy" src="refreshed-80x24-light.png" alt="refreshed at 80x24 in light"></figure>
-<figure><figcaption>returned · 80x24 · light · <a href="returned-80x24-light.png">native size</a></figcaption><img loading="lazy" src="returned-80x24-light.png" alt="returned at 80x24 in light"></figure>
-<figure><figcaption>search · 80x24 · light · <a href="search-80x24-light.png">native size</a></figcaption><img loading="lazy" src="search-80x24-light.png" alt="search at 80x24 in light"></figure>
-<figure><figcaption>search evidence · 80x24 · light · <a href="search-evidence-80x24-light.png">native size</a></figcaption><img loading="lazy" src="search-evidence-80x24-light.png" alt="search evidence at 80x24 in light"></figure>
-<figure><figcaption>search return · 80x24 · light · <a href="search-return-80x24-light.png">native size</a></figcaption><img loading="lazy" src="search-return-80x24-light.png" alt="search return at 80x24 in light"></figure>
+<details><summary>80x24</summary>
 <figure><figcaption>sessions · 80x24 · light · <a href="sessions-80x24-light.png">native size</a></figcaption><img loading="lazy" src="sessions-80x24-light.png" alt="sessions at 80x24 in light"></figure>
-<figure><figcaption>supporting reference · 80x24 · light · <a href="supporting-reference-80x24-light.png">native size</a></figcaption><img loading="lazy" src="supporting-reference-80x24-light.png" alt="supporting reference at 80x24 in light"></figure>
-<figure><figcaption>supporting timeline · 80x24 · light · <a href="supporting-timeline-80x24-light.png">native size</a></figcaption><img loading="lazy" src="supporting-timeline-80x24-light.png" alt="supporting timeline at 80x24 in light"></figure>
 <figure><figcaption>timeline · 80x24 · light · <a href="timeline-80x24-light.png">native size</a></figcaption><img loading="lazy" src="timeline-80x24-light.png" alt="timeline at 80x24 in light"></figure>
+<figure><figcaption>expanded · 80x24 · light · <a href="expanded-80x24-light.png">native size</a></figcaption><img loading="lazy" src="expanded-80x24-light.png" alt="expanded at 80x24 in light"></figure>
+<figure><figcaption>details · 80x24 · light · <a href="details-80x24-light.png">native size</a></figcaption><img loading="lazy" src="details-80x24-light.png" alt="details at 80x24 in light"></figure>
+<figure><figcaption>search · 80x24 · light · <a href="search-80x24-light.png">native size</a></figcaption><img loading="lazy" src="search-80x24-light.png" alt="search at 80x24 in light"></figure>
+<figure><figcaption>assessments · 80x24 · light · <a href="assessments-80x24-light.png">native size</a></figcaption><img loading="lazy" src="assessments-80x24-light.png" alt="assessments at 80x24 in light"></figure>
 <figure><figcaption>unknown prompt · 80x24 · light · <a href="unknown-prompt-80x24-light.png">native size</a></figcaption><img loading="lazy" src="unknown-prompt-80x24-light.png" alt="unknown prompt at 80x24 in light"></figure>
 <figure><figcaption>unknown raw · 80x24 · light · <a href="unknown-raw-80x24-light.png">native size</a></figcaption><img loading="lazy" src="unknown-raw-80x24-light.png" alt="unknown raw at 80x24 in light"></figure>
+<figure><figcaption>projections · 80x24 · light · <a href="projections-80x24-light.png">native size</a></figcaption><img loading="lazy" src="projections-80x24-light.png" alt="projections at 80x24 in light"></figure>
+<figure><figcaption>indexing · 80x24 · light · <a href="indexing-80x24-light.png">native size</a></figcaption><img loading="lazy" src="indexing-80x24-light.png" alt="indexing at 80x24 in light"></figure>
+<figure><figcaption>help · 80x24 · light · <a href="help-80x24-light.png">native size</a></figcaption><img loading="lazy" src="help-80x24-light.png" alt="help at 80x24 in light"></figure>
+<figure><figcaption>returned · 80x24 · light · <a href="returned-80x24-light.png">native size</a></figcaption><img loading="lazy" src="returned-80x24-light.png" alt="returned at 80x24 in light"></figure>
+<figure><figcaption>editing · 80x24 · light · <a href="editing-80x24-light.png">native size</a></figcaption><img loading="lazy" src="editing-80x24-light.png" alt="editing at 80x24 in light"></figure>
+<figure><figcaption>supporting reference · 80x24 · light · <a href="supporting-reference-80x24-light.png">native size</a></figcaption><img loading="lazy" src="supporting-reference-80x24-light.png" alt="supporting reference at 80x24 in light"></figure>
+<figure><figcaption>search return · 80x24 · light · <a href="search-return-80x24-light.png">native size</a></figcaption><img loading="lazy" src="search-return-80x24-light.png" alt="search return at 80x24 in light"></figure>
+<figure><figcaption>search evidence · 80x24 · light · <a href="search-evidence-80x24-light.png">native size</a></figcaption><img loading="lazy" src="search-evidence-80x24-light.png" alt="search evidence at 80x24 in light"></figure>
+<figure><figcaption>paste · 80x24 · light · <a href="paste-80x24-light.png">native size</a></figcaption><img loading="lazy" src="paste-80x24-light.png" alt="paste at 80x24 in light"></figure>
+<figure><figcaption>reading · 80x24 · light · <a href="reading-80x24-light.png">native size</a></figcaption><img loading="lazy" src="reading-80x24-light.png" alt="reading at 80x24 in light"></figure>
+<figure><figcaption>projection rebuild · 80x24 · light · <a href="projection-rebuild-80x24-light.png">native size</a></figcaption><img loading="lazy" src="projection-rebuild-80x24-light.png" alt="projection rebuild at 80x24 in light"></figure>
+<figure><figcaption>refreshed · 80x24 · light · <a href="refreshed-80x24-light.png">native size</a></figcaption><img loading="lazy" src="refreshed-80x24-light.png" alt="refreshed at 80x24 in light"></figure>
 <figure><figcaption>unwrapped · 80x24 · light · <a href="unwrapped-80x24-light.png">native size</a></figcaption><img loading="lazy" src="unwrapped-80x24-light.png" alt="unwrapped at 80x24 in light"></figure>
+<figure><figcaption>supporting timeline · 80x24 · light · <a href="supporting-timeline-80x24-light.png">native size</a></figcaption><img loading="lazy" src="supporting-timeline-80x24-light.png" alt="supporting timeline at 80x24 in light"></figure>
 </details>
-<details open><summary>54x18</summary>
-<figure><figcaption>assessments · 54x18 · light · <a href="assessments-54x18-light.png">native size</a></figcaption><img loading="lazy" src="assessments-54x18-light.png" alt="assessments at 54x18 in light"></figure>
-<figure><figcaption>details · 54x18 · light · <a href="details-54x18-light.png">native size</a></figcaption><img loading="lazy" src="details-54x18-light.png" alt="details at 54x18 in light"></figure>
-<figure><figcaption>expanded · 54x18 · light · <a href="expanded-54x18-light.png">native size</a></figcaption><img loading="lazy" src="expanded-54x18-light.png" alt="expanded at 54x18 in light"></figure>
-<figure><figcaption>help · 54x18 · light · <a href="help-54x18-light.png">native size</a></figcaption><img loading="lazy" src="help-54x18-light.png" alt="help at 54x18 in light"></figure>
-<figure><figcaption>indexing · 54x18 · light · <a href="indexing-54x18-light.png">native size</a></figcaption><img loading="lazy" src="indexing-54x18-light.png" alt="indexing at 54x18 in light"></figure>
-<figure><figcaption>projections · 54x18 · light · <a href="projections-54x18-light.png">native size</a></figcaption><img loading="lazy" src="projections-54x18-light.png" alt="projections at 54x18 in light"></figure>
-<figure><figcaption>search · 54x18 · light · <a href="search-54x18-light.png">native size</a></figcaption><img loading="lazy" src="search-54x18-light.png" alt="search at 54x18 in light"></figure>
+<details><summary>120x32</summary>
+<figure><figcaption>sessions · 120x32 · light · <a href="sessions-120x32-light.png">native size</a></figcaption><img loading="lazy" src="sessions-120x32-light.png" alt="sessions at 120x32 in light"></figure>
+<figure><figcaption>timeline · 120x32 · light · <a href="timeline-120x32-light.png">native size</a></figcaption><img loading="lazy" src="timeline-120x32-light.png" alt="timeline at 120x32 in light"></figure>
+<figure><figcaption>expanded · 120x32 · light · <a href="expanded-120x32-light.png">native size</a></figcaption><img loading="lazy" src="expanded-120x32-light.png" alt="expanded at 120x32 in light"></figure>
+<figure><figcaption>details · 120x32 · light · <a href="details-120x32-light.png">native size</a></figcaption><img loading="lazy" src="details-120x32-light.png" alt="details at 120x32 in light"></figure>
+<figure><figcaption>search · 120x32 · light · <a href="search-120x32-light.png">native size</a></figcaption><img loading="lazy" src="search-120x32-light.png" alt="search at 120x32 in light"></figure>
+<figure><figcaption>assessments · 120x32 · light · <a href="assessments-120x32-light.png">native size</a></figcaption><img loading="lazy" src="assessments-120x32-light.png" alt="assessments at 120x32 in light"></figure>
+<figure><figcaption>unknown prompt · 120x32 · light · <a href="unknown-prompt-120x32-light.png">native size</a></figcaption><img loading="lazy" src="unknown-prompt-120x32-light.png" alt="unknown prompt at 120x32 in light"></figure>
+<figure><figcaption>unknown raw · 120x32 · light · <a href="unknown-raw-120x32-light.png">native size</a></figcaption><img loading="lazy" src="unknown-raw-120x32-light.png" alt="unknown raw at 120x32 in light"></figure>
+<figure><figcaption>projections · 120x32 · light · <a href="projections-120x32-light.png">native size</a></figcaption><img loading="lazy" src="projections-120x32-light.png" alt="projections at 120x32 in light"></figure>
+<figure><figcaption>indexing · 120x32 · light · <a href="indexing-120x32-light.png">native size</a></figcaption><img loading="lazy" src="indexing-120x32-light.png" alt="indexing at 120x32 in light"></figure>
+<figure><figcaption>help · 120x32 · light · <a href="help-120x32-light.png">native size</a></figcaption><img loading="lazy" src="help-120x32-light.png" alt="help at 120x32 in light"></figure>
+</details>
+<details><summary>54x18</summary>
 <figure><figcaption>sessions · 54x18 · light · <a href="sessions-54x18-light.png">native size</a></figcaption><img loading="lazy" src="sessions-54x18-light.png" alt="sessions at 54x18 in light"></figure>
 <figure><figcaption>timeline · 54x18 · light · <a href="timeline-54x18-light.png">native size</a></figcaption><img loading="lazy" src="timeline-54x18-light.png" alt="timeline at 54x18 in light"></figure>
+<figure><figcaption>expanded · 54x18 · light · <a href="expanded-54x18-light.png">native size</a></figcaption><img loading="lazy" src="expanded-54x18-light.png" alt="expanded at 54x18 in light"></figure>
+<figure><figcaption>details · 54x18 · light · <a href="details-54x18-light.png">native size</a></figcaption><img loading="lazy" src="details-54x18-light.png" alt="details at 54x18 in light"></figure>
+<figure><figcaption>search · 54x18 · light · <a href="search-54x18-light.png">native size</a></figcaption><img loading="lazy" src="search-54x18-light.png" alt="search at 54x18 in light"></figure>
+<figure><figcaption>assessments · 54x18 · light · <a href="assessments-54x18-light.png">native size</a></figcaption><img loading="lazy" src="assessments-54x18-light.png" alt="assessments at 54x18 in light"></figure>
 <figure><figcaption>unknown prompt · 54x18 · light · <a href="unknown-prompt-54x18-light.png">native size</a></figcaption><img loading="lazy" src="unknown-prompt-54x18-light.png" alt="unknown prompt at 54x18 in light"></figure>
 <figure><figcaption>unknown raw · 54x18 · light · <a href="unknown-raw-54x18-light.png">native size</a></figcaption><img loading="lazy" src="unknown-raw-54x18-light.png" alt="unknown raw at 54x18 in light"></figure>
+<figure><figcaption>projections · 54x18 · light · <a href="projections-54x18-light.png">native size</a></figcaption><img loading="lazy" src="projections-54x18-light.png" alt="projections at 54x18 in light"></figure>
+<figure><figcaption>indexing · 54x18 · light · <a href="indexing-54x18-light.png">native size</a></figcaption><img loading="lazy" src="indexing-54x18-light.png" alt="indexing at 54x18 in light"></figure>
+<figure><figcaption>help · 54x18 · light · <a href="help-54x18-light.png">native size</a></figcaption><img loading="lazy" src="help-54x18-light.png" alt="help at 54x18 in light"></figure>
 </details>
-<details open><summary>40x12</summary>
-<figure><figcaption>assessments · 40x12 · light · <a href="assessments-40x12-light.png">native size</a></figcaption><img loading="lazy" src="assessments-40x12-light.png" alt="assessments at 40x12 in light"></figure>
-<figure><figcaption>details · 40x12 · light · <a href="details-40x12-light.png">native size</a></figcaption><img loading="lazy" src="details-40x12-light.png" alt="details at 40x12 in light"></figure>
-<figure><figcaption>expanded · 40x12 · light · <a href="expanded-40x12-light.png">native size</a></figcaption><img loading="lazy" src="expanded-40x12-light.png" alt="expanded at 40x12 in light"></figure>
-<figure><figcaption>help · 40x12 · light · <a href="help-40x12-light.png">native size</a></figcaption><img loading="lazy" src="help-40x12-light.png" alt="help at 40x12 in light"></figure>
-<figure><figcaption>indexing · 40x12 · light · <a href="indexing-40x12-light.png">native size</a></figcaption><img loading="lazy" src="indexing-40x12-light.png" alt="indexing at 40x12 in light"></figure>
-<figure><figcaption>projections · 40x12 · light · <a href="projections-40x12-light.png">native size</a></figcaption><img loading="lazy" src="projections-40x12-light.png" alt="projections at 40x12 in light"></figure>
-<figure><figcaption>search · 40x12 · light · <a href="search-40x12-light.png">native size</a></figcaption><img loading="lazy" src="search-40x12-light.png" alt="search at 40x12 in light"></figure>
+<details><summary>40x12</summary>
 <figure><figcaption>sessions · 40x12 · light · <a href="sessions-40x12-light.png">native size</a></figcaption><img loading="lazy" src="sessions-40x12-light.png" alt="sessions at 40x12 in light"></figure>
 <figure><figcaption>timeline · 40x12 · light · <a href="timeline-40x12-light.png">native size</a></figcaption><img loading="lazy" src="timeline-40x12-light.png" alt="timeline at 40x12 in light"></figure>
+<figure><figcaption>expanded · 40x12 · light · <a href="expanded-40x12-light.png">native size</a></figcaption><img loading="lazy" src="expanded-40x12-light.png" alt="expanded at 40x12 in light"></figure>
+<figure><figcaption>details · 40x12 · light · <a href="details-40x12-light.png">native size</a></figcaption><img loading="lazy" src="details-40x12-light.png" alt="details at 40x12 in light"></figure>
+<figure><figcaption>search · 40x12 · light · <a href="search-40x12-light.png">native size</a></figcaption><img loading="lazy" src="search-40x12-light.png" alt="search at 40x12 in light"></figure>
+<figure><figcaption>assessments · 40x12 · light · <a href="assessments-40x12-light.png">native size</a></figcaption><img loading="lazy" src="assessments-40x12-light.png" alt="assessments at 40x12 in light"></figure>
 <figure><figcaption>unknown prompt · 40x12 · light · <a href="unknown-prompt-40x12-light.png">native size</a></figcaption><img loading="lazy" src="unknown-prompt-40x12-light.png" alt="unknown prompt at 40x12 in light"></figure>
 <figure><figcaption>unknown raw · 40x12 · light · <a href="unknown-raw-40x12-light.png">native size</a></figcaption><img loading="lazy" src="unknown-raw-40x12-light.png" alt="unknown raw at 40x12 in light"></figure>
+<figure><figcaption>projections · 40x12 · light · <a href="projections-40x12-light.png">native size</a></figcaption><img loading="lazy" src="projections-40x12-light.png" alt="projections at 40x12 in light"></figure>
+<figure><figcaption>indexing · 40x12 · light · <a href="indexing-40x12-light.png">native size</a></figcaption><img loading="lazy" src="indexing-40x12-light.png" alt="indexing at 40x12 in light"></figure>
+<figure><figcaption>help · 40x12 · light · <a href="help-40x12-light.png">native size</a></figcaption><img loading="lazy" src="help-40x12-light.png" alt="help at 40x12 in light"></figure>
 </details>
-<details open><summary>32x10</summary>
+<details><summary>32x10</summary>
 <figure><figcaption>resize · 32x10 · light · <a href="resize-32x10-light.png">native size</a></figcaption><img loading="lazy" src="resize-32x10-light.png" alt="resize at 32x10 in light"></figure>
 </details>
 </section>
 <section id="mono"><h2>mono profile</h2>
 <p><a href="workflow-mono.cast">Input/output/resize recording (asciicast v2)</a></p>
-<details open><summary>120x32</summary>
-<figure><figcaption>assessments · 120x32 · mono · <a href="assessments-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="assessments-120x32-mono.png" alt="assessments at 120x32 in mono"></figure>
-<figure><figcaption>details · 120x32 · mono · <a href="details-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="details-120x32-mono.png" alt="details at 120x32 in mono"></figure>
-<figure><figcaption>expanded · 120x32 · mono · <a href="expanded-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="expanded-120x32-mono.png" alt="expanded at 120x32 in mono"></figure>
-<figure><figcaption>help · 120x32 · mono · <a href="help-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="help-120x32-mono.png" alt="help at 120x32 in mono"></figure>
-<figure><figcaption>indexing · 120x32 · mono · <a href="indexing-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="indexing-120x32-mono.png" alt="indexing at 120x32 in mono"></figure>
-<figure><figcaption>projections · 120x32 · mono · <a href="projections-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="projections-120x32-mono.png" alt="projections at 120x32 in mono"></figure>
-<figure><figcaption>search · 120x32 · mono · <a href="search-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="search-120x32-mono.png" alt="search at 120x32 in mono"></figure>
-<figure><figcaption>sessions · 120x32 · mono · <a href="sessions-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="sessions-120x32-mono.png" alt="sessions at 120x32 in mono"></figure>
-<figure><figcaption>timeline · 120x32 · mono · <a href="timeline-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="timeline-120x32-mono.png" alt="timeline at 120x32 in mono"></figure>
-<figure><figcaption>unknown prompt · 120x32 · mono · <a href="unknown-prompt-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="unknown-prompt-120x32-mono.png" alt="unknown prompt at 120x32 in mono"></figure>
-<figure><figcaption>unknown raw · 120x32 · mono · <a href="unknown-raw-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="unknown-raw-120x32-mono.png" alt="unknown raw at 120x32 in mono"></figure>
-</details>
-<details open><summary>80x24</summary>
-<figure><figcaption>assessments · 80x24 · mono · <a href="assessments-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="assessments-80x24-mono.png" alt="assessments at 80x24 in mono"></figure>
-<figure><figcaption>details · 80x24 · mono · <a href="details-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="details-80x24-mono.png" alt="details at 80x24 in mono"></figure>
-<figure><figcaption>editing · 80x24 · mono · <a href="editing-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="editing-80x24-mono.png" alt="editing at 80x24 in mono"></figure>
-<figure><figcaption>expanded · 80x24 · mono · <a href="expanded-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="expanded-80x24-mono.png" alt="expanded at 80x24 in mono"></figure>
-<figure><figcaption>help · 80x24 · mono · <a href="help-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="help-80x24-mono.png" alt="help at 80x24 in mono"></figure>
-<figure><figcaption>indexing · 80x24 · mono · <a href="indexing-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="indexing-80x24-mono.png" alt="indexing at 80x24 in mono"></figure>
-<figure><figcaption>paste · 80x24 · mono · <a href="paste-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="paste-80x24-mono.png" alt="paste at 80x24 in mono"></figure>
-<figure><figcaption>projection rebuild · 80x24 · mono · <a href="projection-rebuild-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="projection-rebuild-80x24-mono.png" alt="projection rebuild at 80x24 in mono"></figure>
-<figure><figcaption>projections · 80x24 · mono · <a href="projections-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="projections-80x24-mono.png" alt="projections at 80x24 in mono"></figure>
-<figure><figcaption>reading · 80x24 · mono · <a href="reading-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="reading-80x24-mono.png" alt="reading at 80x24 in mono"></figure>
-<figure><figcaption>refreshed · 80x24 · mono · <a href="refreshed-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="refreshed-80x24-mono.png" alt="refreshed at 80x24 in mono"></figure>
-<figure><figcaption>returned · 80x24 · mono · <a href="returned-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="returned-80x24-mono.png" alt="returned at 80x24 in mono"></figure>
-<figure><figcaption>search · 80x24 · mono · <a href="search-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="search-80x24-mono.png" alt="search at 80x24 in mono"></figure>
-<figure><figcaption>search evidence · 80x24 · mono · <a href="search-evidence-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="search-evidence-80x24-mono.png" alt="search evidence at 80x24 in mono"></figure>
-<figure><figcaption>search return · 80x24 · mono · <a href="search-return-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="search-return-80x24-mono.png" alt="search return at 80x24 in mono"></figure>
+<details><summary>80x24</summary>
 <figure><figcaption>sessions · 80x24 · mono · <a href="sessions-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="sessions-80x24-mono.png" alt="sessions at 80x24 in mono"></figure>
-<figure><figcaption>supporting reference · 80x24 · mono · <a href="supporting-reference-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="supporting-reference-80x24-mono.png" alt="supporting reference at 80x24 in mono"></figure>
-<figure><figcaption>supporting timeline · 80x24 · mono · <a href="supporting-timeline-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="supporting-timeline-80x24-mono.png" alt="supporting timeline at 80x24 in mono"></figure>
 <figure><figcaption>timeline · 80x24 · mono · <a href="timeline-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="timeline-80x24-mono.png" alt="timeline at 80x24 in mono"></figure>
+<figure><figcaption>expanded · 80x24 · mono · <a href="expanded-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="expanded-80x24-mono.png" alt="expanded at 80x24 in mono"></figure>
+<figure><figcaption>details · 80x24 · mono · <a href="details-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="details-80x24-mono.png" alt="details at 80x24 in mono"></figure>
+<figure><figcaption>search · 80x24 · mono · <a href="search-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="search-80x24-mono.png" alt="search at 80x24 in mono"></figure>
+<figure><figcaption>assessments · 80x24 · mono · <a href="assessments-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="assessments-80x24-mono.png" alt="assessments at 80x24 in mono"></figure>
 <figure><figcaption>unknown prompt · 80x24 · mono · <a href="unknown-prompt-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="unknown-prompt-80x24-mono.png" alt="unknown prompt at 80x24 in mono"></figure>
 <figure><figcaption>unknown raw · 80x24 · mono · <a href="unknown-raw-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="unknown-raw-80x24-mono.png" alt="unknown raw at 80x24 in mono"></figure>
+<figure><figcaption>projections · 80x24 · mono · <a href="projections-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="projections-80x24-mono.png" alt="projections at 80x24 in mono"></figure>
+<figure><figcaption>indexing · 80x24 · mono · <a href="indexing-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="indexing-80x24-mono.png" alt="indexing at 80x24 in mono"></figure>
+<figure><figcaption>help · 80x24 · mono · <a href="help-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="help-80x24-mono.png" alt="help at 80x24 in mono"></figure>
+<figure><figcaption>search return · 80x24 · mono · <a href="search-return-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="search-return-80x24-mono.png" alt="search return at 80x24 in mono"></figure>
+<figure><figcaption>reading · 80x24 · mono · <a href="reading-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="reading-80x24-mono.png" alt="reading at 80x24 in mono"></figure>
+<figure><figcaption>supporting timeline · 80x24 · mono · <a href="supporting-timeline-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="supporting-timeline-80x24-mono.png" alt="supporting timeline at 80x24 in mono"></figure>
+<figure><figcaption>paste · 80x24 · mono · <a href="paste-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="paste-80x24-mono.png" alt="paste at 80x24 in mono"></figure>
+<figure><figcaption>supporting reference · 80x24 · mono · <a href="supporting-reference-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="supporting-reference-80x24-mono.png" alt="supporting reference at 80x24 in mono"></figure>
 <figure><figcaption>unwrapped · 80x24 · mono · <a href="unwrapped-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="unwrapped-80x24-mono.png" alt="unwrapped at 80x24 in mono"></figure>
+<figure><figcaption>search evidence · 80x24 · mono · <a href="search-evidence-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="search-evidence-80x24-mono.png" alt="search evidence at 80x24 in mono"></figure>
+<figure><figcaption>returned · 80x24 · mono · <a href="returned-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="returned-80x24-mono.png" alt="returned at 80x24 in mono"></figure>
+<figure><figcaption>projection rebuild · 80x24 · mono · <a href="projection-rebuild-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="projection-rebuild-80x24-mono.png" alt="projection rebuild at 80x24 in mono"></figure>
+<figure><figcaption>editing · 80x24 · mono · <a href="editing-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="editing-80x24-mono.png" alt="editing at 80x24 in mono"></figure>
+<figure><figcaption>refreshed · 80x24 · mono · <a href="refreshed-80x24-mono.png">native size</a></figcaption><img loading="lazy" src="refreshed-80x24-mono.png" alt="refreshed at 80x24 in mono"></figure>
 </details>
-<details open><summary>54x18</summary>
-<figure><figcaption>assessments · 54x18 · mono · <a href="assessments-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="assessments-54x18-mono.png" alt="assessments at 54x18 in mono"></figure>
-<figure><figcaption>details · 54x18 · mono · <a href="details-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="details-54x18-mono.png" alt="details at 54x18 in mono"></figure>
-<figure><figcaption>expanded · 54x18 · mono · <a href="expanded-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="expanded-54x18-mono.png" alt="expanded at 54x18 in mono"></figure>
-<figure><figcaption>help · 54x18 · mono · <a href="help-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="help-54x18-mono.png" alt="help at 54x18 in mono"></figure>
-<figure><figcaption>indexing · 54x18 · mono · <a href="indexing-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="indexing-54x18-mono.png" alt="indexing at 54x18 in mono"></figure>
-<figure><figcaption>projections · 54x18 · mono · <a href="projections-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="projections-54x18-mono.png" alt="projections at 54x18 in mono"></figure>
-<figure><figcaption>search · 54x18 · mono · <a href="search-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="search-54x18-mono.png" alt="search at 54x18 in mono"></figure>
+<details><summary>120x32</summary>
+<figure><figcaption>sessions · 120x32 · mono · <a href="sessions-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="sessions-120x32-mono.png" alt="sessions at 120x32 in mono"></figure>
+<figure><figcaption>timeline · 120x32 · mono · <a href="timeline-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="timeline-120x32-mono.png" alt="timeline at 120x32 in mono"></figure>
+<figure><figcaption>expanded · 120x32 · mono · <a href="expanded-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="expanded-120x32-mono.png" alt="expanded at 120x32 in mono"></figure>
+<figure><figcaption>details · 120x32 · mono · <a href="details-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="details-120x32-mono.png" alt="details at 120x32 in mono"></figure>
+<figure><figcaption>search · 120x32 · mono · <a href="search-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="search-120x32-mono.png" alt="search at 120x32 in mono"></figure>
+<figure><figcaption>assessments · 120x32 · mono · <a href="assessments-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="assessments-120x32-mono.png" alt="assessments at 120x32 in mono"></figure>
+<figure><figcaption>unknown prompt · 120x32 · mono · <a href="unknown-prompt-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="unknown-prompt-120x32-mono.png" alt="unknown prompt at 120x32 in mono"></figure>
+<figure><figcaption>unknown raw · 120x32 · mono · <a href="unknown-raw-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="unknown-raw-120x32-mono.png" alt="unknown raw at 120x32 in mono"></figure>
+<figure><figcaption>projections · 120x32 · mono · <a href="projections-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="projections-120x32-mono.png" alt="projections at 120x32 in mono"></figure>
+<figure><figcaption>indexing · 120x32 · mono · <a href="indexing-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="indexing-120x32-mono.png" alt="indexing at 120x32 in mono"></figure>
+<figure><figcaption>help · 120x32 · mono · <a href="help-120x32-mono.png">native size</a></figcaption><img loading="lazy" src="help-120x32-mono.png" alt="help at 120x32 in mono"></figure>
+</details>
+<details><summary>54x18</summary>
 <figure><figcaption>sessions · 54x18 · mono · <a href="sessions-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="sessions-54x18-mono.png" alt="sessions at 54x18 in mono"></figure>
 <figure><figcaption>timeline · 54x18 · mono · <a href="timeline-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="timeline-54x18-mono.png" alt="timeline at 54x18 in mono"></figure>
+<figure><figcaption>expanded · 54x18 · mono · <a href="expanded-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="expanded-54x18-mono.png" alt="expanded at 54x18 in mono"></figure>
+<figure><figcaption>details · 54x18 · mono · <a href="details-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="details-54x18-mono.png" alt="details at 54x18 in mono"></figure>
+<figure><figcaption>search · 54x18 · mono · <a href="search-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="search-54x18-mono.png" alt="search at 54x18 in mono"></figure>
+<figure><figcaption>assessments · 54x18 · mono · <a href="assessments-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="assessments-54x18-mono.png" alt="assessments at 54x18 in mono"></figure>
 <figure><figcaption>unknown prompt · 54x18 · mono · <a href="unknown-prompt-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="unknown-prompt-54x18-mono.png" alt="unknown prompt at 54x18 in mono"></figure>
 <figure><figcaption>unknown raw · 54x18 · mono · <a href="unknown-raw-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="unknown-raw-54x18-mono.png" alt="unknown raw at 54x18 in mono"></figure>
+<figure><figcaption>projections · 54x18 · mono · <a href="projections-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="projections-54x18-mono.png" alt="projections at 54x18 in mono"></figure>
+<figure><figcaption>indexing · 54x18 · mono · <a href="indexing-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="indexing-54x18-mono.png" alt="indexing at 54x18 in mono"></figure>
+<figure><figcaption>help · 54x18 · mono · <a href="help-54x18-mono.png">native size</a></figcaption><img loading="lazy" src="help-54x18-mono.png" alt="help at 54x18 in mono"></figure>
 </details>
-<details open><summary>40x12</summary>
-<figure><figcaption>assessments · 40x12 · mono · <a href="assessments-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="assessments-40x12-mono.png" alt="assessments at 40x12 in mono"></figure>
-<figure><figcaption>details · 40x12 · mono · <a href="details-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="details-40x12-mono.png" alt="details at 40x12 in mono"></figure>
-<figure><figcaption>expanded · 40x12 · mono · <a href="expanded-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="expanded-40x12-mono.png" alt="expanded at 40x12 in mono"></figure>
-<figure><figcaption>help · 40x12 · mono · <a href="help-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="help-40x12-mono.png" alt="help at 40x12 in mono"></figure>
-<figure><figcaption>indexing · 40x12 · mono · <a href="indexing-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="indexing-40x12-mono.png" alt="indexing at 40x12 in mono"></figure>
-<figure><figcaption>projections · 40x12 · mono · <a href="projections-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="projections-40x12-mono.png" alt="projections at 40x12 in mono"></figure>
-<figure><figcaption>search · 40x12 · mono · <a href="search-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="search-40x12-mono.png" alt="search at 40x12 in mono"></figure>
+<details><summary>40x12</summary>
 <figure><figcaption>sessions · 40x12 · mono · <a href="sessions-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="sessions-40x12-mono.png" alt="sessions at 40x12 in mono"></figure>
 <figure><figcaption>timeline · 40x12 · mono · <a href="timeline-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="timeline-40x12-mono.png" alt="timeline at 40x12 in mono"></figure>
+<figure><figcaption>expanded · 40x12 · mono · <a href="expanded-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="expanded-40x12-mono.png" alt="expanded at 40x12 in mono"></figure>
+<figure><figcaption>details · 40x12 · mono · <a href="details-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="details-40x12-mono.png" alt="details at 40x12 in mono"></figure>
+<figure><figcaption>search · 40x12 · mono · <a href="search-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="search-40x12-mono.png" alt="search at 40x12 in mono"></figure>
+<figure><figcaption>assessments · 40x12 · mono · <a href="assessments-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="assessments-40x12-mono.png" alt="assessments at 40x12 in mono"></figure>
 <figure><figcaption>unknown prompt · 40x12 · mono · <a href="unknown-prompt-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="unknown-prompt-40x12-mono.png" alt="unknown prompt at 40x12 in mono"></figure>
 <figure><figcaption>unknown raw · 40x12 · mono · <a href="unknown-raw-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="unknown-raw-40x12-mono.png" alt="unknown raw at 40x12 in mono"></figure>
+<figure><figcaption>projections · 40x12 · mono · <a href="projections-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="projections-40x12-mono.png" alt="projections at 40x12 in mono"></figure>
+<figure><figcaption>indexing · 40x12 · mono · <a href="indexing-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="indexing-40x12-mono.png" alt="indexing at 40x12 in mono"></figure>
+<figure><figcaption>help · 40x12 · mono · <a href="help-40x12-mono.png">native size</a></figcaption><img loading="lazy" src="help-40x12-mono.png" alt="help at 40x12 in mono"></figure>
 </details>
-<details open><summary>32x10</summary>
+<details><summary>32x10</summary>
 <figure><figcaption>resize · 32x10 · mono · <a href="resize-32x10-mono.png">native size</a></figcaption><img loading="lazy" src="resize-32x10-mono.png" alt="resize at 32x10 in mono"></figure>
 </details>
 </section></html>

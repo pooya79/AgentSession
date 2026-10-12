@@ -2,8 +2,9 @@
 
 Measured on 2026-10-12 for [#93](https://github.com/pooya79/AgentSession/issues/93).
 This rechecks [#90's before/after method](tui-timeline-bounded.md) against the
-combined TUI at `67d8885`. Acceptance work adds tests and review tooling; it does
-not change production rendering or services. Full outputs are retained as
+combined TUI renderer at `7d268bb`, after the owner-requested simplification.
+Acceptance work adds tests and review tooling and simplifies presentation; shared
+services and retention policies remain unchanged. Full outputs are retained as
 [before](tui-93/before.txt), [final latency](tui-93/final-latency.txt), and
 [final memory](tui-93/final-memory.txt).
 
@@ -28,12 +29,12 @@ not change production rendering or services. Full outputs are retained as
   temporary source and performs actual discovery/import, SQLite writes and
   projections in the same runtime. Sampling waits for one completed batch;
   work continues without sleeps until sampling ends. Before completed 76
-  batches/7,600 records, final completed 13 batches/1,300 records. Batch counts
+  batches/7,600 records, final completed 12 batches/1,200 records. Batch counts
   vary with interaction time.
 - Before: archive `118b7889`, copy the unchanged
   `timeline_measurement_test.go` harness into it, then compile/run separately.
-  Final: this checkout. Timing binaries run sequentially, before full/race
-  checks. The baseline rerun overlapped the lightweight PTY capture process;
+  Final: this checkout. Timing binaries run sequentially; final runs start after capture and full/race
+  checks complete. The baseline rerun overlapped the lightweight PTY capture process;
   no competing benchmark or race/full test suite ran during timing.
 
 ## Responsiveness
@@ -42,8 +43,8 @@ All four final p95s satisfy the **below 100 ms** reference-workload target.
 
 | Interaction-to-frame p95 | Before idle | Final idle | Before indexing | Final indexing |
 | --- | ---: | ---: | ---: | ---: |
-| Page scroll | 208.82 ms | 0.27 ms | 177.60 ms | 0.38 ms |
-| Event navigation | 279.41 ms | 16.38 ms | 294.47 ms | 20.66 ms |
+| Page scroll | 208.82 ms | 0.27 ms | 177.60 ms | 0.28 ms |
+| Event navigation | 279.41 ms | 18.16 ms | 294.47 ms | 21.27 ms |
 
 The previous #90 report recorded final p95s of 0.19/0.27 ms scrolling and
 15.81/18.85 ms navigation. These reruns vary with scheduling, garbage collection
@@ -54,14 +55,14 @@ guarantees for arbitrary hardware, terminal paint, cold reads or larger events.
 
 | Exploration/timing process | Before | Final |
 | --- | ---: | ---: |
-| Exploration time | 49.46 s | 3.66 s |
-| Exploration allocation bytes | 15,191,701,008 | 467,269,248 |
-| Exploration allocations | 88,056,897 | 1,252,102 |
-| Heap after exploration and GC | 18,685,856 B | 6,856,760 B |
+| Exploration time | 49.46 s | 3.84 s |
+| Exploration allocation bytes | 15,191,701,008 | 466,607,760 |
+| Exploration allocations | 88,056,897 | 1,240,270 |
+| Heap after exploration and GC | 18,685,856 B | 6,855,264 B |
 | Resident payloads after exploration | 10,000 | 150 |
-| Total allocation bytes, including timing/indexing | 33,552,603,544 | 1,240,639,592 |
-| Total allocation count, including timing/indexing | 198,763,813 | 6,568,318 |
-| Peak process RSS, including fixture import/setup | 95,480 KiB | 55,620 KiB |
+| Total allocation bytes, including timing/indexing | 33,552,603,544 | 1,184,226,912 |
+| Total allocation count, including timing/indexing | 198,763,813 | 6,152,991 |
+| Peak process RSS, including fixture import/setup | 95,480 KiB | 53,468 KiB |
 
 ## Retention, eviction and large-event exception
 
@@ -74,22 +75,22 @@ after reimport. This measurement does not claim a snapshot across source changes
 
 | Stage | Visited metadata | Resident events | Accounted payload B | Accounted rendered B | Metadata estimate B | Heap after GC B |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Explore 2,500 | 2,500 | 150 | 71,365 | 99,515 | 606,743 | 1,713,184 |
-| Explore 5,000 | 5,000 | 150 | 71,365 | 99,515 | 1,213,493 | 2,545,240 |
-| Explore 7,500 | 7,500 | 150 | 71,365 | 99,515 | 1,820,243 | 3,627,960 |
-| Explore 10,000, including 1 MiB event | 10,000 | 150 | 1,119,603 | 1,685,878 | 2,426,883 | 6,848,640 |
-| Evict large event, revisit start | 10,000 | 26 | 20,757 | 30,696 | 2,426,883 | 4,019,440 |
-| Revisit 2,500 | 10,000 | 150 | 81,605 | 115,195 | 2,426,883 | 4,231,264 |
-| Revisit 5,000 | 10,000 | 150 | 81,605 | 115,195 | 2,426,883 | 4,256,192 |
-| Revisit 7,500 | 10,000 | 150 | 81,605 | 115,195 | 2,426,883 | 4,273,568 |
-| Reload 1 MiB event | 10,000 | 150 | 1,119,603 | 1,685,878 | 2,426,883 | 6,932,664 |
-| Separate 3 MiB event + boundary neighbor | 3 | 2 | 3,145,917 | 4,759,271 | 527 | 8,613,352 |
+| Explore 2,500 | 2,500 | 150 | 71,365 | 98,555 | 606,743 | 1,730,544 |
+| Explore 5,000 | 5,000 | 150 | 71,365 | 98,555 | 1,213,493 | 2,537,824 |
+| Explore 7,500 | 7,500 | 150 | 71,365 | 98,555 | 1,820,243 | 3,542,816 |
+| Explore 10,000, including 1 MiB event | 10,000 | 150 | 1,119,603 | 1,684,918 | 2,426,883 | 6,845,832 |
+| Evict large event, revisit start | 10,000 | 26 | 20,757 | 30,573 | 2,426,883 | 4,015,888 |
+| Revisit 2,500 | 10,000 | 150 | 81,605 | 114,235 | 2,426,883 | 4,231,320 |
+| Revisit 5,000 | 10,000 | 150 | 81,605 | 114,235 | 2,426,883 | 4,262,200 |
+| Revisit 7,500 | 10,000 | 150 | 81,605 | 114,235 | 2,426,883 | 4,282,744 |
+| Reload 1 MiB event | 10,000 | 150 | 1,119,603 | 1,684,918 | 2,426,883 | 6,939,824 |
+| Separate 3 MiB event + boundary neighbor | 3 | 2 | 3,145,917 | 4,759,271 | 527 | 8,621,464 |
 
-Exploration/revisit took 22.64 s and allocated 3,449,953,768 bytes across
-19,687,029 allocations through the 1 MiB reload. Including the separate oversized
-event, totals reached 3,493,114,904 bytes/19,688,892 allocations. Peak RSS was
-53,008 KiB. A 5 ms sampler observed peak heap allocations of 15,230,360 B during
-exploration, 15,843,168 B during eviction/revisit, and 22,621,432 B during the
+Exploration/revisit took 21.96 s and allocated 3,438,326,032 bytes across
+19,610,232 allocations through the 1 MiB reload. Including the separate oversized
+event, totals reached 3,481,486,688 bytes/19,612,090 allocations. Peak RSS was
+57,016 KiB. A 5 ms sampler observed peak heap allocations of 13,405,512 B during
+exploration, 16,641,112 B during eviction/revisit, and 22,629,064 B during the
 oversized-event phase. Sampling can miss brief peaks and includes uncollected
 garbage; process RSS includes fixture import/setup and infrastructure.
 

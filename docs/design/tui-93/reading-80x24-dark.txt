@@ -1,5 +1,5 @@
-AgentSession  /  Timeline  ·  local · offline · read-only
-Timeline · session fixture-17 · canonical complete
+AgentSession  /  Timeline
+Fix request timeout without hiding errors.
    recovery.
 4. Recorded evidence remains in source order; a build does not establish test
    recovery.
@@ -20,5 +20,5 @@ Timeline · session fixture-17 · canonical complete
 12. Recorded evidence remains in source order; a build does not establish test
     recovery.
 13. Recorded evidence remains in source order; a build does not establish test
-Target: evt_f88b2936a6e07… #1 · open · Index: complete
-↑↓ scroll · [/] events · Enter toggle · d inspect · Esc back · ? help
+Target: #1 · open · Index: complete
+↑↓ read · [] events · d inspect · / search · Esc back · ? help

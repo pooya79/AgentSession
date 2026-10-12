@@ -1,18 +1,18 @@
-AgentSession  /  Assessments  ·  local · offline · re…
-Rule assessments · session fixture-17
+AgentSession  /  Assessments
+Rule assessments
+Repeated command failures · insufficient evidence
+  Within the currently imported record in source orde…
+Unresolved failed verification · insufficient evidence
+  Within the currently imported record in source orde…
+Missing verification · insufficient evidence
+  Within the currently imported record in source orde…
 
-repeated_command_failures · insufficient_evidence · ve
-rsion 1
-Assessment finding_7362fcbbb503188fd044c574bb935bb3803
-2bf9ae0aa90b67630a689e8372939
-Within the currently imported record in source order:
-2 invocations, 1 failed results, 0 repeated failure se
-quences, 0 later recorded recoveries. Command identity
- requires exact recorded text trimmed at the ends and
-an established matching directory. Missing, conflictin
-g, unsupported, or oversized evidence limits affected
-sequences; independent positive evidence remains usabl
-e.
-Invocations 2 · failures 1 · recovered 0
+v full explanations and counts
+
+Supporting events
+> #4 · Command started
+  #5 · Command completed
+  #2 · Command started
+  #3 · Command completed
 [FOCUS] Evidence 1/11 · Enter opens context
 [] refs · Enter open · Esc · ? help

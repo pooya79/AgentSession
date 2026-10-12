@@ -1,5 +1,5 @@
-AgentSession  /  Timeline  ·  local · offline · read-…
-Timeline · session fixture-17 · canonical complete
+AgentSession  /  Timeline
+Fix request timeout without hiding errors.
 > ╭─ You
 Fix request timeout without hiding errors.
 ╰─
@@ -15,4 +15,4 @@ func retry(ctx context.Context) error {
     return request.WithTimeout(ctx, "https://example
     .invalid/api/very/long/path/for/terminal/wrappin
 Target: #0 · open · Index: complete
-↑↓ scroll · [/] target · ? help
+↑↓ read · [] events · Esc · ? help

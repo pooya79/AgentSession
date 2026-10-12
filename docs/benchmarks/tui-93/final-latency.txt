@@ -1,31 +1,31 @@
 === RUN   TestTimelineResponsivenessMeasurement
-    timeline_measurement_test.go:147: exploration=3.661785284s retained_heap=6856760 heap_sys=23134208 alloc_bytes=467269248 allocations=1252102 resident_payloads=150
-    timeline_measurement_test.go:212: indexing=false action=scroll warmup=3 samples=100 p95=272.398µs
-    timeline_measurement_test.go:212: indexing=false action=event warmup=3 samples=100 p95=16.375417ms
-    timeline_measurement_test.go:212: indexing=true action=scroll warmup=3 samples=100 p95=381.671µs
-    timeline_measurement_test.go:212: indexing=true action=event warmup=3 samples=100 p95=20.662902ms
-    timeline_measurement_test.go:219: concurrent_import_batches=13 records=1300
-    timeline_measurement_test.go:223: total_alloc_bytes=1240639592 allocations=6568318 heap_sys=34340864
---- PASS: TestTimelineResponsivenessMeasurement (9.67s)
+    timeline_measurement_test.go:147: exploration=3.840788795s retained_heap=6855264 heap_sys=20676608 alloc_bytes=466607760 allocations=1240270 resident_payloads=150
+    timeline_measurement_test.go:212: indexing=false action=scroll warmup=3 samples=100 p95=268.353µs
+    timeline_measurement_test.go:212: indexing=false action=event warmup=3 samples=100 p95=18.156526ms
+    timeline_measurement_test.go:212: indexing=true action=scroll warmup=3 samples=100 p95=284.826µs
+    timeline_measurement_test.go:212: indexing=true action=event warmup=3 samples=100 p95=21.269486ms
+    timeline_measurement_test.go:219: concurrent_import_batches=12 records=1200
+    timeline_measurement_test.go:223: total_alloc_bytes=1184226912 allocations=6152991 heap_sys=28246016
+--- PASS: TestTimelineResponsivenessMeasurement (9.77s)
 PASS
 	Command being timed: "/tmp/agentsession-93.test -test.run ^TestTimelineResponsivenessMeasurement$ -test.count=1 -test.v"
-	User time (seconds): 9.95
-	System time (seconds): 1.70
-	Percent of CPU this job got: 120%
-	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:09.67
+	User time (seconds): 10.23
+	System time (seconds): 1.75
+	Percent of CPU this job got: 122%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:09.77
 	Average shared text size (kbytes): 0
 	Average unshared data size (kbytes): 0
 	Average stack size (kbytes): 0
 	Average total size (kbytes): 0
-	Maximum resident set size (kbytes): 55620
+	Maximum resident set size (kbytes): 53468
 	Average resident set size (kbytes): 0
 	Major (requiring I/O) page faults: 0
-	Minor (reclaiming a frame) page faults: 165441
-	Voluntary context switches: 85604
-	Involuntary context switches: 509
+	Minor (reclaiming a frame) page faults: 162594
+	Voluntary context switches: 87449
+	Involuntary context switches: 687
 	Swaps: 0
 	File system inputs: 0
-	File system outputs: 767888
+	File system outputs: 731520
 	Socket messages sent: 0
 	Socket messages received: 0
 	Signals delivered: 0

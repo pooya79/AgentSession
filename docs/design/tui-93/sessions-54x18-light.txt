@@ -1,7 +1,6 @@
-AgentSession  /  Sessions  ·  local · offline · read-…
+AgentSession  /  Sessions
 [FOCUS] Sessions · last activity ↓
 Sessions 3 · Events 10
-Agents 1 · Evidence issues 0
 
 > Fix request timeout without hiding errors.
   CODEX · 2026-10-10 12:00 UTC
@@ -13,6 +12,7 @@ Agents 1 · Evidence issues 0
   CODEX · 2026-10-08 10:00 UTC
   1 events · complete
 Page 1 · 3 shown
+
 
 CANONICAL INDEX · COMPLETE · 3 sources · 3 sessions
 ↑↓ select · Enter open · ? help

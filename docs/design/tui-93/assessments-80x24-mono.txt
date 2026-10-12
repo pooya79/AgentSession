@@ -1,24 +1,24 @@
-AgentSession  /  Assessments  ·  local · offline · read-only
-Rule assessments · session fixture-17
+AgentSession  /  Assessments
+Rule assessments
+Repeated command failures · insufficient evidence
+  Within the currently imported record in source order: 2 invocations, 1 failed…
+Unresolved failed verification · insufficient evidence
+  Within the currently imported record in source order: 2 recognized Go verific…
+Missing verification · insufficient evidence
+  Within the currently imported record in source order: 0 confirmed mutations, …
 
-repeated_command_failures · insufficient_evidence · version 1
-Assessment finding_7362fcbbb503188fd044c574bb935bb38032bf9ae0aa90b67630a689e8372
-939
-Within the currently imported record in source order: 2 invocations, 1 failed re
-sults, 0 repeated failure sequences, 0 later recorded recoveries. Command identi
-ty requires exact recorded text trimmed at the ends and an established matching
-directory. Missing, conflicting, unsupported, or oversized evidence limits affec
-ted sequences; independent positive evidence remains usable.
-Invocations 2 · failures 1 · recovered 0
-uncertainties 1 · omitted references 0
-Repeated failure sequences 0
+v full explanations and counts
 
-unresolved_failed_verification · insufficient_evidence · version 1
-Assessment finding_6b6c32761b101d6637f836309c13d6e466f078143e979cffa88f65ad400fd
-27a
-Within the currently imported record in source order: 2 recognized Go verificati
-on invocations (1 tests, 0 static checks, 1 builds), 1 failed results, 0 failure
-s with later recorded recovery, 0 conclusively unresolved failures. Recovery req
-uires exact recorded command text trimmed at the ends and an established matchin
+Supporting events
+> #4 · Command started
+  #5 · Command completed
+  #2 · Command started
+  #3 · Command completed
+  #6 · Unsupported Codex record: future_activity
+  #2 · Command started
+  #3 · Command completed
+  #6 · Unsupported Codex record: future_activity
+  #4 · Command started
+  #5 · Command completed
 [FOCUS] Evidence 1/11 · Enter opens context
-↑↓ scroll · [/] evidence · Enter context · r retry · Esc back · ? help
+[] evidence · Enter open · v explain · Esc back · ? help

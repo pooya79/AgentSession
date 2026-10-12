@@ -1,5 +1,5 @@
-AgentSession  /  Timeline  ·  local · o…
-Timeline · session fixture-17 · canonic…
+AgentSession  /  Timeline
+Fix request timeout without hiding erro…
 > ╭─ You
 Fix request timeout without hiding
 errors.
@@ -9,4 +9,4 @@ errors.
 § Retry policy
 
 Target: #0 · open · Index: complete
-↑↓ scroll · [/] target · ? help
+↑↓ read · [] events · Esc · ? help

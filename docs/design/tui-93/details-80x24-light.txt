@@ -1,9 +1,5 @@
-AgentSession  /  Event  ·  local · offline · read-only
+AgentSession  /  Event
 Inspection #3 · Command · RECORDED FAILURE (exit 1) · go test ./internal/client
-Normalized payload
-  #3 - Command · RECORDED FAILURE (exit 1) · go test ./internal/client
-  Invocation ID: test
-  Phase: completed
   Command: go test ./internal/client
   Working directory: /fixture/project
   Exit status: 1
@@ -13,12 +9,16 @@ Normalized payload
                   empt=3; timeout=3000ms
               FAIL example.invalid/project/internal/client
 
-Event metadata
-Event detail · session fixture-17
-#3 · command · complete
-Command completed
-Event: evt_f29169eb635523700089f0c03c4059204113d61f97f69ce9ddbe5df00c631770
-Interpretation: partially_interpreted · 1 Unknown events · 0 malformed records
+
+
+
+
+
+
+
+
+
+
 
 [FOCUS] Wrapped · complete
-↑↓ scroll · w wrap · ←→ pan · r retry · Esc back · ? help
+↑↓ read · w wrap · v metadata · Esc back · ? help

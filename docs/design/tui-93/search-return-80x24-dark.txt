@@ -1,5 +1,7 @@
-AgentSession  /  Timeline  ·  local · offline · read-only
-Timeline · session fixture-17 · canonical complete
+AgentSession  /  Timeline
+Fix request timeout without hiding errors.
+19. Recorded evidence remains in source order; a build does not establish test
+    recovery.
 20. Recorded evidence remains in source order; a build does not establish test
     recovery.
 
@@ -8,8 +10,6 @@ Timeline · session fixture-17 · canonical complete
   #2 + Command · RESULT UNAVAILABLE · go test ./internal/client
 
 > #3 - Command · RECORDED FAILURE (exit 1) · go test ./internal/client
-  Invocation ID: test
-  Phase: completed
   Command: go test ./internal/client
   Working directory: /fixture/project
   Exit status: 1
@@ -20,5 +20,5 @@ Timeline · session fixture-17 · canonical complete
               FAIL example.invalid/project/internal/client
   Enter to hide details
 
-Target: evt_f29169eb63552… #3 · - expanded · Index: complete
-↑↓ scroll · [/] events · Enter toggle · d inspect · Esc back · ? help
+Target: #3 · - expanded · Index: complete
+↑↓ read · [] events · Enter collapse · d inspect · Esc · ? help
