@@ -10,7 +10,13 @@ checked after the PTY journey; mouse capture enable sequences are rejected.
 
 **Revised; owner review pending.** The owner rejected the initial combined UI as
 “messy”, with too much text and unclear navigation, and requested simplification
-across all screens. The revision puts recorded content first, removes internal
+across all screens. The owner then rejected the first simplification as still
+needing more simplification. This second revision removes repeated titles,
+previews, focus labels and routine background-success status; uses two-row
+session entries and plain speaker labels; gives command output the full line
+width; lists each supporting event once; and reduces visible controls to primary
+actions. Derived views use readable names and indexing starts with progress
+instead of a source inventory. The revision puts recorded content first, removes internal
 identities from the reader target, shortens controls, makes help specific to the
 current screen, and moves metadata, full explanations and operational counters
 behind `v`. All evidence remains reachable; failures and partial availability

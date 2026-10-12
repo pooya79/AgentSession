@@ -49,8 +49,11 @@ bounded, redacted Unknown evidence). Messages always remain open. Headings,
 lists and code use restrained terminal Markdown; indentation is preserved and
 long code/output lines wrap by default. Links remain text and are never fetched.
 Press `v` in browsing, search and supporting screens to show full metadata,
-coverage, explanations or operational details. The default views lead with
-recorded content and brief status. Help is specific to the current screen.
+coverage, explanations or operational details. Default views use two-row session
+entries, plain conversation labels, brief rule states and one link per supporting
+event. Successful background indexing stays quiet; active work and failures
+remain visible. Command inspections put output at the left edge. Help is specific
+to the current screen.
 Press `d` for normalized inspection, `w` to toggle wrapping there, and Left/Right
 to pan unwrapped lines. The column indicator and fixed event header preserve
 inspection context; Esc restores the earlier timeline reading position. Press `?`

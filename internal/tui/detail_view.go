@@ -16,6 +16,9 @@ func (m Model) detailHeaderLines() []string {
 		return []string{"Inspection · normalized evidence"}
 	}
 	title := strings.TrimPrefix(timelineActivityTitle(m.detailState.detail.Payload, string(event.Kind)), "▸ ")
+	if command, ok := m.detailState.detail.Payload.(model.CommandData); ok {
+		title = strings.TrimSuffix(title, " · "+safeInline(command.Command))
+	}
 	lines := []string{fmt.Sprintf("Inspection #%d · %s", event.Sequence, title)}
 	if m.detailState.err != nil {
 		lines = append(lines, "Inspection refresh failed: "+safeInline(m.detailState.err.Error()), "Previous evidence retained · r retry")
@@ -62,6 +65,15 @@ func (m Model) detailContentLines() []string {
 	lines = nil
 	if m.detailState.detail.State == app.EvidenceUnavailable || m.detailState.detail.Payload == nil {
 		lines = append(lines, "Payload evidence is unavailable.", "")
+	} else if command, ok := m.detailState.detail.Payload.(model.CommandData); ok {
+		lines = append(lines, "$ "+safeInline(command.Command), "")
+		output := command.Output
+		if output == "" {
+			output = "No output recorded."
+		}
+		lines = append(lines, strings.Split(output, "\n")...)
+	} else if unknown, ok := m.detailState.detail.Payload.(model.UnknownData); ok {
+		lines = append(lines, strings.ReplaceAll(string(unknown.Reason), "_", " "))
 	} else {
 		card := timelineCardLines(event, m.detailState.detail.Payload, 1<<30, false, true, app.UnknownEvidenceInspection{}, false, nil)
 		if timelinePayloadTruncatable(m.detailState.detail.Payload) {
@@ -74,13 +86,16 @@ func (m Model) detailContentLines() []string {
 		lines = append(lines, metadata...)
 		switch payload := m.detailState.detail.Payload.(type) {
 		case model.CommandData:
-			lines = append(lines, "Invocation ID: "+reportedString(payload.InvocationID), "Phase: "+reportedString(string(payload.Phase)))
+			lines = append(lines, "Working directory: "+reportedString(payload.WorkingDirectory), "Exit status: "+optionalInt(payload.ExitCode),
+				"Invocation ID: "+reportedString(payload.InvocationID), "Phase: "+reportedString(string(payload.Phase)))
 		case model.ToolCallData:
 			lines = append(lines, "Call ID: "+reportedString(payload.CallID))
 		case model.ToolResultData:
 			lines = append(lines, "Call ID: "+reportedString(payload.CallID))
 		case model.PatchData:
 			lines = append(lines, "Change ID: "+reportedString(payload.ChangeID))
+		case model.UnknownData:
+			lines = append(lines, "Original kind: "+safeInline(payload.OriginalKind))
 		}
 	} else if m.detailState.detail.Diagnostics.Total > 0 {
 		lines = append(lines, "", diagnosticSummary(m.detailState.detail.Diagnostics), "v shows diagnostics and metadata")

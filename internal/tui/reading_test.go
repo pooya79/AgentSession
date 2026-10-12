@@ -405,6 +405,7 @@ func TestFindingsFailedRefreshRetainsPreviousSnapshot(t *testing.T) {
 	m := New(t.Context(), services)
 	m.screen = findingsScreen
 	m.findingsState.page = app.FindingsPage{State: app.EvidenceComplete, Assessments: []model.Finding{{Explanation: "RECORDED ASSESSMENT"}}}
+	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'v', Text: "v"})
 	m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: 'r', Text: "r"})
 	if got := m.View().Content; !strings.Contains(got, "RECORDED ASSESSMENT") || !strings.Contains(got, "Previous snapshot") {
 		t.Fatalf("pending refresh discarded prior evidence:\n%s", got)
@@ -445,6 +446,7 @@ func TestFindingsRetentionIsSessionScopedAndCanceledRefreshStaysUnconfirmed(t *t
 	services.findings = app.FindingsPage{State: app.EvidenceComplete, Assessments: []model.Finding{{Explanation: "SESSION A ASSESSMENT"}}}
 	m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: 'f', Text: "f"})
 	m, _ = updateModel(t, m, cmd())
+	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'v', Text: "v"})
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'r', Text: "r"})
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: '/', Text: "/"})
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})

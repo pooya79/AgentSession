@@ -161,17 +161,15 @@ func (m Model) styleLines(lines []string) []string {
 		switch {
 		case index == 0:
 			safe[index] = m.theme.accent.Render(line)
-		case strings.Contains(line, "CANONICAL INDEX"):
+		case index == len(safe)-2 && strings.Contains(lower, "index"):
 			safe[index] = styleStatusLine(m.theme, line)
-		case strings.HasPrefix(line, "[FOCUS]"):
-			safe[index] = m.theme.title.Render(line)
 		case strings.HasPrefix(line, ">"):
 			safe[index] = m.theme.focused.Render(line)
-		case strings.Contains(line, "╭─ You"):
+		case trimmed == "You":
 			safe[index] = m.theme.accent.Render(line)
-		case strings.Contains(line, "╭─ Assistant"):
+		case trimmed == "Assistant":
 			safe[index] = m.theme.info.Render(line)
-		case strings.Contains(line, "╭─ System"):
+		case trimmed == "System":
 			safe[index] = m.theme.muted.Render(line)
 		case strings.Contains(lower, "could not ") || strings.Contains(lower, "unavailable") || strings.Contains(lower, "failed"):
 			safe[index] = m.theme.danger.Render(line)

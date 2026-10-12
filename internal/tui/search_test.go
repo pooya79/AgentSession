@@ -256,7 +256,7 @@ func TestSearchCoverageAndFocusAtSupportedSizes(t *testing.T) {
 				m.theme = newTheme(dark)
 				m, _ = updateModel(t, m, searchLoadedMsg{generation: m.requestGeneration, page: app.SearchPage{State: state, Availability: app.SearchAvailability{Sessions: 4, Usable: 2}}})
 				got := ansi.Strip(m.View().Content)
-				if !strings.Contains(got, "[FOCUS] Results") {
+				if !strings.Contains(got, "Query:") {
 					t.Fatalf("focus missing at %v:\n%s", size, got)
 				}
 				if state == app.EvidenceUnavailable && (strings.Contains(got, "No matching sessions") || !strings.Contains(got, "Unavailable")) {
@@ -306,7 +306,7 @@ func TestSearchCompactRefreshKeepsFocusAndSelectedResult(t *testing.T) {
 			m, _ = updateModel(t, m, searchLoadedMsg{generation: m.requestGeneration, err: failure})
 		}
 		got := ansi.Strip(m.View().Content)
-		for _, want := range []string{"[FOCUS] Results", "> SELECTED", "Result 1/1", "Previous results"} {
+		for _, want := range []string{"Query:", "> SELECTED", "Result 1/1", "Previous results"} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("compact refresh %v lost %q:\n%s", failure, want, got)
 			}

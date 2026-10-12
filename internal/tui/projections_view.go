@@ -9,7 +9,10 @@ import (
 // projectionLines renders canonical evidence availability independently from
 // derived-data readiness and shows only application-safe diagnostics.
 func (m Model) projectionLines() []string {
-	lines := []string{"Derived views · session " + truncateCell(string(m.sessionsState.selected), max(12, m.renderWidth()-25))}
+	var lines []string
+	if m.projectionsState.showDetails {
+		lines = append(lines, "Session "+string(m.sessionsState.selected))
+	}
 	if m.projectionsState.confirmAll {
 		lines = append(lines, "",
 			"Rebuild every projection?",
@@ -33,7 +36,9 @@ func (m Model) projectionLines() []string {
 			evidenceLabel(m.projectionsState.status.State), summary.Usable, len(m.projectionsState.status.Projections), summary.Pending, summary.Running, summary.Failed, summary.Stale,
 			summary.Unimplemented))
 	} else {
-		lines = append(lines, "Canonical evidence: "+evidenceLabel(m.projectionsState.status.State))
+		if m.projectionsState.status.State != app.EvidenceComplete {
+			lines = append(lines, "Evidence: "+evidenceLabel(m.projectionsState.status.State))
+		}
 	}
 	lines = append(lines, "")
 	if m.projectionsState.err != nil {
@@ -68,7 +73,11 @@ func (m Model) projectionLines() []string {
 				flags += " · rebuild unavailable in this build"
 			}
 		}
-		line := fmt.Sprintf("%s %-16s  %s", marker, state.Kind, flags)
+		label := projectionLabel(state.Kind)
+		if m.projectionsState.showDetails {
+			label = state.Kind
+		}
+		line := fmt.Sprintf("%s %-16s  %s", marker, label, flags)
 		if m.projectionsState.showDetails {
 			line += fmt.Sprintf(" · target %s/%d · attempts %d", state.TargetVersion, state.TargetRevision, state.AttemptCount)
 		}
@@ -78,10 +87,27 @@ func (m Model) projectionLines() []string {
 		}
 	}
 	if !m.projectionsState.showDetails {
-		lines = append(lines, "", "v versions, attempts and counters")
+		lines = append(lines, "", "v details")
 	}
 	if m.projectionsState.status.Active || summary.Running > 0 {
 		lines = append(lines, "", "Projection work is active and continues if you leave this panel.")
 	}
 	return lines
+}
+
+func projectionLabel(kind string) string {
+	switch kind {
+	case "search":
+		return "Search"
+	case "findings":
+		return "Rule assessments"
+	case "git_correlation":
+		return "Git links"
+	case "outcomes":
+		return "Session outcomes"
+	case "aggregates":
+		return "Totals"
+	default:
+		return safeInline(kind)
+	}
 }

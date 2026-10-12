@@ -14,7 +14,7 @@ import (
 // sessionsLines renders the current bounded sessions page and its evidence
 // quality without exposing source-specific data.
 func (m Model) sessionsLines() []string {
-	lines := []string{"[FOCUS] Sessions · last activity ↓"}
+	lines := []string{"Recent · last activity ↓"}
 	lines = append(lines, m.metricsLines()...)
 	switch {
 	case m.sessionsState.loading && len(m.sessionsState.page.Sessions) == 0:
@@ -46,7 +46,11 @@ func (m Model) sessionsLines() []string {
 		listWidth = min(52, width*45/100)
 	}
 	available := max(1, m.contentHeight()-len(lines)-1)
-	visible := max(1, available/3)
+	rowHeight := 2
+	if m.sessionsState.showDetails {
+		rowHeight = 3
+	}
+	visible := max(1, available/rowHeight)
 	start := windowStart(m.sessionsState.cursor, len(m.sessionsState.page.Sessions), visible)
 	end := min(len(m.sessionsState.page.Sessions), start+visible)
 	var list []string
@@ -56,11 +60,14 @@ func (m Model) sessionsLines() []string {
 		if i == m.sessionsState.cursor {
 			marker = ">"
 		}
-		list = append(list,
-			marker+" "+truncateCell(sessionLabel(session), listWidth-2),
-			"  "+truncateCell(strings.ToUpper(safeInline(session.AgentName))+" · "+formatActivity(session.LastActivityAt), listWidth-2),
-			"  "+truncateCell(fmt.Sprintf("%d events · %s", session.EventCount, evidenceLabel(session.State)), listWidth-2),
-		)
+		metadata := strings.ToUpper(safeInline(session.AgentName)) + " · " + formatActivity(session.LastActivityAt)
+		if session.State != app.EvidenceComplete {
+			metadata = evidenceLabel(session.State) + " · " + metadata
+		}
+		list = append(list, marker+" "+truncateCell(sessionLabel(session), listWidth-2), "  "+truncateCell(metadata, listWidth-2))
+		if m.sessionsState.showDetails {
+			list = append(list, "  "+truncateCell(fmt.Sprintf("%d events · %s", session.EventCount, evidenceLabel(session.State)), listWidth-2))
+		}
 	}
 	if wide {
 		preview := m.sessionPreviewLines(width - listWidth - 3)
@@ -77,7 +84,9 @@ func (m Model) sessionsLines() []string {
 	} else {
 		lines = append(lines, list...)
 	}
-	lines = append(lines, fmt.Sprintf("Page %d · %d shown%s", m.sessionsState.pageNumber+1, len(m.sessionsState.page.Sessions), nextLabel(m.sessionsState.page.NextCursor)))
+	if m.sessionsState.pageNumber > 0 || m.sessionsState.page.NextCursor != "" {
+		lines = append(lines, fmt.Sprintf("Page %d%s", m.sessionsState.pageNumber+1, nextLabel(m.sessionsState.page.NextCursor)))
+	}
 	return lines
 }
 
@@ -85,7 +94,7 @@ func (m Model) sessionsLines() []string {
 // No source-specific interpretation or inferred session outcome belongs here.
 func (m Model) sessionPreviewLines(width int) []string {
 	session := m.sessionsState.page.Sessions[m.sessionsState.cursor]
-	lines := []string{"PREVIEW", truncateCell(sessionLabel(session), width)}
+	lines := []string{"PREVIEW"}
 	lines = append(lines, "Outcome: Unknown (not assessed)")
 	if m.sessionsState.showDetails {
 		lines = append(lines,
@@ -96,14 +105,16 @@ func (m Model) sessionPreviewLines(width int) []string {
 	} else if session.State != app.EvidenceComplete || session.Interpretation.UnknownEvents > 0 || session.Diagnostics.Total > 0 {
 		lines = append(lines, fmt.Sprintf("%s · %d Unknown · %d diagnostics", evidenceLabel(session.State), session.Interpretation.UnknownEvents, session.Diagnostics.Total))
 	}
-	lines = append(lines, "", "Recorded preview")
 	preview := session.Preview
 	if preview == "" {
 		preview = "Preview evidence unavailable."
 	}
-	lines = append(lines, strings.Split(ansi.Wrap(safeInline(preview), width, ""), "\n")...)
+	if preview != sessionLabel(session) {
+		lines = append(lines, "")
+		lines = append(lines, strings.Split(ansi.Wrap(safeInline(preview), width, ""), "\n")...)
+	}
 	if session.Summary != "" && session.Summary != session.Preview {
-		lines = append(lines, "", "Recorded summary")
+		lines = append(lines, "")
 		lines = append(lines, strings.Split(ansi.Wrap(safeInline(session.Summary), width, ""), "\n")...)
 	}
 	return lines
@@ -124,9 +135,9 @@ func (m Model) metricsLines() []string {
 	}
 	if !m.sessionsState.showDetails {
 		if m.sessionsState.overview.IssueSessions > 0 || m.sessionsState.overviewErr != nil {
-			return []string{strings.Join(parts[:2], " · "), parts[3]}
+			return []string{parts[3]}
 		}
-		return []string{strings.Join(parts[:2], " · ")}
+		return nil
 	}
 	if m.renderWidth() < 80 {
 		return []string{strings.Join(parts[:2], " · "), strings.Join(parts[2:], " · ")}

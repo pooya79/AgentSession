@@ -137,7 +137,10 @@ above. The timeline uses the full main area, with inline safe Markdown, compact
 technical disclosure, a persistent action target and `d` normalized inspection.
 Inspection offers wrapped text or `w` plus horizontal panning. Browsing, search,
 inspection, assessments, indexing and projections start with concise overviews;
-`v` reveals full details. Help lists actions for the current screen. Layouts are
+`v` reveals full details. Default lists omit administrative counters, the reader
+uses plain speaker labels, command inspection leads with unindented output, and
+assessment evidence links are unique in first-reference order. Help lists actions
+for the current screen. Layouts are
 validated at 80×24, compact down to 40×12, with an explicit resize state below
 that size. [Production PTY captures](design/tui-89/README.md) include dark,
 light and color-free output. The preview uses available shared summary fields;

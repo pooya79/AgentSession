@@ -99,22 +99,21 @@ func (m Model) indexSummary() string {
 	status := m.indexingState.status
 	switch {
 	case m.indexingState.err != nil:
-		return "CANONICAL INDEX · UNAVAILABLE — " + m.indexingState.err.Error()
+		return "Index unavailable · " + m.indexingState.err.Error()
+	case status.Failure != "":
+		return "Index unavailable · " + status.Failure
 	case status.Active:
-		return fmt.Sprintf("%s CANONICAL INDEX · INDEXING · %d/%d sources · %d records · %d diagnostics",
-			m.spinner.View(), status.SourcesCompleted, status.SourcesDiscovered, status.RecordsProcessed, status.DiagnosticsTotal)
+		return fmt.Sprintf("%s Indexing · %d/%d sources · %d diagnostics",
+			m.spinner.View(), status.SourcesCompleted, status.SourcesDiscovered, status.DiagnosticsTotal)
 	case status.Phase == app.ImportAllUpToDate:
 		if status.SourcesDiscovered == 0 {
-			return "CANONICAL INDEX · COMPLETE · no supported sources found"
+			return "No supported sources found · r rescan"
 		}
-		return fmt.Sprintf("CANONICAL INDEX · COMPLETE · %d sources · %d sessions", status.SourcesCompleted, status.SessionsObserved)
+		return ""
 	case status.Phase == app.ImportAllIssues:
-		return fmt.Sprintf("CANONICAL INDEX · COMPLETED WITH ISSUES · %d failed · %d diagnostics",
+		return fmt.Sprintf("Indexing issues · %d failed · %d diagnostics · i details",
 			status.SourcesFailed, status.DiagnosticsTotal)
 	default:
-		if status.Failure != "" {
-			return "CANONICAL INDEX · UNAVAILABLE — " + status.Failure
-		}
-		return "CANONICAL INDEX · STATUS UNAVAILABLE"
+		return "Index status unavailable · i details"
 	}
 }

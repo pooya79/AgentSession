@@ -78,8 +78,14 @@ func TestImportedStreamedAssessmentAndEvidenceNavigation(t *testing.T) {
 		}
 	}
 	var references []model.EventID
+	seenReferences := map[model.EventID]bool{}
 	for _, assessment := range findings.Assessments {
-		references = append(references, assessment.EventIDs...)
+		for _, id := range assessment.EventIDs {
+			if !seenReferences[id] {
+				references = append(references, id)
+				seenReferences[id] = true
+			}
+		}
 	}
 	for i, id := range references {
 		if i > 0 {

@@ -45,8 +45,13 @@ func (m Model) indexingContentLines() []string {
 	if len(status.Sources) == 0 {
 		lines = append(lines, "", "No discovered sources.")
 	} else {
-		lines = append(lines, "", "Discovered sources")
+		if m.indexingState.showDetails {
+			lines = append(lines, "", "Discovered sources")
+		}
 		for _, source := range status.Sources {
+			if !m.indexingState.showDetails && source.Failure == "" && source.Phase != app.ImportFailed {
+				continue
+			}
 			state := string(source.Phase)
 			if source.Failure != "" {
 				state += " · failed: " + source.Failure
@@ -72,9 +77,6 @@ func (m Model) indexingContentLines() []string {
 			}
 			lines = append(lines, fmt.Sprintf("[%s] %s · %s · %s", diagnostic.Severity, diagnostic.Code, where, diagnostic.Message))
 		}
-	}
-	if !m.indexingState.showDetails {
-		lines = append(lines, "", "v source paths, counters and diagnostics")
 	}
 	return lines
 }

@@ -30,73 +30,52 @@ func (m Model) renderWidth() int {
 
 // helpLine uses compact controls when terminal dimensions are constrained.
 func (m Model) helpLine(width int) string {
-	compact := width < 80 || m.height > 0 && m.height < 24
+	compact := width < 60
 	if m.helpOpen {
-		if compact {
-			return "↑↓ scroll · PgUp/Dn · Esc close"
-		}
-		return "↑↓ scroll · PgUp/PgDn · g/G ends · Esc close · ? close"
+		return "↑↓ scroll · Esc close"
 	}
 	switch m.screen {
-	case findingsScreen:
-		if compact {
-			return "[] refs · Enter open · Esc · ? help"
-		}
-		return "[] evidence · Enter open · v explain · Esc back · ? help"
-	case projectionsScreen:
-		if m.projectionsState.confirmAll {
-			return "y confirm · n/Esc cancel · ? help"
-		}
-		if compact {
-			return "↑↓ target · t/b act · Esc · ? help"
-		}
-		return "↑↓ select · b rebuild · v details · Esc back · ? help"
-	case indexingScreen:
-		if compact {
-			return "↑↓ scroll · r rescan · Esc · ? help"
-		}
-		return "↑↓ read · v details · r rescan · Esc back · ? help"
-	case detailScreen:
-		if m.detailState.detail.Event.Kind == model.EventKindUnknown {
-			if compact {
-				return "↑↓ scroll · u raw · Esc back · ? help"
-			}
-			return "↑↓ read · u raw · v metadata · Esc back · ? help"
-		}
-		if compact {
-			return "↑↓ scroll · w wrap · Esc back · ? help"
-		}
-		return "↑↓ read · w wrap · v metadata · Esc back · ? help"
 	case sessionsScreen:
-		if compact {
-			return "↑↓ select · Enter open · ? help"
-		}
-		return "↑↓ choose · Enter open · / search · v details · ? help"
-	case searchScreen:
-		if m.searchState.editing {
-			if compact {
-				return "Type query · Enter search · Esc results"
-			}
-			return "Type query · Enter search · Esc results · Ctrl-C quit"
-		}
-		if compact {
-			return "Enter open · / edit · ? help"
-		}
-		return "↑↓ choose · Enter open · / edit · v details · Esc back · ? help"
+		return "Enter open · / search · ? help"
 	case timelineScreen:
-		if compact {
-			return "↑↓ read · [] events · Esc · ? help"
-		}
-		if timelinePayloadTruncatable(m.timelineState.page.Payloads[m.timelineState.selected]) {
+		if !compact && timelinePayloadTruncatable(m.timelineState.page.Payloads[m.timelineState.selected]) {
 			action := "expand"
 			if m.timelineState.expanded[m.timelineState.selected] {
 				action = "collapse"
 			}
-			return "↑↓ read · [] events · Enter " + action + " · d inspect · Esc · ? help"
+			return "[] events · Enter " + action + " · Esc · ? help"
 		}
-		return "↑↓ read · [] events · d inspect · / search · Esc back · ? help"
+		return "↑↓ read · [] events · Esc · ? help"
+	case detailScreen:
+		if m.detailState.detail.Event.Kind == model.EventKindUnknown {
+			return "u raw · Esc · ? help"
+		}
+		if compact {
+			return "w wrap · Esc · ? help"
+		}
+		return "w wrap · v details · Esc · ? help"
+	case findingsScreen:
+		if compact {
+			return "[] evidence · Enter · Esc · ? help"
+		}
+		return "[] evidence · Enter open · Esc · ? help"
+	case searchScreen:
+		if m.searchState.editing {
+			return "Enter search · Esc results"
+		}
+		return "Enter open · / edit · Esc · ? help"
+	case indexingScreen:
+		return "v details · r rescan · Esc · ? help"
+	case projectionsScreen:
+		if m.projectionsState.confirmAll {
+			return "y confirm · n/Esc cancel"
+		}
+		if compact {
+			return "b rebuild · Esc · ? help"
+		}
+		return "b rebuild · v details · Esc · ? help"
 	default:
-		return "Esc back · ? help"
+		return "Esc · ? help"
 	}
 }
 
@@ -104,14 +83,14 @@ func (m Model) helpLine(width int) string {
 // reading viewport. Scrolling never changes which event Enter acts on.
 func (m Model) statusLine() string {
 	if m.helpOpen {
-		return "[FOCUS] Help · returns to " + m.screenLabel()
+		return "Help for " + m.screenLabel()
 	}
 	if m.screen == projectionsScreen && !m.helpOpen {
 		if m.projectionsState.confirmAll {
-			return "[FOCUS] Confirm rebuild all · y / n"
+			return "Rebuild all?"
 		}
 		if m.projectionsState.err != nil {
-			return "[FOCUS] Projection ERROR · r retry"
+			return "Projection ERROR · r retry"
 		}
 		if len(m.projectionsState.status.Projections) > 0 {
 			state := m.projectionsState.status.Projections[m.projectionsState.cursor]
@@ -122,34 +101,37 @@ func (m Model) statusLine() string {
 			if m.projectionsState.loading {
 				status = "refreshing / admitting action"
 			}
-			return "[FOCUS] " + state.Kind + " · " + status
+			return projectionLabel(state.Kind) + " · " + status
 		}
 		if m.projectionsState.loading {
-			return "[FOCUS] Projections · loading status/action"
+			return "Loading status…"
 		}
-		return "[FOCUS] Projections · r retry status"
+		return "Status unavailable · r retry"
 	}
 	if m.screen == searchScreen && !m.helpOpen {
 		if m.searchState.editing {
-			return "[FOCUS] Query · ←/→ Home/End · Del/Backspace"
+			return "←→ move cursor · Backspace/Delete edit"
 		}
-		return "[FOCUS] Results · r retry · Esc back"
+		return ""
 	}
 	if m.screen == detailScreen && !m.helpOpen {
 		if m.detailState.unwrapped {
-			return fmt.Sprintf("[FOCUS] Unwrapped · column %d · ←/→ pan", m.detailState.viewport.XOffset()+1)
+			return fmt.Sprintf("Unwrapped · column %d · ←→ pan", m.detailState.viewport.XOffset()+1)
 		}
-		return "[FOCUS] Wrapped · " + evidenceLabel(m.detailState.detail.State)
+		if m.detailState.detail.State != app.EvidenceComplete {
+			return "Wrapped · " + evidenceLabel(m.detailState.detail.State)
+		}
+		return "Wrapped"
 	}
 	if m.screen == findingsScreen {
 		refs := m.findingReferences()
 		if len(refs) > 0 && m.findingsState.page.State == app.EvidenceComplete {
-			return fmt.Sprintf("[FOCUS] Evidence %d/%d · Enter opens context", m.findingsState.evidenceCursor+1, len(refs))
+			return fmt.Sprintf("Evidence %d/%d", m.findingsState.evidenceCursor+1, len(refs))
 		}
-		return "[FOCUS] Assessments · " + evidenceLabel(m.findingsState.page.State)
+		return evidenceLabel(m.findingsState.page.State)
 	}
 	if m.screen == indexingScreen {
-		return "[FOCUS] Indexing · " + m.compactIndexStatus()
+		return ""
 	}
 	if m.screen == timelineScreen && !m.helpOpen && m.timelineState.selected != "" {
 		state := "open"
@@ -178,7 +160,11 @@ func (m Model) statusLine() string {
 		if len(m.timelineState.page.Events) > m.timelineState.cursor {
 			target = fmt.Sprintf("#%d", m.timelineState.page.Events[m.timelineState.cursor].Sequence)
 		}
-		return "Target: " + target + " · " + state + " · " + m.compactIndexStatus()
+		label := "Target: " + target + " · " + state
+		if m.indexingState.status.Phase != app.ImportAllUpToDate || m.indexingState.status.Active || m.indexingState.err != nil || m.indexingState.status.Failure != "" {
+			label += " · " + m.compactIndexStatus()
+		}
+		return label
 	}
 	return m.indexSummary()
 }

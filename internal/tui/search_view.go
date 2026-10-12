@@ -11,10 +11,7 @@ import (
 // searchLines renders the current query, projection coverage, and bounded results.
 func (m Model) searchLines() []string {
 	prompt := m.searchPrompt()
-	lines := []string{
-		"Search canonical evidence",
-		prompt,
-	}
+	lines := []string{prompt}
 	// Short terminals reserve their rows for request state, the selected
 	// result, and both persistent footers. Filters remain available in help.
 	if m.searchState.showDetails && (m.height <= 0 || m.height >= 18) {
@@ -55,7 +52,9 @@ func (m Model) searchLines() []string {
 	if m.searchState.page.State == "" && len(m.searchState.page.Results) == 0 {
 		return append(lines, "", "Enter to search canonical evidence; / to edit.")
 	}
-	lines = append(lines, searchAvailabilityLine(m.searchState.page))
+	if m.searchState.showDetails || m.searchState.page.State != app.EvidenceComplete {
+		lines = append(lines, searchAvailabilityLine(m.searchState.page))
+	}
 	if m.searchState.page.State == app.EvidenceUnavailable {
 		return append(lines, "", "Search coverage unavailable · r to retry.")
 	}
@@ -67,7 +66,7 @@ func (m Model) searchLines() []string {
 	}
 
 	lines = append(lines, "")
-	compact := !m.searchState.showDetails || m.renderWidth() < 72 || m.height > 0 && m.height < 18
+	compact := !m.searchState.showDetails
 	cards := make([][]string, len(m.searchState.page.Results))
 	for index, result := range m.searchState.page.Results {
 		cards[index] = searchResultCard(result, index == m.searchState.cursor, compact, m.renderWidth())
@@ -125,13 +124,14 @@ func searchResultCard(result app.SearchResult, selected, compact bool, width int
 	snippet := searchInline(result.Snippet)
 	if compact {
 		match := summary
-		if snippet != "" && snippet != summary {
-			match += " — " + snippet
+		if snippet != "" {
+			match = snippet
 		}
 		return []string{
 			marker + truncateCell(title, max(1, width-2)),
-			"  " + truncateCell(metadata, max(1, width-2)),
-			"  Match · " + truncateCell(match, max(1, width-10)),
+			"  " + truncateCell(agent+" · "+formatActivity(result.LastActivityAt), max(1, width-2)),
+			"  " + truncateCell(match, max(1, width-2)),
+			"",
 		}
 	}
 

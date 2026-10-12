@@ -26,7 +26,7 @@ func TestSessionPreviewFollowsSelectionAndNarrowLayoutKeepsList(t *testing.T) {
 	m.restoreSessionSelection()
 	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 110, Height: 24})
 	content := ansi.Strip(m.View().Content)
-	for _, want := range []string{"[FOCUS] Sessions", "PREVIEW", one.Preview, one.Summary, "partial evidence", "Outcome: Unknown"} {
+	for _, want := range []string{"Recent · last activity", "PREVIEW", one.Preview, one.Summary, "partial evidence", "Outcome: Unknown"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("wide browsing missing %q:\n%s", want, content)
 		}

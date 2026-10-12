@@ -28,7 +28,7 @@ func TestProjectionSelectionAndLongDiagnosticsRemainReachable(t *testing.T) {
 	m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: 'x', Text: "x"})
 	m, _ = updateModel(t, m, cmd())
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'G', Text: "G"})
-	if got := ansi.Strip(m.View().Content); !strings.Contains(got, "> projection-7") || !strings.Contains(got, "[FOCUS]") {
+	if got := ansi.Strip(m.View().Content); !strings.Contains(got, "> projection-7") || !strings.Contains(got, "projection-7 ·") {
 		t.Fatalf("last projection is not visibly actionable:\n%s", got)
 	}
 	seen := ""
@@ -60,7 +60,7 @@ func TestSupportingHelpOwnsFocusAndRestoresReading(t *testing.T) {
 	before := ansi.Strip(m.View().Content)
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: '?', Text: "?"})
 	view := ansi.Strip(m.View().Content)
-	if !strings.Contains(view, "[FOCUS] Help") || !strings.Contains(strings.Split(view, "\n")[m.height-1], "Esc close") {
+	if !strings.Contains(view, "Help for") || !strings.Contains(strings.Split(view, "\n")[m.height-1], "Esc close") {
 		t.Fatalf("help advertises underlying controls:\n%s", view)
 	}
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'G', Text: "G"})
@@ -141,7 +141,7 @@ func TestSupportingStatesAndControlsAtAllUsableSizes(t *testing.T) {
 				m.projectionsState.status = app.ProjectionStatus{State: app.EvidenceComplete, Projections: []app.ProjectionState{{Kind: "findings", Status: app.ProjectionStatusFailed, Stale: true, BuildAvailable: true}}}
 				m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 				got := ansi.Strip(m.View().Content)
-				if !strings.Contains(got, "[FOCUS]") {
+				if !strings.Contains(got, "AgentSession  /  "+m.screenLabel()) {
 					t.Fatalf("supporting screen has no focus:\n%s", got)
 				}
 				for _, line := range strings.Split(got, "\n") {
@@ -258,8 +258,9 @@ func TestProjectionReturnFromSearchRestoresSessionAndSelectedScope(t *testing.T)
 	for range 3 {
 		m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	}
+	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'v', Text: "v"})
 	got := ansi.Strip(m.View().Content)
-	if !strings.Contains(got, "session session-1") || !strings.Contains(got, "[FOCUS] search") || strings.Contains(got, "> other") {
+	if !strings.Contains(got, "Session session-1") || !strings.Contains(got, "Search ·") || strings.Contains(got, "> other") {
 		t.Fatalf("nested projection visit changed saved scope:\n%s", got)
 	}
 	m, cmd = updateModel(t, m, tea.KeyPressMsg{Code: 'b', Text: "b"})

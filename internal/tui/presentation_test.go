@@ -125,8 +125,8 @@ func TestSessionsDashboardResponsiveLayoutsAndUnavailableMetrics(t *testing.T) {
 	}{
 		{name: "wide", width: 120, height: 30, want: []string{"last activity ↓", "PREVIEW", "CODEX", "2026-07-25 09:30 UTC", "Outcome: Unknown"}},
 		{name: "medium", width: 90, height: 30, want: []string{"last activity ↓", "CODEX", "Sessions", "Evidence issues"}},
-		{name: "narrow", width: 60, height: 30, want: []string{"Sessions 12 · Events 345", "Evidence issues 2", "CODEX", "first user request"}},
-		{name: "short", width: 120, height: 14, want: []string{"Sessions 12 · Events 345", "Evidence issues 2", "CODEX", "first user request"}},
+		{name: "narrow", width: 60, height: 30, want: []string{"Evidence issues 2", "CODEX", "first user request"}},
+		{name: "short", width: 120, height: 14, want: []string{"Evidence issues 2", "CODEX", "first user request"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -208,7 +208,7 @@ func TestSearchScreenResponsiveCardsKeepSelectionVisible(t *testing.T) {
 			LastActivityAt:   &activity,
 			EventCount:       40 + int64(index),
 			MatchCount:       2,
-			BestMatchSummary: "Command matched the query",
+			BestMatchSummary: "go test ./internal/tui",
 			Snippet:          "go test ./internal/tui completed successfully",
 		}
 	}
@@ -234,15 +234,15 @@ func TestSearchScreenResponsiveCardsKeepSelectionVisible(t *testing.T) {
 			name: "wide", width: 100, height: 22,
 			want: []string{
 				"> Session 11", "2026-07-25 09:30 UTC",
-				"2 matching events / 50 events",
-				"Command matched the query", "Result 11/12",
+
+				"go test ./internal/tui", "Result 11/12",
 				"previous page", "next page", "Enter open",
 			},
 		},
 		{
 			name: "narrow", width: 60, height: 16,
 			want: []string{
-				"> Session 11", "CODEX", "Match · Command matched",
+				"> Session 11", "CODEX", "go test ./internal/tui",
 				"Result 11/12", "previous page · next page", "Enter open",
 			},
 		},

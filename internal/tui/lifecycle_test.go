@@ -34,7 +34,7 @@ func TestInitStartsImportAllAndLoadsSessions(t *testing.T) {
 	if services.startCalls != 1 || len(services.sessionCalls) != 1 {
 		t.Fatalf("startup calls = start %d, sessions %d", services.startCalls, len(services.sessionCalls))
 	}
-	if got := m.View().Content; !strings.Contains(got, "[FOCUS] Sessions") || strings.Contains(got, "Select source") {
+	if got := m.View().Content; !strings.Contains(got, "Recent · last activity") || strings.Contains(got, "Select source") {
 		t.Fatalf("startup view = %q", got)
 	}
 }
@@ -87,7 +87,7 @@ func TestImportCompletionRefreshesSessions(t *testing.T) {
 	if cmd == nil || !updated.sessionsState.loading {
 		t.Fatal("terminal import status did not trigger a sessions refresh")
 	}
-	if got := updated.View().Content; !strings.Contains(got, "COMPLETED WITH ISSUES") {
+	if got := updated.View().Content; !strings.Contains(got, "Indexing issues") {
 		t.Fatalf("completion view = %q", got)
 	}
 }

@@ -24,7 +24,7 @@ func TestTimelineCardRendererCoversCanonicalKindsAndSanitizes(t *testing.T) {
 		inspectionErr     error
 		want              []string
 	}{
-		{name: "message", kind: model.EventKindMessage, payload: model.MessageData{Role: model.MessageRoleAssistant, Text: hostile}, want: []string{"╭─ Assistant", "<U+202E>"}},
+		{name: "message", kind: model.EventKindMessage, payload: model.MessageData{Role: model.MessageRoleAssistant, Text: hostile}, want: []string{"Assistant", "<U+202E>"}},
 		{name: "summary", kind: model.EventKindSummary, payload: model.SummaryData{Category: model.SummaryCategorySummary, Text: "recorded summary"}, want: []string{"Summary: recorded summary"}},
 		{name: "tool call valid json", kind: model.EventKindToolCall, payload: model.ToolCallData{ToolName: "read", CallID: "call", Input: `{"path":"x"}`}, want: []string{"Tool: read", `"path": "x"`}},
 		{name: "tool call invalid json", kind: model.EventKindToolCall, payload: model.ToolCallData{Input: "{invalid"}, want: []string{"Input: {invalid"}},
@@ -120,7 +120,7 @@ func TestTimelineMessagesUseConversationLayoutWithoutEventMetadata(t *testing.T)
 		assistant, model.MessageData{Role: model.MessageRoleAssistant, Text: "answer"}, 60, false, false,
 		app.UnknownEvidenceInspection{}, false, nil,
 	), "\n")
-	if !strings.Contains(userLines, "╭─ You") || !strings.Contains(assistantLines, "╭─ Assistant") {
+	if !strings.Contains(userLines, "You") || !strings.Contains(assistantLines, "Assistant") {
 		t.Fatalf("user=%q\nassistant=%q", userLines, assistantLines)
 	}
 	for _, line := range []string{"question", "second line", "answer"} {
@@ -138,13 +138,13 @@ func TestTimelineMessagesUseConversationLayoutWithoutEventMetadata(t *testing.T)
 
 func TestSelectedMessageHeaderKeepsFocusedStyle(t *testing.T) {
 	m := New(t.Context(), nil)
-	line := "> ╭─ You"
+	line := "> You"
 	styled := m.styleLines([]string{"header", "status", line})
 	if got, want := styled[2], m.theme.focused.Render(line); got != want {
 		t.Fatalf("selected role header style = %q, want focused %q", got, want)
 	}
 
-	unselected := "  ╭─ Assistant"
+	unselected := "  Assistant"
 	styled = m.styleLines([]string{"header", "status", unselected, "footer"})
 	if got, want := styled[2], m.theme.info.Render(unselected); got != want {
 		t.Fatalf("unselected assistant style = %q, want role style %q", got, want)

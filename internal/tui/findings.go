@@ -42,7 +42,7 @@ func (m *Model) loadFindings() tea.Cmd {
 	})
 }
 func (m Model) findingsContentLines() []string {
-	lines := []string{"Rule assessments"}
+	lines := []string{"Outcome: Unknown (not assessed)", ""}
 	page := m.findingsState.page
 	if m.findingsState.notice != "" {
 		lines = append(lines, m.findingsState.notice)
@@ -70,12 +70,11 @@ func (m Model) findingsContentLines() []string {
 	}
 	for _, f := range page.Assessments {
 		if !m.findingsState.showDetails {
-			title := strings.ReplaceAll(f.RuleID, "_", " ")
-			if title != "" {
-				title = strings.ToUpper(title[:1]) + title[1:]
+			state := strings.ReplaceAll(string(f.State), "_", " ")
+			if f.State == model.FindingInsufficientEvidence {
+				state = "not enough evidence"
 			}
-			lines = append(lines, title+" · "+strings.ReplaceAll(string(f.State), "_", " "),
-				"  "+truncateCell(safeInline(f.Explanation), max(20, m.renderWidth()-2)))
+			lines = append(lines, findingLabel(f.RuleID)+" · "+state)
 			continue
 		}
 		lines = append(lines, "", fmt.Sprintf("%s · %s · version %s", f.RuleID, f.State, f.RuleVersion), "Assessment "+string(f.ID), f.Explanation)
@@ -95,7 +94,7 @@ func (m Model) findingsContentLines() []string {
 	if m.findingsState.showDetails {
 		lines = append(lines, "", "No severity grade or session outcome is assigned.")
 	} else {
-		lines = append(lines, "", "v full explanations and counts")
+		lines = append(lines, "", "v explanations")
 	}
 	lines = append(lines, "", "Supporting events")
 	for i, id := range m.findingReferences() {
@@ -117,10 +116,29 @@ func (m Model) findingsContentLines() []string {
 	}
 	return lines
 }
+
+func findingLabel(rule string) string {
+	switch rule {
+	case "repeated_command_failures":
+		return "Repeated failures"
+	case "unresolved_failed_verification":
+		return "Unresolved checks"
+	case "missing_verification":
+		return "Missing checks"
+	default:
+		return safeInline(strings.ReplaceAll(rule, "_", " "))
+	}
+}
 func (m Model) findingReferences() []model.EventID {
 	var refs []model.EventID
+	seen := make(map[model.EventID]bool)
 	for _, f := range m.findingsState.page.Assessments {
-		refs = append(refs, f.EventIDs...)
+		for _, id := range f.EventIDs {
+			if !seen[id] {
+				refs = append(refs, id)
+				seen[id] = true
+			}
+		}
 	}
 	return refs
 }

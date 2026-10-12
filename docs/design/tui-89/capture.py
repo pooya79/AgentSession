@@ -157,7 +157,7 @@ def capture(theme):
         contains('q/?[]█')
         frame('paste-80x24')
         send('\x7f'*6+'\r'); drain()
-        contains('matching event')
+        contains('Result 1/1')
         matrix('search')
         send('\r'); drain()
         contains('Timeline')
@@ -292,7 +292,7 @@ def capture(theme):
         frame('paste-120x32')
         send('\x7f'*6); drain()
         send('\r'); drain()
-        assert 'matching event' in '\n'.join(screen.display), '\n'.join(screen.display)
+        assert 'Result 1/1' in '\n'.join(screen.display), '\n'.join(screen.display)
         frame('results-120x32')
         for cols, rows in ((80,24), (54,18), (40,12)):
             resize(cols, rows)

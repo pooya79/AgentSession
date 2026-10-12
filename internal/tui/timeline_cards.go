@@ -254,14 +254,14 @@ func timelineMessageLines(message model.MessageData, width int, selected bool) [
 	if selected {
 		marker = ">"
 	}
-	header := marker + " ╭─ " + label
+	header := marker + " " + label
 	text := message.Text
 	if text == "" {
 		text = "—"
 	}
 	lines := []string{header}
 	lines = append(lines, markdownLines(text, width)...)
-	return append(lines, "╰─")
+	return lines
 }
 
 func timelineActivityTitle(payload model.NormalizedData, fallback string) string {
