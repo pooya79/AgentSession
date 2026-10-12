@@ -32,7 +32,7 @@ func TestProjectionPanelControlsPollingConfirmationAndSafeDiagnostics(t *testing
 		t.Fatalf("open projections = screen %d cmd %v", m.screen, cmd != nil)
 	}
 	m, poll := updateModel(t, m, cmd().(projectionStatusMsg))
-	if poll == nil || !strings.Contains(m.View().Content, "Canonical evidence remains available") {
+	if poll == nil || !strings.Contains(m.View().Content, "Canonical evidence: complete") {
 		t.Fatalf("projection status did not render or poll: %q", m.View().Content)
 	}
 	if strings.Contains(m.View().Content, "attacker.invalid") {

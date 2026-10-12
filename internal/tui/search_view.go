@@ -17,7 +17,7 @@ func (m Model) searchLines() []string {
 	}
 	// Short terminals reserve their rows for request state, the selected
 	// result, and both persistent footers. Filters remain available in help.
-	if m.height <= 0 || m.height >= 18 {
+	if m.searchState.showDetails && (m.height <= 0 || m.height >= 18) {
 		lines = append(lines, "Filters · session: kind: after: before: file: tool: command:")
 	}
 	if m.searchState.dirty {
@@ -67,7 +67,7 @@ func (m Model) searchLines() []string {
 	}
 
 	lines = append(lines, "")
-	compact := m.renderWidth() < 72 || m.height > 0 && m.height < 18
+	compact := !m.searchState.showDetails || m.renderWidth() < 72 || m.height > 0 && m.height < 18
 	cards := make([][]string, len(m.searchState.page.Results))
 	for index, result := range m.searchState.page.Results {
 		cards[index] = searchResultCard(result, index == m.searchState.cursor, compact, m.renderWidth())

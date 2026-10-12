@@ -86,11 +86,17 @@ func (m Model) sessionsLines() []string {
 func (m Model) sessionPreviewLines(width int) []string {
 	session := m.sessionsState.page.Sessions[m.sessionsState.cursor]
 	lines := []string{"PREVIEW", truncateCell(sessionLabel(session), width)}
-	lines = append(lines, "Outcome: Unknown (not assessed)",
-		"Canonical: "+evidenceLabel(session.State),
-		"Interpretation: "+reportedString(string(session.Interpretation.State)),
-		fmt.Sprintf("%d events · %d Unknown · %d diagnostics", session.EventCount, session.Interpretation.UnknownEvents, session.Diagnostics.Total),
-		compactDerived(session.Projections), "", "Recorded preview")
+	lines = append(lines, "Outcome: Unknown (not assessed)")
+	if m.sessionsState.showDetails {
+		lines = append(lines,
+			"Canonical: "+evidenceLabel(session.State),
+			"Interpretation: "+reportedString(string(session.Interpretation.State)),
+			fmt.Sprintf("%d events · %d Unknown · %d diagnostics", session.EventCount, session.Interpretation.UnknownEvents, session.Diagnostics.Total),
+			compactDerived(session.Projections))
+	} else if session.State != app.EvidenceComplete || session.Interpretation.UnknownEvents > 0 || session.Diagnostics.Total > 0 {
+		lines = append(lines, fmt.Sprintf("%s · %d Unknown · %d diagnostics", evidenceLabel(session.State), session.Interpretation.UnknownEvents, session.Diagnostics.Total))
+	}
+	lines = append(lines, "", "Recorded preview")
 	preview := session.Preview
 	if preview == "" {
 		preview = "Preview evidence unavailable."
@@ -115,6 +121,12 @@ func (m Model) metricsLines() []string {
 			value = "— unavailable"
 		}
 		parts[i] = labels[i] + " " + value
+	}
+	if !m.sessionsState.showDetails {
+		if m.sessionsState.overview.IssueSessions > 0 || m.sessionsState.overviewErr != nil {
+			return []string{strings.Join(parts[:2], " · "), parts[3]}
+		}
+		return []string{strings.Join(parts[:2], " · ")}
 	}
 	if m.renderWidth() < 80 {
 		return []string{strings.Join(parts[:2], " · "), strings.Join(parts[2:], " · ")}

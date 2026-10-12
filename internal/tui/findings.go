@@ -10,6 +10,7 @@ import (
 )
 
 type findingsState struct {
+	showDetails       bool
 	sessionID         model.SessionID
 	refreshIncomplete bool
 	page              app.FindingsPage
@@ -41,7 +42,7 @@ func (m *Model) loadFindings() tea.Cmd {
 	})
 }
 func (m Model) findingsContentLines() []string {
-	lines := []string{"Rule assessments · session " + string(m.sessionsState.selected)}
+	lines := []string{"Rule assessments"}
 	page := m.findingsState.page
 	if m.findingsState.notice != "" {
 		lines = append(lines, m.findingsState.notice)
@@ -68,6 +69,15 @@ func (m Model) findingsContentLines() []string {
 		lines = append(lines, "No rule assessments returned; this does not establish success.")
 	}
 	for _, f := range page.Assessments {
+		if !m.findingsState.showDetails {
+			title := strings.ReplaceAll(f.RuleID, "_", " ")
+			if title != "" {
+				title = strings.ToUpper(title[:1]) + title[1:]
+			}
+			lines = append(lines, title+" · "+strings.ReplaceAll(string(f.State), "_", " "),
+				"  "+truncateCell(safeInline(f.Explanation), max(20, m.renderWidth()-2)))
+			continue
+		}
 		lines = append(lines, "", fmt.Sprintf("%s · %s · version %s", f.RuleID, f.State, f.RuleVersion), "Assessment "+string(f.ID), f.Explanation)
 		if f.Metadata["applicable_changes"] != "" {
 			lines = append(lines, fmt.Sprintf("Confirmed paths %s · applicable changes %s · verified changes %s · missing changes %s · documentation exemptions %s", f.Metadata["confirmed_changes"], f.Metadata["applicable_changes"], f.Metadata["verified_changes"], f.Metadata["missing_changes"], f.Metadata["documentation_changes"]))
@@ -82,13 +92,28 @@ func (m Model) findingsContentLines() []string {
 			lines = append(lines, fmt.Sprintf("Conclusively unresolved %s · tests %s · static checks %s · builds %s", f.Metadata["unresolved"], f.Metadata["tests"], f.Metadata["static_checks"], f.Metadata["builds"]))
 		}
 	}
-	lines = append(lines, "", "No severity grade or session outcome is assigned.", "Supporting events · [ / ] select · Enter opens timeline context")
+	if m.findingsState.showDetails {
+		lines = append(lines, "", "No severity grade or session outcome is assigned.")
+	} else {
+		lines = append(lines, "", "v full explanations and counts")
+	}
+	lines = append(lines, "", "Supporting events")
 	for i, id := range m.findingReferences() {
 		marker := " "
 		if i == m.findingsState.evidenceCursor {
 			marker = ">"
 		}
-		lines = append(lines, marker+" "+string(id))
+		label := fmt.Sprintf("Supporting event %d", i+1)
+		for _, event := range m.timelineState.page.Events {
+			if event.ID == id {
+				label = fmt.Sprintf("#%d · %s", event.Sequence, safeInline(event.Summary))
+				break
+			}
+		}
+		if m.findingsState.showDetails {
+			label += " · " + string(id)
+		}
+		lines = append(lines, marker+" "+label)
 	}
 	return lines
 }

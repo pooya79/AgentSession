@@ -47,14 +47,14 @@ func TestTimelineEvictionRevisitKeepsEveryEventReachable(t *testing.T) {
 		if i > 0 {
 			m = historyKey(t, m, "]")
 		}
-		if got := m.View().Content; !strings.Contains(got, fmt.Sprintf("Target: history-%03d", i)) {
+		if got := m.View().Content; !strings.Contains(got, fmt.Sprintf("Target: #%d", i)) {
 			t.Fatalf("forward event %d lost:\n%s", i, got)
 		}
 	}
 	before := len(services.timelineCalls)
 	for i := 398; i >= 0; i-- {
 		m = historyKey(t, m, "[")
-		if got := m.View().Content; !strings.Contains(got, fmt.Sprintf("Target: history-%03d", i)) {
+		if got := m.View().Content; !strings.Contains(got, fmt.Sprintf("Target: #%d", i)) {
 			t.Fatalf("earlier event %d lost:\n%s", i, got)
 		}
 	}
@@ -72,7 +72,7 @@ func TestTimelineEvictionRevisitKeepsEveryEventReachable(t *testing.T) {
 	}
 	for i := 1; i < 400; i++ {
 		m = historyKey(t, m, "]")
-		if got := m.View().Content; !strings.Contains(got, fmt.Sprintf("Target: history-%03d", i)) {
+		if got := m.View().Content; !strings.Contains(got, fmt.Sprintf("Target: #%d", i)) {
 			t.Fatalf("revisited forward event %d lost:\n%s", i, got)
 		}
 	}
@@ -94,7 +94,7 @@ func TestTimelineContentSizeForcesReloadBelowEventCountBudget(t *testing.T) {
 	if len(services.timelineCalls) == before {
 		t.Fatal("large payloads were retained across the whole history")
 	}
-	if got := m.View().Content; !strings.Contains(got, "Target: history-000") || !strings.Contains(got, "evidence") {
+	if got := m.View().Content; !strings.Contains(got, "Target: #0") || !strings.Contains(got, "evidence") {
 		t.Fatalf("large evidence lost on revisit:\n%s", got)
 	}
 }
@@ -113,10 +113,10 @@ func TestTimelineEvictedSelectionReadFailureRetriesWithoutLosingReading(t *testi
 		t.Fatalf("failed reload hid usable evidence:\n%s", failed)
 	}
 	services.timelineErr = nil
-	target := m.timelineState.selected
+	target := m.timelineState.page.Events[m.timelineState.cursor].Sequence
 	m = historyKey(t, m, "r")
-	if got := m.View().Content; !strings.Contains(got, "Target: "+string(target)) || strings.Contains(got, "temporarily unavailable") || strings.Contains(got, "Loading") {
-		t.Fatalf("retry did not restore evicted target %s:\n%s", target, got)
+	if got := m.View().Content; !strings.Contains(got, fmt.Sprintf("Target: #%d", target)) || strings.Contains(got, "temporarily unavailable") || strings.Contains(got, "Loading") {
+		t.Fatalf("retry did not restore evicted target %d:\n%s", target, got)
 	}
 }
 
@@ -133,7 +133,7 @@ func TestTimelineReimportDuringEvictedReloadRemovesMissingOverlap(t *testing.T) 
 			continue
 		}
 		m = historyKey(t, m, "[")
-		if got := m.View().Content; !strings.Contains(got, fmt.Sprintf("Target: history-%03d", i)) {
+		if got := m.View().Content; !strings.Contains(got, fmt.Sprintf("Target: #%d", i)) {
 			t.Fatalf("reimport kept a missing/duplicated event before %d:\n%s", i, got)
 		}
 	}
@@ -259,7 +259,7 @@ func TestTimelineRenderedContentBudgetReloadsShortLineEvidence(t *testing.T) {
 	if len(services.timelineCalls) == before {
 		t.Fatal("rendered short-line evidence was all retained despite its content size")
 	}
-	if got := m.View().Content; !strings.Contains(got, "Target: history-000") || !strings.Contains(got, "x") {
+	if got := m.View().Content; !strings.Contains(got, "Target: #0") || !strings.Contains(got, "x") {
 		t.Fatalf("short-line evidence lost:\n%s", got)
 	}
 }
@@ -311,9 +311,9 @@ func TestTimelineDelayedEvictedReloadCanBeCanceledAndRetried(t *testing.T) {
 	if got := m.View().Content; got != before {
 		t.Fatalf("late history reply changed reading:\n%s", got)
 	}
-	target := m.timelineState.selected
+	target := m.timelineState.page.Events[m.timelineState.cursor].Sequence
 	m = historyKey(t, m, "r")
-	if got := m.View().Content; !strings.Contains(got, "Target: "+string(target)) || strings.Contains(got, "Loading local history") {
+	if got := m.View().Content; !strings.Contains(got, fmt.Sprintf("Target: #%d", target)) || strings.Contains(got, "Loading local history") {
 		t.Fatalf("canceled reload could not retry:\n%s", got)
 	}
 }
@@ -323,7 +323,7 @@ func TestTimelineTextScrollCanEvictTheUnchangedActionTarget(t *testing.T) {
 	for range 1600 {
 		m = historyKey(t, m, "j")
 	}
-	if got := m.View().Content; !strings.Contains(got, "HISTORY CONTENT 349") || !strings.Contains(got, "Target: history-000") {
+	if got := m.View().Content; !strings.Contains(got, "HISTORY CONTENT 349") || !strings.Contains(got, "Target: #0") {
 		t.Fatalf("text scrolling jumped back to the evicted action target:\n%s", got)
 	}
 }
@@ -367,7 +367,7 @@ func TestTimelineEventJumpAcrossPreviouslyUnvisitedEarlierHistory(t *testing.T) 
 	m.spinnerActive = true
 	m, _ = updateModel(t, m, timelineLoadedMsg{generation: m.requestGeneration, page: page})
 	m = historyKey(t, m, "[")
-	if got := m.View().Content; !strings.Contains(got, "Target: history-200") {
+	if got := m.View().Content; !strings.Contains(got, "Target: #200") {
 		t.Fatalf("earlier event jump stopped at the loaded boundary:\n%s", got)
 	}
 }

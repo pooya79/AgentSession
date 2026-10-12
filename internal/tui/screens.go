@@ -13,6 +13,7 @@ import (
 // loaded library overview. The root Model coordinates navigation and
 // asynchronous lifetimes rather than making each screen an independent model.
 type sessionsState struct {
+	showDetails     bool
 	page            app.SessionPage
 	loading         bool
 	err             error
@@ -64,6 +65,7 @@ type inspectionPosition struct{ line, column int }
 
 type detailState struct {
 	unwrapped         bool
+	showMetadata      bool
 	renderedUnwrapped bool
 	renderedPositions []inspectionPosition
 	anchor            inspectionPosition
@@ -82,14 +84,16 @@ type detailState struct {
 // indexingState contains the latest observation of application-owned import
 // work and the viewport used to inspect its evidence.
 type indexingState struct {
-	status   app.ImportAllStatus
-	err      error
-	viewport viewport.Model
+	showDetails bool
+	status      app.ImportAllStatus
+	err         error
+	viewport    viewport.Model
 }
 
 // projectionsState owns panel observation state. generation rejects delayed
 // replies after refresh or navigation; cancel stops observation, not work.
 type projectionsState struct {
+	showDetails  bool
 	generation   uint64
 	cancel       context.CancelFunc
 	status       app.ProjectionStatus
@@ -104,6 +108,7 @@ type projectionsState struct {
 
 // searchState keeps query editing separate from bounded result navigation.
 type searchState struct {
+	showDetails bool
 	query       string
 	queryCursor int
 	dirty       bool

@@ -100,11 +100,11 @@ func TestTimelineTextScrollAndEventNavigationHaveSeparateTargets(t *testing.T) {
 		t.Fatalf("text scroll jumped events:\n%s", got)
 	}
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: ']', Text: "]"})
-	if got := m.View().Content; !strings.Contains(got, "NEXT EVENT") || !strings.Contains(got, "Target: next") {
+	if got := m.View().Content; !strings.Contains(got, "NEXT EVENT") || !strings.Contains(got, "Target: #1") {
 		t.Fatalf("event jump or visible action target missing:\n%s", got)
 	}
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: '[', Text: "["})
-	if got := m.View().Content; !strings.Contains(got, "line-000") || !strings.Contains(got, "Target: long") {
+	if got := m.View().Content; !strings.Contains(got, "line-000") || !strings.Contains(got, "Target: #0") {
 		t.Fatalf("previous event did not reveal its start:\n%s", got)
 	}
 }
@@ -176,7 +176,7 @@ func TestTimelineReturnsFromTemporaryNavigation(t *testing.T) {
 			if returnCmd != nil {
 				m, _ = updateModel(t, m, returnCmd())
 			}
-			if got := m.View().Content; anchor == "" || !strings.Contains(got, anchor) || !strings.Contains(got, "Target: long") || !strings.Contains(got, "session session-1") {
+			if got := m.View().Content; anchor == "" || !strings.Contains(got, anchor) || !strings.Contains(got, "Target: #0") || !strings.Contains(got, "session session-1") {
 				t.Fatalf("%s return lost reading context %q:\n%s", route, anchor, got)
 			}
 			m, _ = updateModel(t, m, tea.KeyPressMsg{Code: ']', Text: "]"})
@@ -258,12 +258,12 @@ func TestTimelineRefreshRetainsReadingBeyondFirstChunk(t *testing.T) {
 	}
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	before := m.View().Content
-	if !strings.Contains(before, "Target: event-119") {
+	if !strings.Contains(before, "Target: #119") {
 		t.Fatalf("continuation setup failed:\n%s", before)
 	}
 	m, cmd = updateModel(t, m, tea.KeyPressMsg{Code: 'r', Text: "r"})
 	m, _ = updateModel(t, m, cmd())
-	if got := m.View().Content; !strings.Contains(got, "Target: event-119") || !strings.Contains(got, "available evidence") || strings.Contains(got, "Reading anchor removed") {
+	if got := m.View().Content; !strings.Contains(got, "Target: #119") || !strings.Contains(got, "available evidence") || strings.Contains(got, "Reading anchor removed") {
 		t.Fatalf("refresh lost continued context:\n%s", got)
 	}
 	for _, request := range services.timelineCalls {
@@ -395,7 +395,7 @@ func TestTimelineReturnRetriesCanceledInitialLoad(t *testing.T) {
 	}
 	m, _ = updateModel(t, m, stale())
 	m, _ = updateModel(t, m, retry())
-	if got := m.View().Content; !strings.Contains(got, "Target: loaded") || strings.Contains(got, "Loading timeline events") {
+	if got := m.View().Content; !strings.Contains(got, "Target: #0") || strings.Contains(got, "Loading timeline events") {
 		t.Fatalf("initial load recovery failed:\n%s", got)
 	}
 }

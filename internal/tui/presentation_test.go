@@ -125,8 +125,8 @@ func TestSessionsDashboardResponsiveLayoutsAndUnavailableMetrics(t *testing.T) {
 	}{
 		{name: "wide", width: 120, height: 30, want: []string{"last activity ↓", "PREVIEW", "CODEX", "2026-07-25 09:30 UTC", "Outcome: Unknown"}},
 		{name: "medium", width: 90, height: 30, want: []string{"last activity ↓", "CODEX", "Sessions", "Evidence issues"}},
-		{name: "narrow", width: 60, height: 30, want: []string{"Sessions 12 · Events 345", "Agents 3", "CODEX", "first user request"}},
-		{name: "short", width: 120, height: 14, want: []string{"Sessions 12 · Events 345", "Agents 3", "CODEX", "first user request"}},
+		{name: "narrow", width: 60, height: 30, want: []string{"Sessions 12 · Events 345", "Evidence issues 2", "CODEX", "first user request"}},
+		{name: "short", width: 120, height: 14, want: []string{"Sessions 12 · Events 345", "Evidence issues 2", "CODEX", "first user request"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -233,17 +233,17 @@ func TestSearchScreenResponsiveCardsKeepSelectionVisible(t *testing.T) {
 		{
 			name: "wide", width: 100, height: 22,
 			want: []string{
-				"Filters · session: kind:", "> Session 11", "2026-07-25 09:30 UTC",
-				"2 matching events / 50 events", "Work requested in session 11",
+				"> Session 11", "2026-07-25 09:30 UTC",
+				"2 matching events / 50 events",
 				"Command matched the query", "Result 11/12",
-				"previous page", "next page", "Enter timeline",
+				"previous page", "next page", "Enter open",
 			},
 		},
 		{
 			name: "narrow", width: 60, height: 16,
 			want: []string{
 				"> Session 11", "CODEX", "Match · Command matched",
-				"Result 11/12", "previous page · next page", "Enter timeline",
+				"Result 11/12", "previous page · next page", "Enter open",
 			},
 		},
 	} {

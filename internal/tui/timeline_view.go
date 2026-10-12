@@ -12,7 +12,10 @@ func (m Model) timelineHeaderLines() []string {
 	label := "Timeline · session " + truncateCell(string(m.sessionsState.selected), max(12, m.renderWidth()/2-20))
 	for _, session := range m.sessionsState.page.Sessions {
 		if session.ID == m.sessionsState.selected {
-			label += " · canonical " + evidenceLabel(session.State)
+			label = truncateCell(sessionLabel(session), m.renderWidth())
+			if session.State != app.EvidenceComplete {
+				label += " · " + evidenceLabel(session.State)
+			}
 			break
 		}
 	}

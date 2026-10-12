@@ -70,6 +70,7 @@ func TestImportedStreamedAssessmentAndEvidenceNavigation(t *testing.T) {
 	drain(m.Init())
 	send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	send(tea.KeyPressMsg{Code: 'f', Text: "f"})
+	send(tea.KeyPressMsg{Code: 'v', Text: "v"})
 	view := m.View().Content
 	for _, want := range []string{"triggered", "Invocations 4", "failures 2", "recovered 1", "uncertainties 1", "Missing, conflicting, unsupported, or oversized evidence", "unresolved_failed_verification", "unresolved 0", "tests 4", "static checks 0", "builds 0", "missing_verification"} {
 		if !strings.Contains(view, want) {
@@ -157,6 +158,7 @@ func TestMissingVerificationRendering(t *testing.T) {
 	m.screen = findingsScreen
 	m.sessionsState.selected = "confirmed-changes"
 	m.findingsState.page = page
+	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'v', Text: "v"})
 	m.width, m.height = 240, 120
 	view := m.View().Content
 	for _, want := range []string{"missing_verification · not_triggered", "Confirmed paths 1", "applicable changes 1", "verified changes 1", "missing changes 0", "failed completed check counts as verification performed", "actual file participation"} {
@@ -187,6 +189,7 @@ func TestOpenCodeAssessmentRendering(t *testing.T) {
 		m.screen = findingsScreen
 		m.sessionsState.selected = session.ID
 		m.findingsState.page = page
+		m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'v', Text: "v"})
 		m.width, m.height = 240, 120
 		view := m.View().Content
 		for _, want := range []string{"repeated_command_failures", "unresolved_failed_verification", "missing_verification", "recovered 1", "unresolved 1", "missing changes 1"} {
@@ -209,6 +212,7 @@ func TestMoveConfigurationAssessmentRendering(t *testing.T) {
 	m.screen = findingsScreen
 	m.sessionsState.selected = "move-configuration"
 	m.findingsState.page = page
+	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'v', Text: "v"})
 	m.width, m.height = 240, 120
 	view := m.View().Content
 	for _, want := range []string{"Move origin scopes: 1 verified, 0 missing, 0 uncertain", "destination scopes: 1 verified, 0 missing, 0 uncertain", "2 module configuration scopes evaluated", "Workspace membership and nested module relationships remain uncertain", "actual file participation"} {

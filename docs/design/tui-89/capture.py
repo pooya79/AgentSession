@@ -189,6 +189,7 @@ def capture(theme):
         send('x'); drain()
         matrix('projections')
         send('g'+'b'); drain(1)
+        send('v'); drain()
         contains('attempts 2')
         frame('projection-rebuild-80x24')
         send('\x1b'); drain()
@@ -246,6 +247,7 @@ def capture(theme):
         resize(80,24)
         send('g'); drain()
         send('b'); drain(1)
+        send('v'); drain()
         assert 'attempts 2' in '\n'.join(screen.display)
         frame('projection-rebuild-80x24')
         send('a'); drain()
@@ -367,8 +369,8 @@ a{color:#005fa3} nav{display:flex;gap:16px;flex-wrap:wrap;margin:20px 0}
 section{border-top:2px solid #aab7c5;margin-top:28px}figure{margin:24px 0}
 img{display:block;max-width:100%;height:auto;border:1px solid #8896a5}
 figcaption{margin:8px 0;font-weight:600}details{margin:20px 0}summary{cursor:pointer}
-</style><h1>Actual implemented TUI · final review #93</h1>
-<p><strong>Product-owner acceptance pending.</strong> Compare these fresh production
+</style><h1>Simplified TUI · review #93</h1>
+<p><strong>Revised after owner feedback; acceptance pending.</strong> Compare these fresh production
 PTY frames with the <a href="../tui-review-88.html">accepted #88 preview</a>.
 Review the live isolated binary and input/output recordings as well; snapshots
 and automated checks alone do not establish acceptance.</p>
@@ -384,9 +386,12 @@ resize, refresh, and normal terminal text selection. Sources remain read-only.</
     for theme in ('dark', 'light', 'mono'):
         gallery.append(f'<section id="{theme}"><h2>{theme} profile</h2>')
         gallery.append(f'<p><a href="workflow-{theme}.cast">Input/output/resize recording (asciicast v2)</a></p>')
-        for size in ('120x32', '80x24', '54x18', '40x12', '32x10'):
-            gallery.append(f'<details open><summary>{size}</summary>')
-            for path in sorted(OUT.glob(f'*-{size}-{theme}.png')):
+        for size in ('80x24', '120x32', '54x18', '40x12', '32x10'):
+            expanded = ' open' if size == '80x24' and theme == 'dark' else ''
+            gallery.append(f'<details{expanded}><summary>{size}</summary>')
+            order = ['sessions', 'timeline', 'expanded', 'details', 'search', 'assessments', 'unknown-prompt', 'unknown-raw', 'projections', 'indexing', 'help']
+            paths = OUT.glob(f'*-{size}-{theme}.png')
+            for path in sorted(paths, key=lambda p: order.index(p.stem.removesuffix(f'-{size}-{theme}')) if p.stem.removesuffix(f'-{size}-{theme}') in order else len(order)):
                 name = html.escape(path.name)
                 label = html.escape(path.stem.removesuffix(f'-{size}-{theme}').replace('-', ' '))
                 gallery.append(f'<figure><figcaption>{label} · {size} · {theme} · <a href="{name}">native size</a></figcaption><img loading="lazy" src="{name}" alt="{label} at {size} in {theme}"></figure>')

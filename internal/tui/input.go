@@ -80,6 +80,25 @@ func (m Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		}
 	}
 	switch key {
+	case "v":
+		switch m.screen {
+		case sessionsScreen:
+			m.sessionsState.showDetails = !m.sessionsState.showDetails
+		case searchScreen:
+			m.searchState.showDetails = !m.searchState.showDetails
+		case detailScreen:
+			m.detailState.showMetadata = !m.detailState.showMetadata
+		case findingsScreen:
+			m.findingsState.showDetails = !m.findingsState.showDetails
+		case projectionsScreen:
+			m.projectionsState.showDetails = !m.projectionsState.showDetails
+		case indexingScreen:
+			m.indexingState.showDetails = !m.indexingState.showDetails
+		default:
+			return m, nil
+		}
+		m.syncViewports()
+		return m, nil
 	case "d":
 		if m.screen == timelineScreen && len(m.timelineState.page.Events) > 0 {
 			event := m.timelineState.page.Events[m.timelineState.cursor]

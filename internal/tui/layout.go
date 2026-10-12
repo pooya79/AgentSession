@@ -42,7 +42,7 @@ func (m Model) helpLine(width int) string {
 		if compact {
 			return "[] refs · Enter open · Esc · ? help"
 		}
-		return "↑↓ scroll · [/] evidence · Enter context · r retry · Esc back · ? help"
+		return "[] evidence · Enter open · v explain · Esc back · ? help"
 	case projectionsScreen:
 		if m.projectionsState.confirmAll {
 			return "y confirm · n/Esc cancel · ? help"
@@ -50,28 +50,28 @@ func (m Model) helpLine(width int) string {
 		if compact {
 			return "↑↓ target · t/b act · Esc · ? help"
 		}
-		return "↑↓ select · PgUp/Dn read · t retry · b rebuild · a all · Esc · ? help"
+		return "↑↓ select · b rebuild · v details · Esc back · ? help"
 	case indexingScreen:
 		if compact {
 			return "↑↓ scroll · r rescan · Esc · ? help"
 		}
-		return "↑↓ scroll · PgUp/PgDn · g/G ends · r rescan · Esc back · ? help"
+		return "↑↓ read · v details · r rescan · Esc back · ? help"
 	case detailScreen:
 		if m.detailState.detail.Event.Kind == model.EventKindUnknown {
 			if compact {
 				return "↑↓ scroll · u raw · Esc back · ? help"
 			}
-			return "↑↓ scroll · w wrap · ←→ pan · u raw · r retry · Esc back · ? help"
+			return "↑↓ read · u raw · v metadata · Esc back · ? help"
 		}
 		if compact {
 			return "↑↓ scroll · w wrap · Esc back · ? help"
 		}
-		return "↑↓ scroll · w wrap · ←→ pan · r retry · Esc back · ? help"
+		return "↑↓ read · w wrap · v metadata · Esc back · ? help"
 	case sessionsScreen:
 		if compact {
 			return "↑↓ select · Enter open · ? help"
 		}
-		return "↑↓ move · Enter open · / search · i index · r rescan · ? help · q quit"
+		return "↑↓ choose · Enter open · / search · v details · ? help"
 	case searchScreen:
 		if m.searchState.editing {
 			if compact {
@@ -80,17 +80,21 @@ func (m Model) helpLine(width int) string {
 			return "Type query · Enter search · Esc results · Ctrl-C quit"
 		}
 		if compact {
-			return "Enter timeline · / edit · ? help"
+			return "Enter open · / edit · ? help"
 		}
-		return "/ edit · ↑↓ select · Enter timeline · n/p page · Esc back · ? help"
+		return "↑↓ choose · Enter open · / edit · v details · Esc back · ? help"
 	case timelineScreen:
 		if compact {
-			return "↑↓ scroll · [/] target · ? help"
+			return "↑↓ read · [] events · Esc · ? help"
 		}
-		if width < 96 {
-			return "↑↓ scroll · [/] events · Enter toggle · d inspect · Esc back · ? help"
+		if timelinePayloadTruncatable(m.timelineState.page.Payloads[m.timelineState.selected]) {
+			action := "expand"
+			if m.timelineState.expanded[m.timelineState.selected] {
+				action = "collapse"
+			}
+			return "↑↓ read · [] events · Enter " + action + " · d inspect · Esc · ? help"
 		}
-		return "↑↓ j/k scroll · PgUp/PgDn · [/] events · Enter toggle · d inspect · u raw · f rules · x projections · Esc back · ? help"
+		return "↑↓ read · [] events · d inspect · / search · Esc back · ? help"
 	default:
 		return "Esc back · ? help"
 	}
@@ -170,14 +174,9 @@ func (m Model) statusLine() string {
 				state += " off-screen"
 			}
 		}
-		target := truncateCell(string(m.timelineState.selected), max(8, m.renderWidth()/3-8))
+		target := "unavailable"
 		if len(m.timelineState.page.Events) > m.timelineState.cursor {
-			sequence := fmt.Sprintf("#%d", m.timelineState.page.Events[m.timelineState.cursor].Sequence)
-			if m.renderWidth() < 80 {
-				target = sequence
-			} else {
-				target += " " + sequence
-			}
+			target = fmt.Sprintf("#%d", m.timelineState.page.Events[m.timelineState.cursor].Sequence)
 		}
 		return "Target: " + target + " · " + state + " · " + m.compactIndexStatus()
 	}

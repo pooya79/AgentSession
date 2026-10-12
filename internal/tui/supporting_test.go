@@ -64,7 +64,7 @@ func TestSupportingHelpOwnsFocusAndRestoresReading(t *testing.T) {
 		t.Fatalf("help advertises underlying controls:\n%s", view)
 	}
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'G', Text: "G"})
-	if got := ansi.Strip(m.View().Content); !strings.Contains(got, "rebuild all") {
+	if got := ansi.Strip(m.View().Content); !strings.Contains(got, "Ctrl-C") {
 		t.Fatalf("long help cannot reach final controls:\n%s", got)
 	}
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -193,7 +193,7 @@ func TestAssessmentReferenceSelectionRevealsTheActualTarget(t *testing.T) {
 	m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: 'f', Text: "f"})
 	m, _ = updateModel(t, m, cmd())
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: ']', Text: "]"})
-	if got := ansi.Strip(m.View().Content); !strings.Contains(got, "> supporting-01") {
+	if got := ansi.Strip(m.View().Content); !strings.Contains(got, "> Supporting event 2") {
 		t.Fatalf("selected reference is not visible:\n%s", got)
 	}
 	before := ansi.Strip(m.View().Content)

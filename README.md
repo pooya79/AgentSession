@@ -48,6 +48,9 @@ the event acted on by Enter (show/hide technical details) and `u` (inspect
 bounded, redacted Unknown evidence). Messages always remain open. Headings,
 lists and code use restrained terminal Markdown; indentation is preserved and
 long code/output lines wrap by default. Links remain text and are never fetched.
+Press `v` in browsing, search and supporting screens to show full metadata,
+coverage, explanations or operational details. The default views lead with
+recorded content and brief status. Help is specific to the current screen.
 Press `d` for normalized inspection, `w` to toggle wrapping there, and Left/Right
 to pan unwrapped lines. The column indicator and fixed event header preserve
 inspection context; Esc restores the earlier timeline reading position. Press `?`

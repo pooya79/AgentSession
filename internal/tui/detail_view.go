@@ -59,18 +59,32 @@ func (m Model) detailContentLines() []string {
 		}
 	}
 	metadata := lines
-	lines = []string{"Normalized payload"}
+	lines = nil
 	if m.detailState.detail.State == app.EvidenceUnavailable || m.detailState.detail.Payload == nil {
 		lines = append(lines, "Payload evidence is unavailable.", "")
 	} else {
 		card := timelineCardLines(event, m.detailState.detail.Payload, 1<<30, false, true, app.UnknownEvidenceInspection{}, false, nil)
 		if timelinePayloadTruncatable(m.detailState.detail.Payload) {
-			card = card[:len(card)-1]
+			card = card[1 : len(card)-1]
 		}
 		lines = append(lines, card...)
 	}
-	lines = append(lines, "", "Event metadata")
-	lines = append(lines, metadata...)
+	if m.detailState.showMetadata {
+		lines = append(lines, "", "Event metadata")
+		lines = append(lines, metadata...)
+		switch payload := m.detailState.detail.Payload.(type) {
+		case model.CommandData:
+			lines = append(lines, "Invocation ID: "+reportedString(payload.InvocationID), "Phase: "+reportedString(string(payload.Phase)))
+		case model.ToolCallData:
+			lines = append(lines, "Call ID: "+reportedString(payload.CallID))
+		case model.ToolResultData:
+			lines = append(lines, "Call ID: "+reportedString(payload.CallID))
+		case model.PatchData:
+			lines = append(lines, "Change ID: "+reportedString(payload.ChangeID))
+		}
+	} else if m.detailState.detail.Diagnostics.Total > 0 {
+		lines = append(lines, "", diagnosticSummary(m.detailState.detail.Diagnostics), "v shows diagnostics and metadata")
+	}
 	if event.Kind == model.EventKindUnknown {
 		lines = append(lines, "", "Retained Unknown evidence")
 		switch {

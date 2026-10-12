@@ -84,6 +84,14 @@ func (m *Model) syncDetailViewport(width, height int) {
 	} else if state.renderedUnwrapped && x != state.lastX {
 		state.anchor.column = max(0, state.anchor.column+x-state.lastX)
 	}
+	// When several physical lines are visible, retain their beginnings while
+	// switching to unwrapped text. A long single-line viewport keeps its column.
+	if state.unwrapped && !state.renderedUnwrapped && len(state.renderedPositions) > 0 {
+		last := min(top+state.viewport.Height()-1, len(state.renderedPositions)-1)
+		if state.renderedPositions[last].line > state.anchor.line {
+			state.anchor.column = 0
+		}
+	}
 	var lines []string
 	var positions []inspectionPosition
 	physical := m.detailContentLines()
@@ -218,50 +226,79 @@ func isScreenTitle(line string) bool {
 // helpLines returns the complete control reference; the viewport handles
 // wrapping and scrolling in constrained terminals.
 func (m Model) helpLines() []string {
-	lines := []string{
-		"Keyboard help",
-		"",
-		"Global",
-		"  ?            open or close this help",
-		"  Esc          close an overlay or return to the parent screen",
-		"  q / Ctrl-C   quit",
-		"",
-		"Navigation",
-		"  ↑/↓ or j/k   scroll timeline text; move rows in lists",
-		"  [ / ]        jump to previous/next timeline event",
-		"  Home/End     jump to the first or last row",
-		"  g/G          jump to the first or last row",
-		"  PgUp/PgDn    scroll long evidence",
-		"  n/p          next/previous session or search page",
-		"  Enter        open a session or expand/collapse a timeline card",
-		"  Target       footer names the event Enter, d and u act on",
-		"  Esc          return to the previous reading context, including search",
-		"",
-		"Actions",
-		"  d            inspect selected normalized event",
-		"  w            toggle wrapping in inspection; ←/→ pan when unwrapped",
-		"  r            refresh current evidence; rescan from overview screens",
-		"  f            inspect rule assessments from the timeline",
-		"  [ / ]        select assessment evidence; Enter opens timeline context",
-		"  i            inspect indexing details from sessions",
-		"  /            open search or edit the current search query",
-		"",
-		"Search editing",
-		"  ←/→          move the query cursor",
-		"  Home/End     beginning/end of query (also Ctrl-A/Ctrl-E)",
-		"  Backspace/Del delete before/at the cursor",
-		"  Paste        insert query text, including shortcut characters",
-		"  Enter        submit query; Esc stops editing, then returns",
-		"  r            retry search; edited queries require a new search",
-		"  Filters      session: kind: after: before: file: tool: command:",
-		"  Shortcuts such as q / ? [ ] remain text while editing.",
-		"",
-		"Evidence actions",
-		"  x            inspect projection lifecycle from a timeline",
-		"  u            inspect redacted retained evidence for an Unknown event",
-		"  t            retry implemented pending or failed projections",
-		"  b            rebuild the focused projection when implemented",
-		"  a            rebuild all only when every projection is implemented",
+	lines := []string{"Keyboard help · " + m.screenLabel(), ""}
+	switch m.screen {
+	case sessionsScreen:
+		lines = append(lines,
+			"  ↑/↓ or j/k   choose a session",
+			"  Enter        open its timeline",
+			"  /            search recorded evidence",
+			"  v            show/hide coverage details",
+			"  i            indexing status",
+			"  r            rescan sources",
+			"  n/p          next/previous page")
+	case timelineScreen:
+		lines = append(lines,
+			"  ↑/↓ or j/k   read text",
+			"  [ / ]        previous/next event",
+			"  Enter        expand/collapse technical evidence",
+			"  d            inspect selected event",
+			"  u            inspect redacted Unknown evidence",
+			"  f            rule assessments",
+			"  x            derived views and rebuilds",
+			"  /            search",
+			"  r            refresh; retry failed reads",
+			"  Target       event acted on by Enter, d and u")
+	case detailScreen:
+		lines = append(lines,
+			"  ↑/↓ or j/k   read evidence",
+			"  w            toggle wrapping",
+			"  ←/→          pan when unwrapped",
+			"  v            show/hide metadata and diagnostics",
+			"  u            inspect redacted Unknown evidence",
+			"  r            refresh; retry failed reads")
+	case findingsScreen:
+		lines = append(lines,
+			"  ↑/↓ or j/k   read assessments",
+			"  [ / ]        choose supporting evidence",
+			"  Enter        open its timeline context",
+			"  v            full explanations, counts and IDs",
+			"  r            refresh; retry failed reads")
+	case projectionsScreen:
+		lines = append(lines,
+			"  ↑/↓ or j/k   select a derived view",
+			"  v            show/hide versions and counters",
+			"  t            retry pending or failed work",
+			"  b            rebuild selected view",
+			"  a            rebuild all; confirmation required",
+			"  r            refresh status",
+			"  Unimplemented builds cannot be requested.")
+	case indexingScreen:
+		lines = append(lines,
+			"  ↑/↓ or j/k   read source status",
+			"  v            source paths, counters and diagnostics",
+			"  r            rescan sources",
+			"  Indexing continues while you browse.")
+	case searchScreen:
+		lines = append(lines,
+			"  ↑/↓ or j/k   choose a matching session",
+			"  Enter        open matching timeline context",
+			"  /            edit query",
+			"  v            show/hide filters and result details",
+			"  n/p          next/previous page",
+			"  r            retry the current search",
+			"",
+			"  While editing: ←/→ move; Home/End jump.",
+			"  Backspace/Del delete; Enter searches.",
+			"  Esc stops editing, then returns.",
+			"  Paste and shortcut keys remain query text.",
+			"  Filters: session: kind: after: before:",
+			"           file: tool: command:")
 	}
-	return lines
+	return append(lines, "",
+		"  PgUp/PgDn    scroll a page",
+		"  Home/End     first/last row (also g/G)",
+		"  Esc          return to previous screen",
+		"  ?            close this help",
+		"  q / Ctrl-C   quit (Ctrl-C while editing)")
 }

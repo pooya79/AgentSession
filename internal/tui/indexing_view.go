@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"path"
+	"strings"
 
 	"github.com/pooya79/AgentSession/internal/app"
 )
@@ -10,7 +12,7 @@ import (
 // the coordinator's bounded diagnostic synopsis.
 func (m Model) indexingContentLines() []string {
 	status := m.indexingState.status
-	lines := []string{"Indexing details", ""}
+	var lines []string
 	switch {
 	case m.indexingState.err != nil:
 		lines = append(lines, "AgentSession indexing observation failed: "+m.indexingState.err.Error(), "Status unavailable · r to rescan.")
@@ -28,11 +30,18 @@ func (m Model) indexingContentLines() []string {
 	if status.Failure != "" {
 		lines = append(lines, "Failure: "+status.Failure)
 	}
-	lines = append(lines,
-		fmt.Sprintf("Sources: %d discovered · %d completed · %d failed", status.SourcesDiscovered, status.SourcesCompleted, status.SourcesFailed),
-		fmt.Sprintf("Totals: %d records · %d events · %d sessions · %d unchanged", status.RecordsProcessed, status.EventsProcessed, status.SessionsObserved, status.UnchangedSessions),
-		fmt.Sprintf("Diagnostics: %d total · %d omitted from bounded status", status.DiagnosticsTotal, status.DiagnosticsOmitted),
-	)
+	if m.indexingState.showDetails {
+		lines = append(lines,
+			fmt.Sprintf("Sources: %d discovered · %d completed · %d failed", status.SourcesDiscovered, status.SourcesCompleted, status.SourcesFailed),
+			fmt.Sprintf("Totals: %d records · %d events · %d sessions · %d unchanged", status.RecordsProcessed, status.EventsProcessed, status.SessionsObserved, status.UnchangedSessions),
+			fmt.Sprintf("Diagnostics: %d total · %d omitted from bounded status", status.DiagnosticsTotal, status.DiagnosticsOmitted),
+		)
+	} else {
+		lines = append(lines, fmt.Sprintf("%d/%d sources checked · %d sessions observed", status.SourcesCompleted, status.SourcesDiscovered, status.SessionsObserved))
+		if status.SourcesFailed > 0 || status.DiagnosticsTotal > 0 {
+			lines = append(lines, fmt.Sprintf("%d failed sources · %d diagnostics · v details", status.SourcesFailed, status.DiagnosticsTotal))
+		}
+	}
 	if len(status.Sources) == 0 {
 		lines = append(lines, "", "No discovered sources.")
 	} else {
@@ -42,6 +51,11 @@ func (m Model) indexingContentLines() []string {
 			if source.Failure != "" {
 				state += " · failed: " + source.Failure
 			}
+			if !m.indexingState.showDetails {
+				name := path.Base(strings.ReplaceAll(safeInline(source.Path), "\\", "/"))
+				lines = append(lines, "  "+name+" · "+state)
+				continue
+			}
 			lines = append(lines,
 				fmt.Sprintf("%s · %s · %s", source.Kind, source.ID, state),
 				fmt.Sprintf("  %s · %s · %d records · %d events · %d sessions · %d diagnostics",
@@ -49,7 +63,7 @@ func (m Model) indexingContentLines() []string {
 			)
 		}
 	}
-	if len(status.RecentDiagnostics) > 0 {
+	if len(status.RecentDiagnostics) > 0 && m.indexingState.showDetails {
 		lines = append(lines, "", "AgentSession discovery/import diagnostics")
 		for _, diagnostic := range status.RecentDiagnostics {
 			where := string(diagnostic.SourceID)
@@ -58,6 +72,9 @@ func (m Model) indexingContentLines() []string {
 			}
 			lines = append(lines, fmt.Sprintf("[%s] %s · %s · %s", diagnostic.Severity, diagnostic.Code, where, diagnostic.Message))
 		}
+	}
+	if !m.indexingState.showDetails {
+		lines = append(lines, "", "v source paths, counters and diagnostics")
 	}
 	return lines
 }

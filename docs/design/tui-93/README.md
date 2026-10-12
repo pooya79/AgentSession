@@ -8,7 +8,14 @@ checked after the PTY journey; mouse capture enable sequences are rejected.
 
 ## Product-owner review
 
-**Pending.** The accepted [#88 previews](../tui-review-88.md) establish design
+**Revised; owner review pending.** The owner rejected the initial combined UI as
+“messy”, with too much text and unclear navigation, and requested simplification
+across all screens. The revision puts recorded content first, removes internal
+identities from the reader target, shortens controls, makes help specific to the
+current screen, and moves metadata, full explanations and operational counters
+behind `v`. All evidence remains reachable; failures and partial availability
+still appear in the default views. Fresh captures below replace the rejected
+frames. The accepted [#88 previews](../tui-review-88.md) establish design
 direction. Earlier #89/#91/#92 implementation inspections do not establish
 final product-owner acceptance. Fresh frames and input/output/resize recordings
 below document the combined production journey; automated captures and an
@@ -53,6 +60,7 @@ four usable dimensions and three profiles, plus the insufficient-size frame.
 | Requirement | Evidence at the agreed Model/services seam |
 | --- | --- |
 | Combined real-index journey, safe source reads, mouse mode | `TestCompleteTUIJourneyWithTemporaryIndex` |
+| Concise defaults, explicit metadata/explanation disclosure, current-screen help | `disclosure_test.go` |
 | Session preview/selection, compact focus, Markdown, long lines, terminal sanitization | `browsing_test.go`, `presentation_test.go`, `timeline_cards_test.go` |
 | Long-message scrolling, independent event target, disclosure, resize, refresh, changed/missing anchors, temporary-screen return | `reading_test.go` |
 | Forward/backward reload, eviction/revisit, overlap reconciliation, large-event access, removed prefetch anchors | `retention_test.go` |

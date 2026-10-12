@@ -124,7 +124,7 @@ func TestCompleteTUIJourneyWithTemporaryIndex(t *testing.T) {
 	key(tea.KeyEscape, "")
 	want("RECORDED FAILURE", "TestRetryTimeout")
 	key('f', "f")
-	want("Assessments", "unresolved_failed_verification")
+	want("Assessments", "Unresolved failed verification")
 	key(tea.KeyEnter, "")
 	want("Timeline")
 	key(tea.KeyEscape, "")

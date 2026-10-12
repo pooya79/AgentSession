@@ -33,7 +33,7 @@ func (m Model) View() tea.View {
 
 	snapshot := m
 	snapshot.syncViewports()
-	header := "AgentSession  /  " + snapshot.screenLabel() + "  ·  local · offline · read-only"
+	header := "AgentSession  /  " + snapshot.screenLabel()
 	if width < 40 {
 		header = "AgentSession / " + snapshot.screenLabel()
 	}

@@ -145,7 +145,6 @@ func timelineCardLines(
 		addField("Summary", value.Text)
 	case model.ToolCallData:
 		addField("Tool", value.ToolName)
-		addField("Call ID", value.CallID)
 		input := value.Input
 		var decoded any
 		if json.Unmarshal([]byte(input), &decoded) == nil {
@@ -156,7 +155,6 @@ func timelineCardLines(
 		addField("Input", input)
 	case model.ToolResultData:
 		addField("Tool", value.ToolName)
-		addField("Call ID", value.CallID)
 		addField("Error", optionalBool(value.IsError))
 		output := value.Output
 		if output == "" {
@@ -164,8 +162,6 @@ func timelineCardLines(
 		}
 		addField("Output", output)
 	case model.CommandData:
-		addField("Invocation ID", reportedString(value.InvocationID))
-		addField("Phase", reportedString(string(value.Phase)))
 		addField("Command", value.Command)
 		addField("Working directory", reportedString(value.WorkingDirectory))
 		addField("Exit status", optionalInt(value.ExitCode))
@@ -175,7 +171,6 @@ func timelineCardLines(
 		}
 		addField("Output", output)
 	case model.PatchData:
-		addField("Change ID", reportedString(value.ChangeID))
 		addField("Status", reportedString(string(value.Status)))
 		addField("Working directory", reportedString(value.WorkingDirectory))
 		for _, change := range value.Changes {
